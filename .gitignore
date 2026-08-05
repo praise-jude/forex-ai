@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# trade execution kill switch (runtime state, not source)
+.trading-paused
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
