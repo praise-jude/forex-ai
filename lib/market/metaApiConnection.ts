@@ -175,13 +175,16 @@ export async function placeMarketOrder(
 ): Promise<PlaceOrderResult> {
   if (!activeConnection) return { success: false, message: "no active MetaApi connection" };
   const symbol = brokerSymbol(pair);
+  // Shows up as the position's comment in MT5 itself, so a trade is identifiable
+  // in the broker terminal, not just on the dashboard.
+  const comment = direction === "long" ? "JUDE" : "OMINI";
 
   let response: MetatraderTradeResponse;
   try {
     response =
       direction === "long"
-        ? await activeConnection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { clientId })
-        : await activeConnection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { clientId });
+        ? await activeConnection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment })
+        : await activeConnection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment });
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : String(error) };
   }
