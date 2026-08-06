@@ -7,6 +7,12 @@ describe("pipValuePerLot", () => {
     expect(pipValuePerLot("EUR/USD", 100000)).toBeCloseTo(10, 5);
   });
 
+  it("computes pip value directly for gold, same USD-quote shape as forex majors", () => {
+    // XAU/USD quotes directly in USD (same structural shape as EUR/USD) -- pip 0.1 *
+    // a 100oz contract = $10 per pip per lot, no currency conversion needed.
+    expect(pipValuePerLot("XAU/USD", 100)).toBeCloseTo(10, 5);
+  });
+
   it("converts through the live price for USD-base pairs", () => {
     priceStore.set({ pair: "USD/JPY", bid: 149.0, ask: 149.02, time: Date.now() });
     // pip size 0.01 * contractSize 100000 = 1000 JPY per pip per lot; mid price 149.01
