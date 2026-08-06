@@ -41,6 +41,9 @@ yarn-error.log*
 # trade execution kill switch (runtime state, not source)
 .trading-paused
 
+# MetaApi SDK's local runtime cache (account deal/order history), not source
+.metaapi/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -60,7 +60,7 @@ export function Dashboard() {
           <h2 className="text-base font-semibold text-zinc-100">{selectedPair}</h2>
           <span className="text-xs text-zinc-500">15-minute &middot; SMC signal timeframe</span>
         </div>
-        <div className="h-[420px]">
+        <div className="h-190">
           <PriceChart pair={selectedPair} timeframe={TIMEFRAME} streamEvent={latestEvent} />
         </div>
       </section>
