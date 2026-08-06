@@ -30,8 +30,15 @@ Without these two env vars, the dashboard still runs but the watchlist stays emp
 | `MAX_DAILY_LOSS_PCT` | `5` | New entries halted for the rest of the UTC day once realized+open loss reaches this % of start-of-day equity. Existing positions are left alone — this only blocks new entries. |
 | `MAX_TRADES_PER_DAY` | `5` | New entries blocked once this many trades have opened today (UTC day) |
 | `KILL_SWITCH_FILE` | `.trading-paused` | See below |
+| `TRADING_KILL_SWITCH` | unset | See below |
 
-**Kill switch**: create the file named by `KILL_SWITCH_FILE` (e.g. `touch .trading-paused` in the project root) to immediately stop new trade entries — checked fresh on every signal, no restart needed. Existing open positions are untouched; delete the file to resume. This is intentionally simple (no auth) to match the rest of the app.
+**Kill switch — two of them, either one blocks trading**:
+- **File** (`KILL_SWITCH_FILE`): create the file (e.g. `touch .trading-paused` in the project root) to immediately stop new trade entries — checked fresh on every signal, no restart needed. Delete the file to resume. Works on hosts with a persistent filesystem (a VPS, Docker with a volume). Doesn't help on platforms that rebuild the filesystem on every deploy — a file touched via a one-off shell command won't survive the next redeploy.
+- **Env var** (`TRADING_KILL_SWITCH`): set to `1`/`true` in the platform's dashboard (Railway, Render, etc.) to block trading from the very first boot, guaranteed — no shell access or timing race required. `0`/`false`/unset means not active.
+
+Existing open positions are untouched by either switch — only new entries are blocked. Both are intentionally simple (no auth) to match the rest of the app.
+
+**Deploying somewhere new (Railway, Render, a fresh VPS, etc.)**: set `TRADING_KILL_SWITCH=1` in that platform's env vars *before* the first deploy that has `METAAPI_TOKEN`/`METAAPI_ACCOUNT_ID` set, so it never has a chance to connect and trade before you've verified it. Only flip it off once you've confirmed the new instance is healthy — and make sure whatever instance you're moving away from is paused too, so you never have two processes trading the same account at once.
 
 **What's not covered**: pending/limit orders (market orders only, fired at signal time), trailing stops or partial take-profit (SL/TP are set once at open and never adjusted), and portfolio-level correlation limits (nothing stops correlated pairs from both firing and stacking risk beyond `MAX_CONCURRENT_POSITIONS`). The execution ledger (which signal caused which trade) is in-memory only — a restart loses that audit trail, though open positions themselves are safe and are read directly from the broker, not from local memory.
 

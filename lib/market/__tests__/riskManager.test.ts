@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { checkRiskLimits, type RiskCheckInput } from "../riskManager";
+import { afterEach, describe, expect, it } from "vitest";
+import { checkRiskLimits, isKillSwitchActive, type RiskCheckInput } from "../riskManager";
 
 function buildInput(overrides: Partial<RiskCheckInput> = {}): RiskCheckInput {
   return {
@@ -56,5 +56,29 @@ describe("checkRiskLimits", () => {
   it("allows when the drawdown is under the daily loss threshold", () => {
     const result = checkRiskLimits(buildInput({ startOfDayEquity: 10000, currentEquity: 9600, maxDailyLossPct: 5 }));
     expect(result).toEqual({ allowed: true });
+  });
+});
+
+describe("isKillSwitchActive", () => {
+  const NONEXISTENT_FILE = "___does-not-exist___.tmp";
+
+  afterEach(() => {
+    delete process.env.TRADING_KILL_SWITCH;
+  });
+
+  it("is false when neither the file nor the env var is set", () => {
+    expect(isKillSwitchActive(NONEXISTENT_FILE)).toBe(false);
+  });
+
+  it("is true when TRADING_KILL_SWITCH is set to a truthy value, even without the file", () => {
+    process.env.TRADING_KILL_SWITCH = "1";
+    expect(isKillSwitchActive(NONEXISTENT_FILE)).toBe(true);
+  });
+
+  it("treats \"0\" and \"false\" as not set", () => {
+    process.env.TRADING_KILL_SWITCH = "0";
+    expect(isKillSwitchActive(NONEXISTENT_FILE)).toBe(false);
+    process.env.TRADING_KILL_SWITCH = "false";
+    expect(isKillSwitchActive(NONEXISTENT_FILE)).toBe(false);
   });
 });

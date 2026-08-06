@@ -57,8 +57,20 @@ export function checkRiskLimits(input: RiskCheckInput): RiskCheckResult {
   return { allowed: true };
 }
 
-/** The one piece of I/O in this module: existence of the file is the on/off switch. */
+const FALSY_ENV_VALUES = new Set(["", "0", "false"]);
+
+/**
+ * Two independent switches, either one blocks trading: the file (works anywhere with a
+ * persistent filesystem — e.g. a VPS, where it can be toggled live without a restart)
+ * and the `TRADING_KILL_SWITCH` env var (works on platforms with an ephemeral
+ * filesystem per deploy — e.g. Railway/Render — where a file touched via a one-off
+ * shell command wouldn't survive the next redeploy, but an env var set in the
+ * platform's dashboard is guaranteed present from the very first boot).
+ */
 export function isKillSwitchActive(killSwitchFile: string): boolean {
+  const envValue = process.env.TRADING_KILL_SWITCH?.toLowerCase() ?? "";
+  if (!FALSY_ENV_VALUES.has(envValue)) return true;
+
   try {
     return fs.existsSync(killSwitchFile);
   } catch {
