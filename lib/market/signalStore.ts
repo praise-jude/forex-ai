@@ -4,11 +4,17 @@ const STALE_AFTER_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 class SignalStore {
   private byPair = new Map<Pair, Signal[]>();
+  private byId = new Map<string, Signal>();
 
   add(signal: Signal): void {
     const existing = this.byPair.get(signal.pair) ?? [];
     existing.push(signal);
     this.byPair.set(signal.pair, existing);
+    this.byId.set(signal.id, signal);
+  }
+
+  get(id: string): Signal | undefined {
+    return this.byId.get(id);
   }
 
   /** All non-stale signals across every pair, most recent first. */
@@ -27,10 +33,12 @@ class SignalStore {
   prune(): void {
     const now = Date.now();
     for (const [pair, list] of this.byPair) {
-      this.byPair.set(
-        pair,
-        list.filter((s) => now - s.createdAt <= STALE_AFTER_MS)
-      );
+      const [fresh, stale] = [
+        list.filter((s) => now - s.createdAt <= STALE_AFTER_MS),
+        list.filter((s) => now - s.createdAt > STALE_AFTER_MS),
+      ];
+      this.byPair.set(pair, fresh);
+      for (const s of stale) this.byId.delete(s.id);
     }
   }
 }

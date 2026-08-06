@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Signal } from "./types";
-import { eventBus } from "./eventBus";
+import type { ExecutedTrade, Signal } from "./types";
 import { positionStore } from "./positionStore";
 import { riskState } from "./riskState";
-import { checkRiskLimits, isKillSwitchActive } from "./riskManager";
+import { checkRiskLimits, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize } from "./positionSizing";
 import { getAccountInformation, getOpenPositionCount, getSymbolSpecification, placeMarketOrder } from "./metaApiConnection";
@@ -15,16 +14,25 @@ function shortClientId(signalId: string): string {
   return createHash("sha1").update(signalId).digest("hex").slice(0, 16);
 }
 
+export type ExecutionResult =
+  | { status: "duplicate" }
+  | { status: "blocked"; code: RiskBlockCode | "no_account" | "no_symbol_spec"; reason: string }
+  | { status: "skipped_sizing"; reason: string }
+  | { status: "filled"; trade: ExecutedTrade }
+  | { status: "rejected"; trade: ExecutedTrade };
+
 /**
  * Attempts to execute a single signal: risk checks -> position sizing -> order
  * placement -> ledger recording. Safe to call more than once for the same signal —
- * every call after the first is a no-op via the idempotency guard below.
+ * every call after the first returns "duplicate" via the idempotency guard below,
+ * without re-hitting the broker. Called from the manual Buy/Sell confirmation route
+ * (there is no automatic trigger — trading only happens when a user clicks it).
  */
-export async function attemptExecution(signal: Signal): Promise<void> {
+export async function attemptExecution(signal: Signal): Promise<ExecutionResult> {
   // Primary idempotency guard. Must run synchronously, before the first `await` in
-  // this function, so it's race-free against a duplicate signal event arriving while
-  // an earlier attempt for the same signal is still in flight.
-  if (positionStore.hasExecuted(signal.id)) return;
+  // this function, so it's race-free against a duplicate click (or two browser tabs)
+  // arriving while an earlier attempt for the same signal is still in flight.
+  if (positionStore.hasExecuted(signal.id)) return { status: "duplicate" };
 
   const now = Date.now();
   const config = loadExecutionConfig();
@@ -32,7 +40,7 @@ export async function attemptExecution(signal: Signal): Promise<void> {
   const account = getAccountInformation();
   if (!account) {
     console.error(`[execution] skip ${signal.pair} ${signal.id}: no account information available yet`);
-    return;
+    return { status: "blocked", code: "no_account", reason: "no account information available yet" };
   }
 
   const dayState = riskState.current(now, account.equity);
@@ -51,24 +59,24 @@ export async function attemptExecution(signal: Signal): Promise<void> {
   if (!riskCheck.allowed) {
     console.log(`[execution] skip ${signal.pair} ${signal.id}: ${riskCheck.reason}`);
     if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity);
-    return;
+    return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
   }
 
   const spec = getSymbolSpecification(signal.pair);
   if (!spec) {
     console.error(`[execution] skip ${signal.pair} ${signal.id}: no symbol specification available yet`);
-    return;
+    return { status: "blocked", code: "no_symbol_spec", reason: "no symbol specification available yet" };
   }
 
   const sizing = computeLotSize(signal, account.equity, config.riskPerTradePct, spec);
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id}: ${sizing.reason}`);
-    return;
+    return { status: "skipped_sizing", reason: sizing.reason };
   }
 
   // Reserve the signal id before the broker call — everything above this point is
   // read-only and safe to repeat, but from here on a duplicate call must not re-fire.
-  positionStore.recordAttempt({
+  const record = positionStore.recordAttempt({
     id: randomUUID(),
     signalId: signal.id,
     pair: signal.pair,
@@ -98,39 +106,29 @@ export async function attemptExecution(signal: Signal): Promise<void> {
       stringCode: result.stringCode,
       lots: sizing.lots,
     });
-    return;
+    return { status: "rejected", trade: { ...record, status: "rejected", rejectReason: result.message } };
   }
 
+  const filledAt = Date.now();
   positionStore.markFilled(signal.id, {
     filledEntry: result.filledEntry,
     brokerPositionId: result.brokerPositionId,
     brokerOrderId: result.brokerOrderId,
-    filledAt: Date.now(),
+    filledAt,
   });
   riskState.recordTradeOpened(now, account.equity);
   console.log(
     `[execution] filled ${signal.direction} ${sizing.lots} lots ${signal.pair} @ ${result.filledEntry} (signal ${signal.id})`
   );
-}
-
-let started = false;
-
-/**
- * Subscribes to the same event bus the SSE route reads from, rather than being called
- * directly from metaApiConnection.ts — keeps that file unaware the execution engine
- * exists at all, avoiding an import cycle (executionEngine needs metaApiConnection's
- * broker accessors). Node's EventEmitter invokes listeners synchronously within the
- * same call stack as `publish()`, so execution still starts in the same tick a signal
- * is published — this isn't a meaningfully looser ordering guarantee than a direct call.
- */
-export function startExecutionEngine(): void {
-  if (started) return;
-  started = true;
-
-  eventBus.subscribe((event) => {
-    if (event.type !== "signal") return;
-    attemptExecution(event.signal).catch((error: unknown) => {
-      console.error(`[execution] unhandled error attempting signal ${event.signal.id}:`, error);
-    });
-  });
+  return {
+    status: "filled",
+    trade: {
+      ...record,
+      status: "filled",
+      filledEntry: result.filledEntry,
+      brokerPositionId: result.brokerPositionId,
+      brokerOrderId: result.brokerOrderId,
+      filledAt,
+    },
+  };
 }

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
-import { PAIRS, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
+import { PAIRS, type ExecutedTrade, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
 import { SignalsPanel } from "./SignalsPanel";
 
@@ -19,14 +19,16 @@ export function Dashboard() {
   const [selectedPair, setSelectedPair] = useState<Pair>(PAIRS[0]);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(emptyWatchlist);
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [executedTrades, setExecutedTrades] = useState<ExecutedTrade[]>([]);
   const [latestEvent, setLatestEvent] = useState<StreamEvent | null>(null);
 
   useEffect(() => {
     fetch("/api/signals")
       .then((res) => res.json())
-      .then((data: { watchlist: WatchlistEntry[]; signals: Signal[] }) => {
+      .then((data: { watchlist: WatchlistEntry[]; signals: Signal[]; executedTrades: ExecutedTrade[] }) => {
         setWatchlist(data.watchlist);
         setSignals(data.signals);
+        setExecutedTrades(data.executedTrades);
       })
       .catch(() => {
         // Best-effort initial snapshot; the SSE stream will still catch up live data.
@@ -63,7 +65,7 @@ export function Dashboard() {
         </div>
       </section>
 
-      <SignalsPanel signals={signals} />
+      <SignalsPanel signals={signals} executedTrades={executedTrades} />
     </div>
   );
 }

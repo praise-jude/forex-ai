@@ -1,6 +1,7 @@
 import { PAIRS } from "@/lib/market/types";
 import { priceStore } from "@/lib/market/priceStore";
 import { signalStore } from "@/lib/market/signalStore";
+import { positionStore } from "@/lib/market/positionStore";
 
 export const runtime = "nodejs";
 
@@ -19,5 +20,6 @@ export async function GET() {
     asOf: Date.now(),
     watchlist,
     signals: signalStore.all(),
+    executedTrades: positionStore.all(),
   });
 }
