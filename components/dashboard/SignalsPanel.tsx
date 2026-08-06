@@ -7,7 +7,8 @@ import { TradingRobot } from "./TradingRobot";
 
 const CONFLUENCE_LABEL: Record<Confluence, string> = {
   liquidity_sweep: "Liquidity sweep",
-  bos: "Structure break",
+  bos: "Structure break (BOS)",
+  choch: "Change of character (CHoCH)",
   fvg: "Fair value gap",
   order_block: "Order block",
   killzone: "Killzone",

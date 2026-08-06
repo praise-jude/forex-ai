@@ -19,7 +19,11 @@ import { isEmaStackAligned } from "./indicators/emaStack";
 import { scoreSignal } from "./confidenceScore";
 
 const SWEEP_LOOKBACK_CANDLES = 30;
-const SL_BUFFER_PIPS = 3;
+// Fraction of the instrument's own ATR used as the SL buffer beyond the swept swing
+// level. Replaces a flat pip count, which doesn't scale across instruments — a
+// broker's "pip" is just 10x its smallest quotable tick (a display convention), not
+// something proportional to real volatility (see symbols.ts's XAU/USD comment).
+const ATR_BUFFER_FRACTION = 0.25;
 const MIN_RISK_REWARD = 1.5;
 const FALLBACK_RISK_REWARD = 2;
 const MIN_RISK_REWARD_2 = 2.5;
@@ -116,8 +120,8 @@ export function assembleSignals(
     .filter((e) => e.breakIndex > sweep.sweepIndex && e.breakIndex <= lastIndex)
     .find((e) =>
       wantsBullish
-        ? e.type === "BOS_BULLISH" || e.type === "MSS_BULLISH"
-        : e.type === "BOS_BEARISH" || e.type === "MSS_BEARISH"
+        ? e.type === "BOS_BULLISH" || e.type === "CHOCH_BULLISH"
+        : e.type === "BOS_BEARISH" || e.type === "CHOCH_BEARISH"
     );
   if (!structureEvent) return [];
 
@@ -154,10 +158,8 @@ export function assembleSignals(
   if (alreadyTagged) return [];
 
   const entry = (taggedNow.top + taggedNow.bottom) / 2;
-  const pip = pipSize(pair);
-  const stopLoss = wantsBullish
-    ? sweep.sweptSwing.price - pip * SL_BUFFER_PIPS
-    : sweep.sweptSwing.price + pip * SL_BUFFER_PIPS;
+  const slBuffer = atr * ATR_BUFFER_FRACTION;
+  const stopLoss = wantsBullish ? sweep.sweptSwing.price - slBuffer : sweep.sweptSwing.price + slBuffer;
   const risk = Math.abs(entry - stopLoss);
   if (risk <= 0) return [];
 
@@ -212,9 +214,11 @@ export function assembleSignals(
 
   if (score.tier === "no_trade") return [];
 
+  const structureConfluence: Confluence = structureEvent.type.startsWith("CHOCH") ? "choch" : "bos";
+
   const confluences: Confluence[] = [
     "liquidity_sweep",
-    "bos",
+    structureConfluence,
     taggedNow.confluence,
     "killzone",
     "multi_timeframe",

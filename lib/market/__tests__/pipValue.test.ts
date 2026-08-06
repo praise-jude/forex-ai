@@ -8,9 +8,14 @@ describe("pipValuePerLot", () => {
   });
 
   it("computes pip value directly for gold, same USD-quote shape as forex majors", () => {
-    // XAU/USD quotes directly in USD (same structural shape as EUR/USD) -- pip 0.1 *
-    // a 100oz contract = $10 per pip per lot, no currency conversion needed.
-    expect(pipValuePerLot("XAU/USD", 100)).toBeCloseTo(10, 5);
+    // XAU/USD quotes directly in USD (same structural shape as EUR/USD) -- pip 0.01 *
+    // a 100oz contract = $1 per pip per lot, no currency conversion needed.
+    expect(pipValuePerLot("XAU/USD", 100)).toBeCloseTo(1, 5);
+  });
+
+  it("computes pip value directly for silver, same USD-quote shape as forex majors", () => {
+    // XAG/USD quotes directly in USD -- pip 0.01 * a 5000oz contract = $50 per pip per lot.
+    expect(pipValuePerLot("XAG/USD", 5000)).toBeCloseTo(50, 5);
   });
 
   it("converts through the live price for USD-base pairs", () => {

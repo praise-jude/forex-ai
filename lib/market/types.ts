@@ -1,8 +1,8 @@
 export type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 
-export type Pair = "EUR/USD" | "GBP/USD" | "USD/JPY" | "AUD/USD" | "USD/CAD" | "XAU/USD";
+export type Pair = "EUR/USD" | "GBP/USD" | "USD/JPY" | "AUD/USD" | "USD/CAD" | "XAU/USD" | "XAG/USD";
 
-export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "XAU/USD"];
+export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "XAU/USD", "XAG/USD"];
 
 export interface Candle {
   time: number; // unix ms, candle open time
@@ -29,7 +29,7 @@ export interface SwingPoint {
   type: SwingType;
 }
 
-export type StructureEventType = "BOS_BULLISH" | "BOS_BEARISH" | "MSS_BULLISH" | "MSS_BEARISH";
+export type StructureEventType = "BOS_BULLISH" | "BOS_BEARISH" | "CHOCH_BULLISH" | "CHOCH_BEARISH";
 
 export interface StructureEvent {
   type: StructureEventType;
@@ -69,6 +69,7 @@ export type Session = "asia" | "london" | "newyork" | "off-session";
 export type Confluence =
   | "liquidity_sweep"
   | "bos"
+  | "choch"
   | "fvg"
   | "order_block"
   | "killzone"

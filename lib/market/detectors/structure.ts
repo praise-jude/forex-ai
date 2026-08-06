@@ -4,7 +4,7 @@ import type { Candle, StructureEvent, StructureEventType, SwingPoint } from "../
  * Walks candles chronologically, tracking the most recent unbroken swing high/low.
  * A close beyond the opposing swing is a structure break: continuation of the current
  * trend is a Break of Structure (BOS), a break against the current trend is a
- * Market Structure Shift (MSS/reversal). Requires `swings` sorted ascending by index
+ * Change of Character (CHoCH/reversal). Requires `swings` sorted ascending by index
  * (the order detectSwingPoints already produces).
  */
 export function detectStructureBreaks(candles: Candle[], swings: SwingPoint[]): StructureEvent[] {
@@ -25,12 +25,12 @@ export function detectStructureBreaks(candles: Candle[], swings: SwingPoint[]): 
     const candle = candles[i];
 
     if (lastSwingHigh && i > lastSwingHigh.index && candle.close > lastSwingHigh.price) {
-      const type: StructureEventType = trend === "bearish" ? "MSS_BULLISH" : "BOS_BULLISH";
+      const type: StructureEventType = trend === "bearish" ? "CHOCH_BULLISH" : "BOS_BULLISH";
       events.push({ type, brokenSwing: lastSwingHigh, breakIndex: i, time: candle.time });
       trend = "bullish";
       lastSwingHigh = null;
     } else if (lastSwingLow && i > lastSwingLow.index && candle.close < lastSwingLow.price) {
-      const type: StructureEventType = trend === "bullish" ? "MSS_BEARISH" : "BOS_BEARISH";
+      const type: StructureEventType = trend === "bullish" ? "CHOCH_BEARISH" : "BOS_BEARISH";
       events.push({ type, brokenSwing: lastSwingLow, breakIndex: i, time: candle.time });
       trend = "bearish";
       lastSwingLow = null;

@@ -9,7 +9,7 @@ export function detectOrderBlocks(candles: Candle[], structureEvents: StructureE
   const blocks: OrderBlock[] = [];
 
   for (const event of structureEvents) {
-    const bullish = event.type === "BOS_BULLISH" || event.type === "MSS_BULLISH";
+    const bullish = event.type === "BOS_BULLISH" || event.type === "CHOCH_BULLISH";
     let obIndex = -1;
 
     for (let j = event.breakIndex - 1; j >= 0; j--) {

@@ -16,11 +16,13 @@ const BASE_CONFIG: Record<Pair, { symbol: string; pip: number; decimals: number 
   "USD/JPY": { symbol: "USDJPY", pip: 0.01, decimals: 3 },
   "AUD/USD": { symbol: "AUDUSD", pip: 0.0001, decimals: 5 },
   "USD/CAD": { symbol: "USDCAD", pip: 0.0001, decimals: 5 },
-  // Quoted to 2 decimals (e.g. 2350.45); pip is a calibration choice for the SL-buffer
-  // and position-sizing math (see signalEngine.ts's SL_BUFFER_PIPS), not display
-  // precision — 0.1 (common retail-platform convention for gold) keeps that buffer
-  // proportional to gold's volatility instead of the ~$0.03 a naive 0.01 would give.
-  "XAU/USD": { symbol: "XAUUSD", pip: 0.1, decimals: 2 },
+  // pip/decimals both confirmed directly from the broker's own symbol spec (not
+  // guessed) — Exness quotes both metals to 3 digits with pipSize 0.01. The SL buffer
+  // no longer scales off pip (see signalEngine.ts's ATR-relative buffer), so pip here
+  // only feeds the sweep-tolerance and position-sizing math, where the broker's own
+  // value is the right one to use rather than an artificial calibration.
+  "XAU/USD": { symbol: "XAUUSD", pip: 0.01, decimals: 3 },
+  "XAG/USD": { symbol: "XAGUSD", pip: 0.01, decimals: 3 },
 };
 
 const CONFIG: Record<Pair, PairConfig> = Object.fromEntries(

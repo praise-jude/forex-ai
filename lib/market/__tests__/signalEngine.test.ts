@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { candle } from "../detectors/__tests__/fixtures";
 import { assembleSignals } from "../signalEngine";
+import { calculateAtr } from "../indicators/atr";
 import type { Candle } from "../types";
 
 // Sellside liquidity sweep -> BOS_BULLISH (breaks a swing high) -> a further push to a
@@ -133,6 +134,22 @@ describe("assembleSignals", () => {
     expect(signals[0].takeProfit).toBeGreaterThan(signals[0].entry);
     expect(signals[0].takeProfit2).toBeGreaterThan(signals[0].takeProfit);
     expect(signals[0].riskReward).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it("places the SL buffer proportional to the instrument's own ATR, not a fixed pip amount", () => {
+    const candles = buildCandles();
+    const signals = assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"));
+    expect(signals).toHaveLength(1);
+
+    const sweptSwingPrice = 0.985; // the sellside sweep's swing low, per buildPattern's comments
+    const buffer = sweptSwingPrice - signals[0].stopLoss; // stopLoss sits below the swept low for a long
+    const atr = calculateAtr(candles)[candles.length - 1];
+
+    expect(buffer).toBeGreaterThan(0);
+    // Meaningfully larger than the old flat 3-pip EUR/USD buffer (0.0003) would have given,
+    // and never the whole ATR -- loose bounds since the exact fraction is a tunable constant.
+    expect(buffer).toBeGreaterThan(0.0003 * 5);
+    expect(buffer).toBeLessThan(atr);
   });
 
   it("does not fire outside a killzone even with the same setup", () => {
