@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Candle, Confluence, ConfidenceTier, Pair, Signal, Timeframe } from "./types";
+import type { Candle, Confluence, Pair, Signal, Timeframe } from "./types";
 import { detectSwingPoints } from "./detectors/swings";
 import { detectStructureBreaks } from "./detectors/structure";
 import { detectFairValueGaps } from "./detectors/fairValueGaps";
@@ -62,12 +62,14 @@ function trendDirection(candles: Candle[]): "bullish" | "bearish" | "neutral" {
  * Assembles a trade signal from the current M15 candle close. A liquidity sweep,
  * structure break in the implied reversal direction, and a first-time retest of the
  * resulting unmitigated FVG/order block during a killzone locate the *candidate*
- * trade (its entry/SL/TP). D1/H4 trend agreement, ADX, and ATR are then hard
+ * trade (its entry/SL/TP). D1/H4/H1 trend agreement, ADX, and ATR are then hard
  * pre-gates. If those pass, a weighted confidence score (trend, market structure,
  * SMC zone quality, volume, MACD, RSI, candlestick pattern) is computed; a Signal is
- * only constructed at 90%+ (buy) or 95%+ (strong_buy) — anything lower produces no
- * signal at all, since every Signal event is auto-traded downstream. Call this once
- * per closed M15 candle — never on the still-forming candle, or signals will repaint.
+ * constructed at 80%+ (watch — informational only, not executable), 90%+ (buy), or
+ * 95%+ (strong_buy). Anything lower produces no signal at all. Only buy/strong_buy
+ * can ever be manually executed (see executionEngine.ts's watch-tier guard) — watch
+ * exists purely so a near-miss setup is visible on the dashboard. Call this once per
+ * closed M15 candle — never on the still-forming candle, or signals will repaint.
  */
 export function assembleSignals(
   candles: Candle[],
@@ -95,10 +97,11 @@ export function assembleSignals(
   const zoneDirection = wantsBullish ? "bullish" : "bearish";
   const direction: "long" | "short" = wantsBullish ? "long" : "short";
 
-  // --- Hard pre-gates: D1/H4 agreement, ADX floor, ATR health ---
+  // --- Hard pre-gates: D1/H4/H1 agreement, ADX floor, ATR health ---
   const d1Trend = trendDirection(higherTimeframes.d1);
   const h4Trend = trendDirection(higherTimeframes.h4);
-  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== zoneDirection) return [];
+  const h1Trend = trendDirection(higherTimeframes.h1);
+  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== h1Trend || d1Trend !== zoneDirection) return [];
 
   const adx = calculateAdx(candles)[lastIndex];
   if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return [];
@@ -207,7 +210,7 @@ export function assembleSignals(
     candlestickMatches,
   });
 
-  if (score.tier !== "strong_buy" && score.tier !== "buy") return [];
+  if (score.tier === "no_trade") return [];
 
   const confluences: Confluence[] = [
     "liquidity_sweep",
@@ -228,7 +231,7 @@ export function assembleSignals(
     takeProfit2,
     riskReward: Math.abs(takeProfit - entry) / risk,
     confidence: score.total,
-    tier: score.tier as ConfidenceTier,
+    tier: score.tier,
     confluences,
     session: getActiveSession(lastCandle.time),
     timeframe,

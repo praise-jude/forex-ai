@@ -13,7 +13,7 @@ export interface ScoreInput {
 
 export interface ScoreBreakdown {
   total: number;
-  tier: ConfidenceTier | "watch" | "no_trade";
+  tier: ConfidenceTier | "no_trade";
   /** New-category confluences that scored credit — merged into the signal's full
    * confluences list by the caller alongside the existing SMC ones. */
   reasons: Confluence[];

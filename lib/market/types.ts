@@ -82,7 +82,7 @@ export type Confluence =
   | "candlestick"
   | "multi_timeframe";
 
-export type ConfidenceTier = "strong_buy" | "buy";
+export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
 export interface Signal {
   id: string;

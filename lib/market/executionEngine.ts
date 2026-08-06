@@ -16,7 +16,7 @@ function shortClientId(signalId: string): string {
 
 export type ExecutionResult =
   | { status: "duplicate" }
-  | { status: "blocked"; code: RiskBlockCode | "no_account" | "no_symbol_spec"; reason: string }
+  | { status: "blocked"; code: RiskBlockCode | "no_account" | "no_symbol_spec" | "watch_tier"; reason: string }
   | { status: "skipped_sizing"; reason: string }
   | { status: "filled"; trade: ExecutedTrade }
   | { status: "rejected"; trade: ExecutedTrade };
@@ -33,6 +33,13 @@ export async function attemptExecution(signal: Signal): Promise<ExecutionResult>
   // this function, so it's race-free against a duplicate click (or two browser tabs)
   // arriving while an earlier attempt for the same signal is still in flight.
   if (positionStore.hasExecuted(signal.id)) return { status: "duplicate" };
+
+  // Watch-tier signals are shown on the dashboard for information only — they never
+  // cleared the buy/strong_buy confidence bar, so there's deliberately no button for
+  // them client-side. This is the server-side backstop in case that's ever bypassed.
+  if (signal.tier === "watch") {
+    return { status: "blocked", code: "watch_tier", reason: "watch-tier signals are informational only and cannot be executed" };
+  }
 
   const now = Date.now();
   const config = loadExecutionConfig();

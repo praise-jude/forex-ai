@@ -19,12 +19,19 @@ const CONFLUENCE_LABEL: Record<Confluence, string> = {
   market_structure: "Market structure",
   adx: "ADX",
   candlestick: "Candlestick",
-  multi_timeframe: "D1/H4 agreement",
+  multi_timeframe: "D1/H4/H1 agreement",
 };
 
 const TIER_LABEL: Record<Signal["tier"], string> = {
   strong_buy: "Strong buy",
   buy: "Buy",
+  watch: "Watch",
+};
+
+const TIER_BADGE_CLASSES: Record<Signal["tier"], string> = {
+  strong_buy: "bg-sky-500/15 text-sky-400",
+  buy: "bg-sky-500/15 text-sky-400",
+  watch: "bg-amber-500/15 text-amber-400",
 };
 
 // Mirrors ExecutionResult from lib/market/executionEngine.ts (kept as a local, JSON-shaped
@@ -57,6 +64,12 @@ function relativeTime(fromMs: number): string {
 }
 
 function ExecuteControl({ signal, status, onExecute }: { signal: Signal; status: CardStatus; onExecute: () => void }) {
+  // Watch-tier never cleared the buy/strong_buy confidence bar — shown for information
+  // only, with no button at all (attemptExecution also rejects it server-side).
+  if (signal.tier === "watch") {
+    return <p className="mt-2 text-xs font-medium text-zinc-500">Below confidence threshold — informational only</p>;
+  }
+
   const isLong = signal.direction === "long";
   const label = isLong ? "Buy" : "Sell";
   const colorClasses = isLong ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500";
@@ -104,7 +117,7 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
         <TradingRobot direction={signal.direction} />
         <div className="text-right">
           <div className="font-semibold text-zinc-100">{signal.pair}</div>
-          <span className="mt-1 inline-block rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-semibold text-sky-400">
+          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${TIER_BADGE_CLASSES[signal.tier]}`}>
             {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}%
           </span>
         </div>

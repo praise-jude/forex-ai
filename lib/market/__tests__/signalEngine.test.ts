@@ -158,10 +158,26 @@ describe("assembleSignals", () => {
     expect(assembleSignals(buildCandles(), "EUR/USD", "15m", higherTimeframes)).toEqual([]);
   });
 
-  it("suppresses an otherwise-valid signal when the confidence score falls short of the buy threshold", () => {
-    // Same SMC/trend/ADX/ATR pre-gates pass, but a plain-bodied final candle (no
-    // candlestick pattern match) drops the score from 90 to 85 -- clears the pre-gates
-    // but doesn't reach the 90% "buy" threshold, so nothing should fire.
+  it("downgrades to a watch-tier signal when volume confirmation is missing", () => {
+    // Same pattern that scores 90 ("buy") in the first test, but the final candle's
+    // volume is dropped below the 20-candle average -- an isolated, single-category
+    // change (tickVolume doesn't affect price-based checks like MACD/RSI/candlestick),
+    // costing exactly the 10-point volume weight: 90 - 10 = 80, landing right at the
+    // "watch" floor rather than clearing the 90% "buy" threshold.
+    const candles = buildCandles({ strongFinalCandle: true });
+    const finalCandle = candles[candles.length - 1];
+    candles[candles.length - 1] = { ...finalCandle, tickVolume: 1 };
+    const signals = assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"));
+    expect(signals).toHaveLength(1);
+    expect(signals[0].tier).toBe("watch");
+    expect(signals[0].confidence).toBe(80);
+  });
+
+  it("suppresses a signal entirely when the confidence score falls below the watch threshold", () => {
+    // The plain-bodied final candle (no candlestick match) closes meaningfully lower
+    // than the "strong" version, which flips MACD agreement too, not just the
+    // candlestick check -- dropping the score from 90 to 75, below even the "watch"
+    // floor, so nothing fires at all.
     const candles = buildCandles({ strongFinalCandle: false });
     expect(assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual([]);
   });
