@@ -1,34 +1,80 @@
 import { randomUUID } from "node:crypto";
-import type { Candle, Confluence, Pair, Signal, Timeframe } from "./types";
+import type { Candle, Confluence, ConfidenceTier, Pair, Signal, Timeframe } from "./types";
 import { detectSwingPoints } from "./detectors/swings";
 import { detectStructureBreaks } from "./detectors/structure";
 import { detectFairValueGaps } from "./detectors/fairValueGaps";
 import { detectOrderBlocks } from "./detectors/orderBlocks";
 import { detectLiquiditySweeps } from "./detectors/liquiditySweeps";
+import { marketStructureTrend } from "./detectors/marketStructure";
+import { detectCandlestickPattern } from "./detectors/candlestickPatterns";
 import { getActiveSession, isKillzone } from "./sessions";
 import { pipSize } from "./symbols";
+import { calculateEma } from "./indicators/ema";
+import { calculateRsi } from "./indicators/rsi";
+import { calculateMacd } from "./indicators/macd";
+import { calculateAdx } from "./indicators/adx";
+import { calculateAtr } from "./indicators/atr";
+import { isAboveAverageVolume } from "./indicators/volume";
+import { isEmaStackAligned } from "./indicators/emaStack";
+import { scoreSignal } from "./confidenceScore";
 
 const SWEEP_LOOKBACK_CANDLES = 30;
 const SL_BUFFER_PIPS = 3;
 const MIN_RISK_REWARD = 1.5;
 const FALLBACK_RISK_REWARD = 2;
+const MIN_RISK_REWARD_2 = 2.5;
+const FALLBACK_RISK_REWARD_2 = 3;
+const ADX_HARD_MIN = 20;
+const ATR_AVERAGE_PERIOD = 20;
+
+const BULLISH_PATTERNS = new Set(["bullish_engulfing", "pin_bar_bullish", "morning_star"]);
+const BEARISH_PATTERNS = new Set(["bearish_engulfing", "pin_bar_bearish", "evening_star"]);
 
 interface Zone {
   top: number;
   bottom: number;
-  confluence: Confluence;
+  confluence: "order_block" | "fvg";
   /** Index after which a touch counts as a genuine retest (excludes the formation/impulse candles). */
   sinceIndex: number;
 }
 
+interface HigherTimeframeCandles {
+  h1: Candle[];
+  h4: Candle[];
+  d1: Candle[];
+}
+
+/** EMA50/EMA200 relationship only — used for the D1/H4 multi-timeframe agreement
+ * pre-gate, distinct from the stricter 4-EMA stack scored in the Trend category. */
+function trendDirection(candles: Candle[]): "bullish" | "bearish" | "neutral" {
+  if (candles.length < 200) return "neutral";
+  const closes = candles.map((c) => c.close);
+  const index = candles.length - 1;
+  const fast = calculateEma(closes, 50)[index];
+  const slow = calculateEma(closes, 200)[index];
+  if (Number.isNaN(fast) || Number.isNaN(slow)) return "neutral";
+  if (fast > slow) return "bullish";
+  if (fast < slow) return "bearish";
+  return "neutral";
+}
+
 /**
- * Assembles a trade signal from the current candle close, if (and only if) all of
- * these line up on this bar: a recent liquidity sweep, a structure break in the
- * implied reversal direction, price tagging an unmitigated FVG/order block from
- * that move for the first time, during a London/NY killzone. Call this once per
- * closed candle — never on the still-forming candle, or signals will repaint.
+ * Assembles a trade signal from the current M15 candle close. A liquidity sweep,
+ * structure break in the implied reversal direction, and a first-time retest of the
+ * resulting unmitigated FVG/order block during a killzone locate the *candidate*
+ * trade (its entry/SL/TP). D1/H4 trend agreement, ADX, and ATR are then hard
+ * pre-gates. If those pass, a weighted confidence score (trend, market structure,
+ * SMC zone quality, volume, MACD, RSI, candlestick pattern) is computed; a Signal is
+ * only constructed at 90%+ (buy) or 95%+ (strong_buy) — anything lower produces no
+ * signal at all, since every Signal event is auto-traded downstream. Call this once
+ * per closed M15 candle — never on the still-forming candle, or signals will repaint.
  */
-export function assembleSignals(candles: Candle[], pair: Pair, timeframe: Timeframe): Signal[] {
+export function assembleSignals(
+  candles: Candle[],
+  pair: Pair,
+  timeframe: Timeframe,
+  higherTimeframes: HigherTimeframeCandles
+): Signal[] {
   if (candles.length < 10) return [];
   const lastIndex = candles.length - 1;
   const lastCandle = candles[lastIndex];
@@ -47,6 +93,21 @@ export function assembleSignals(candles: Candle[], pair: Pair, timeframe: Timefr
   // being set up; a sellside sweep implies a bullish one.
   const wantsBullish = sweep.side === "sellside";
   const zoneDirection = wantsBullish ? "bullish" : "bearish";
+  const direction: "long" | "short" = wantsBullish ? "long" : "short";
+
+  // --- Hard pre-gates: D1/H4 agreement, ADX floor, ATR health ---
+  const d1Trend = trendDirection(higherTimeframes.d1);
+  const h4Trend = trendDirection(higherTimeframes.h4);
+  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== zoneDirection) return [];
+
+  const adx = calculateAdx(candles)[lastIndex];
+  if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return [];
+
+  const atrSeries = calculateAtr(candles);
+  const atr = atrSeries[lastIndex];
+  const atrWindow = atrSeries.slice(lastIndex - ATR_AVERAGE_PERIOD, lastIndex);
+  const atrAverage = atrWindow.reduce((sum, v) => sum + v, 0) / atrWindow.length;
+  if (Number.isNaN(atr) || !(atr > atrAverage)) return [];
 
   const structureEvent = structureEvents
     .filter((e) => e.breakIndex > sweep.sweepIndex && e.breakIndex <= lastIndex)
@@ -109,15 +170,66 @@ export function assembleSignals(candles: Candle[], pair: Pair, timeframe: Timefr
     if (reward / risk >= MIN_RISK_REWARD) takeProfit = target;
   }
 
+  // TP2: a further opposing swing beyond TP1, if one clears the higher R-multiple bar.
+  let takeProfit2 = wantsBullish ? entry + risk * FALLBACK_RISK_REWARD_2 : entry - risk * FALLBACK_RISK_REWARD_2;
+  const furtherPrices = opposingPrices.filter((price) => (wantsBullish ? price > takeProfit : price < takeProfit));
+  if (furtherPrices.length > 0) {
+    const target2 = wantsBullish ? Math.min(...furtherPrices) : Math.max(...furtherPrices);
+    const reward2 = Math.abs(target2 - entry);
+    if (reward2 / risk >= MIN_RISK_REWARD_2) takeProfit2 = target2;
+  }
+
+  // --- Weighted confidence score over the remaining categories ---
+  const emaStackAligned = isEmaStackAligned(candles, direction);
+
+  const rsi = calculateRsi(candles)[lastIndex];
+  const rsiAgrees = !Number.isNaN(rsi) && (wantsBullish ? rsi > 50 : rsi < 50);
+
+  const { macdLine, signalLine } = calculateMacd(candles);
+  const macd = macdLine[lastIndex];
+  const macdSignal = signalLine[lastIndex];
+  const macdAgrees = !Number.isNaN(macd) && !Number.isNaN(macdSignal) && (wantsBullish ? macd > macdSignal : macd < macdSignal);
+
+  const volumeAboveAverage = isAboveAverageVolume(candles, lastIndex, 20);
+  const marketStructureMatches = marketStructureTrend(swings) === zoneDirection;
+
+  const pattern = detectCandlestickPattern(candles, lastIndex);
+  const candlestickMatches = pattern !== null && (wantsBullish ? BULLISH_PATTERNS : BEARISH_PATTERNS).has(pattern);
+
+  const score = scoreSignal({
+    emaStackAligned,
+    adx,
+    marketStructureMatches,
+    smcZoneType: taggedNow.confluence,
+    volumeAboveAverage,
+    macdAgrees,
+    rsiAgrees,
+    candlestickMatches,
+  });
+
+  if (score.tier !== "strong_buy" && score.tier !== "buy") return [];
+
+  const confluences: Confluence[] = [
+    "liquidity_sweep",
+    "bos",
+    taggedNow.confluence,
+    "killzone",
+    "multi_timeframe",
+    ...score.reasons,
+  ];
+
   const signal: Signal = {
     id: randomUUID(),
     pair,
-    direction: wantsBullish ? "long" : "short",
+    direction,
     entry,
     stopLoss,
     takeProfit,
+    takeProfit2,
     riskReward: Math.abs(takeProfit - entry) / risk,
-    confluences: ["liquidity_sweep", "bos", taggedNow.confluence, "killzone"],
+    confidence: score.total,
+    tier: score.tier as ConfidenceTier,
+    confluences,
     session: getActiveSession(lastCandle.time),
     timeframe,
     createdAt: Date.now(),

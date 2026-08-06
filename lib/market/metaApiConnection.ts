@@ -19,6 +19,7 @@ import { brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
 
 const SIGNAL_TIMEFRAME: Timeframe = "15m";
+const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 
 class MarketSyncListener extends SynchronizationListener {
   async onSymbolPricesUpdated(_instanceIndex: string, prices: MetatraderSymbolPrice[]): Promise<void> {
@@ -36,7 +37,7 @@ class MarketSyncListener extends SynchronizationListener {
     for (const raw of candles) {
       const pair = pairForBrokerSymbol(raw.symbol);
       if (!pair) continue;
-      if (raw.timeframe !== "5m" && raw.timeframe !== "15m") continue;
+      if (!TRACKED_TIMEFRAMES.includes(raw.timeframe as Timeframe)) continue;
       const timeframe = raw.timeframe as Timeframe;
 
       const candle: Candle = {
@@ -59,7 +60,12 @@ class MarketSyncListener extends SynchronizationListener {
       eventBus.publish({ type: "candle", pair, timeframe, candle });
 
       if (barJustClosed && timeframe === SIGNAL_TIMEFRAME) {
-        for (const signal of assembleSignals(priorSeries, pair, SIGNAL_TIMEFRAME)) {
+        const higherTimeframes = {
+          h1: candleStore.get(pair, "1h"),
+          h4: candleStore.get(pair, "4h"),
+          d1: candleStore.get(pair, "1d"),
+        };
+        for (const signal of assembleSignals(priorSeries, pair, SIGNAL_TIMEFRAME, higherTimeframes)) {
           signalStore.add(signal);
           eventBus.publish({ type: "signal", signal });
         }
@@ -99,6 +105,9 @@ async function connect(): Promise<void> {
       { type: "quotes" },
       { type: "candles", timeframe: "5m" },
       { type: "candles", timeframe: "15m" },
+      { type: "candles", timeframe: "1h" },
+      { type: "candles", timeframe: "4h" },
+      { type: "candles", timeframe: "1d" },
     ]);
   }
 

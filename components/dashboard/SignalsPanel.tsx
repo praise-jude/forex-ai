@@ -2,6 +2,7 @@
 
 import type { Confluence, Signal } from "@/lib/market/types";
 import { formatPrice } from "@/lib/market/format";
+import { TradingRobot } from "./TradingRobot";
 
 const CONFLUENCE_LABEL: Record<Confluence, string> = {
   liquidity_sweep: "Liquidity sweep",
@@ -9,6 +10,20 @@ const CONFLUENCE_LABEL: Record<Confluence, string> = {
   fvg: "Fair value gap",
   order_block: "Order block",
   killzone: "Killzone",
+  ema_trend: "EMA trend",
+  rsi_momentum: "RSI momentum",
+  macd_crossover: "MACD",
+  volume: "Volume",
+  trend_ema_stack: "EMA stack",
+  market_structure: "Market structure",
+  adx: "ADX",
+  candlestick: "Candlestick",
+  multi_timeframe: "D1/H4 agreement",
+};
+
+const TIER_LABEL: Record<Signal["tier"], string> = {
+  strong_buy: "Strong buy",
+  buy: "Buy",
 };
 
 function relativeTime(fromMs: number): string {
@@ -21,20 +36,18 @@ function relativeTime(fromMs: number): string {
 }
 
 function SignalCard({ signal }: { signal: Signal }) {
-  const isLong = signal.direction === "long";
   return (
     <li className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <div className="flex items-center justify-between">
-        <span className="font-semibold text-zinc-100">{signal.pair}</span>
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${
-            isLong ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
-          }`}
-        >
-          {signal.direction}
-        </span>
+        <TradingRobot direction={signal.direction} />
+        <div className="text-right">
+          <div className="font-semibold text-zinc-100">{signal.pair}</div>
+          <span className="mt-1 inline-block rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-semibold text-sky-400">
+            {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}%
+          </span>
+        </div>
       </div>
-      <dl className="mt-2 grid grid-cols-3 gap-2 text-xs tabular-nums">
+      <dl className="mt-2 grid grid-cols-4 gap-2 text-xs tabular-nums">
         <div>
           <dt className="text-zinc-500">Entry</dt>
           <dd className="text-zinc-200">{formatPrice(signal.pair, signal.entry)}</dd>
@@ -44,8 +57,12 @@ function SignalCard({ signal }: { signal: Signal }) {
           <dd className="text-rose-400">{formatPrice(signal.pair, signal.stopLoss)}</dd>
         </div>
         <div>
-          <dt className="text-zinc-500">TP</dt>
+          <dt className="text-zinc-500">TP1</dt>
           <dd className="text-emerald-400">{formatPrice(signal.pair, signal.takeProfit)}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500">TP2</dt>
+          <dd className="text-emerald-400">{formatPrice(signal.pair, signal.takeProfit2)}</dd>
         </div>
       </dl>
       <div className="mt-2 flex flex-wrap gap-1">

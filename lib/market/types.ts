@@ -1,4 +1,4 @@
-export type Timeframe = "5m" | "15m";
+export type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 
 export type Pair = "EUR/USD" | "GBP/USD" | "USD/JPY" | "AUD/USD" | "USD/CAD";
 
@@ -66,7 +66,23 @@ export interface LiquiditySweep {
 
 export type Session = "asia" | "london" | "newyork" | "off-session";
 
-export type Confluence = "liquidity_sweep" | "bos" | "fvg" | "order_block" | "killzone";
+export type Confluence =
+  | "liquidity_sweep"
+  | "bos"
+  | "fvg"
+  | "order_block"
+  | "killzone"
+  | "ema_trend"
+  | "rsi_momentum"
+  | "macd_crossover"
+  | "volume"
+  | "trend_ema_stack"
+  | "market_structure"
+  | "adx"
+  | "candlestick"
+  | "multi_timeframe";
+
+export type ConfidenceTier = "strong_buy" | "buy";
 
 export interface Signal {
   id: string;
@@ -75,7 +91,10 @@ export interface Signal {
   entry: number;
   stopLoss: number;
   takeProfit: number;
+  takeProfit2: number;
   riskReward: number;
+  confidence: number;
+  tier: ConfidenceTier;
   confluences: Confluence[];
   session: Session;
   timeframe: Timeframe;

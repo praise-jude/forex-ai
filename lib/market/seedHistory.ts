@@ -4,7 +4,7 @@ import { PAIRS } from "./types";
 import { candleStore } from "./candleStore";
 import { brokerSymbol } from "./symbols";
 
-const TIMEFRAMES: Timeframe[] = ["5m", "15m"];
+const TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 const HISTORY_BARS = 300;
 
 /**
