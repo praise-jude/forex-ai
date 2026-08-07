@@ -116,6 +116,8 @@ export interface Signal {
   takeProfit2: number;
   riskReward: number;
   confidence: number;
+  directionScore: number;
+  entryScore: number;
   tier: ConfidenceTier;
   confluences: Confluence[];
   session: Session;

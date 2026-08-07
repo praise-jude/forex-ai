@@ -121,6 +121,9 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
           <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${TIER_BADGE_CLASSES[signal.tier]}`}>
             {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}%
           </span>
+          <div className="mt-1 text-[11px] text-zinc-500">
+            Direction {signal.directionScore.toFixed(0)}% &middot; Entry {signal.entryScore.toFixed(0)}%
+          </div>
         </div>
       </div>
       <dl className="mt-2 grid grid-cols-4 gap-2 text-xs tabular-nums">

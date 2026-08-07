@@ -240,7 +240,8 @@ export function assembleSignals(
     taggedNow.confluence,
     "killzone",
     "multi_timeframe",
-    ...score.reasons,
+    ...score.direction.reasons,
+    ...score.entry.reasons,
   ];
 
   const signal: Signal = {
@@ -253,6 +254,8 @@ export function assembleSignals(
     takeProfit2,
     riskReward: Math.abs(takeProfit - entry) / risk,
     confidence: score.total,
+    directionScore: score.direction.total,
+    entryScore: score.entry.total,
     tier: score.tier,
     confluences,
     session: getActiveSession(lastCandle.time),

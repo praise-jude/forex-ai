@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { scoreSignal, type ScoreInput } from "../confidenceScore";
+import { scoreSignal, type DirectionScoreInput, type EntryScoreInput } from "../confidenceScore";
 
-function buildInput(overrides: Partial<ScoreInput> = {}): ScoreInput {
+function buildInput(
+  overrides: Partial<DirectionScoreInput & EntryScoreInput> = {}
+): DirectionScoreInput & EntryScoreInput {
   return {
     emaStackAligned: true,
     adx: 30,
@@ -16,59 +18,56 @@ function buildInput(overrides: Partial<ScoreInput> = {}): ScoreInput {
 }
 
 describe("scoreSignal", () => {
-  it("scores a perfect setup at 95 (the practical ceiling with News excluded) and tiers strong_buy", () => {
+  it("scores a perfect setup at 100/100 and tiers strong_buy", () => {
     const result = scoreSignal(buildInput());
-    expect(result.total).toBe(95);
+    expect(result.direction.total).toBe(100);
+    expect(result.entry.total).toBe(100);
+    expect(result.total).toBe(100);
     expect(result.tier).toBe("strong_buy");
-    expect(result.reasons).toEqual([
-      "trend_ema_stack",
-      "adx",
-      "market_structure",
-      "volume",
-      "macd_crossover",
-      "rsi_momentum",
-      "candlestick",
-    ]);
   });
 
-  it("tiers buy at 90-94", () => {
-    const result = scoreSignal(buildInput({ candlestickMatches: false }));
-    expect(result.total).toBe(90);
-    expect(result.tier).toBe("buy");
-    expect(result.reasons).not.toContain("candlestick");
-  });
-
-  it("tiers watch at 80-89 (not emitted as a tradeable signal by the caller)", () => {
-    const result = scoreSignal(buildInput({ rsiAgrees: false, candlestickMatches: false }));
-    expect(result.total).toBe(85);
-    expect(result.tier).toBe("watch");
-  });
-
-  it("tiers no_trade below 80", () => {
-    const result = scoreSignal({
-      emaStackAligned: false,
-      adx: 15,
-      marketStructureMatches: false,
-      smcZoneType: "fvg",
-      volumeAboveAverage: false,
-      macdAgrees: false,
-      rsiAgrees: false,
-      candlestickMatches: false,
-    });
-    expect(result.total).toBe(15);
+  it("bottlenecks the final tier to a weak entry even when direction is perfect", () => {
+    // Direction stays perfect (strong_buy on its own); entry has nothing going for it
+    // except the zone itself, well below the watch floor -- this is the user's core
+    // "trend is bullish but entry confirmation is incomplete" scenario, and it must
+    // NOT produce a tradeable signal just because the trend looks great.
+    const result = scoreSignal(
+      buildInput({ smcZoneType: "fvg", candlestickMatches: false, macdAgrees: false, rsiAgrees: false, volumeAboveAverage: false })
+    );
+    expect(result.direction.tier).toBe("strong_buy");
+    expect(result.entry.tier).toBe("no_trade");
     expect(result.tier).toBe("no_trade");
+    expect(result.total).toBe(result.entry.total);
   });
 
-  it("gives partial ADX credit between 20 and 25, and none below 20", () => {
-    const adequate = scoreSignal(buildInput({ adx: 22 }));
-    const weak = scoreSignal(buildInput({ adx: 15 }));
-    expect(adequate.total - weak.total).toBe(2.5);
+  it("bottlenecks the final tier to a weak direction even when entry is perfect", () => {
+    // The symmetric case -- a textbook entry trigger doesn't matter if the
+    // higher-timeframe trend evidence isn't actually there.
+    const result = scoreSignal(buildInput({ emaStackAligned: false, marketStructureMatches: false, adx: 10 }));
+    expect(result.entry.tier).toBe("strong_buy");
+    expect(result.direction.tier).toBe("no_trade");
+    expect(result.tier).toBe("no_trade");
+    expect(result.total).toBe(result.direction.total);
+  });
+
+  it("tiers buy at 90-94 on both dimensions", () => {
+    const result = scoreSignal(buildInput({ adx: 22, volumeAboveAverage: false }));
+    expect(result.direction.total).toBe(92.5); // 45 + 40 + 7.5 (partial ADX credit)
+    expect(result.entry.total).toBe(90); // 35 + 25 + 20 + 10, no volume credit
+    expect(result.tier).toBe("buy");
+    expect(result.total).toBe(90);
+  });
+
+  it("gives partial ADX credit between 20 and 25, and none below 20 (direction dimension)", () => {
+    const adequate = scoreSignal(buildInput({ adx: 22 })).direction;
+    const weak = scoreSignal(buildInput({ adx: 15 })).direction;
+    expect(adequate.total - weak.total).toBe(7.5);
     expect(weak.reasons).not.toContain("adx");
   });
 
-  it("gives an order block more credit than an FVG for the same setup otherwise", () => {
-    const withOrderBlock = scoreSignal(buildInput({ smcZoneType: "order_block" }));
-    const withFvg = scoreSignal(buildInput({ smcZoneType: "fvg" }));
-    expect(withOrderBlock.total - withFvg.total).toBe(5);
+  it("gives an order block more credit than an FVG for the same setup otherwise (entry dimension)", () => {
+    const withOrderBlock = scoreSignal(buildInput({ smcZoneType: "order_block" })).entry;
+    const withFvg = scoreSignal(buildInput({ smcZoneType: "fvg" })).entry;
+    expect(withOrderBlock.total - withFvg.total).toBe(10);
   });
 });
