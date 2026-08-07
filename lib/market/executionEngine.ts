@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { ExecutedTrade, Signal } from "./types";
+import type { AccountKey, ExecutedTrade, Signal } from "./types";
 import { positionStore } from "./positionStore";
 import { riskState } from "./riskState";
 import { checkRiskLimits, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize } from "./positionSizing";
-import { getAccountInformation, getOpenPositionCount, getSymbolSpecification, placeMarketOrder } from "./metaApiConnection";
+import {
+  getAccountInformation,
+  getOpenPositionCount,
+  getSymbolSpecification,
+  isAccountConfigured,
+  placeMarketOrder,
+} from "./metaApiConnection";
 
 // MT5's comment+clientId combined length cap is ~26-31 chars, so the raw signal.id
 // (a 36-char UUID) doesn't fit — use a short hash instead, as defense-in-depth
@@ -22,17 +28,18 @@ export type ExecutionResult =
   | { status: "rejected"; trade: ExecutedTrade };
 
 /**
- * Attempts to execute a single signal: risk checks -> position sizing -> order
- * placement -> ledger recording. Safe to call more than once for the same signal —
- * every call after the first returns "duplicate" via the idempotency guard below,
- * without re-hitting the broker. Called from the manual Buy/Sell confirmation route
- * (there is no automatic trigger — trading only happens when a user clicks it).
+ * Attempts to execute a single signal against the given account: risk checks -> position
+ * sizing -> order placement -> ledger recording. Safe to call more than once for the same
+ * signal+account pair — every call after the first returns "duplicate" via the
+ * idempotency guard below, without re-hitting the broker. Called from the manual Buy/Sell
+ * confirmation route, the TradingView webhook (always "live"), and the auto-execution
+ * listener for DEMO/LIVE engine mode.
  */
-export async function attemptExecution(signal: Signal): Promise<ExecutionResult> {
+export async function attemptExecution(signal: Signal, accountKey: AccountKey = "live"): Promise<ExecutionResult> {
   // Primary idempotency guard. Must run synchronously, before the first `await` in
   // this function, so it's race-free against a duplicate click (or two browser tabs)
   // arriving while an earlier attempt for the same signal is still in flight.
-  if (positionStore.hasExecuted(signal.id)) return { status: "duplicate" };
+  if (positionStore.hasExecuted(signal.id, accountKey)) return { status: "duplicate" };
 
   // Watch-tier signals are shown on the dashboard for information only — they never
   // cleared the buy/strong_buy confidence bar, so there's deliberately no button for
@@ -42,19 +49,23 @@ export async function attemptExecution(signal: Signal): Promise<ExecutionResult>
   }
 
   const now = Date.now();
-  const config = loadExecutionConfig();
+  const config = loadExecutionConfig(accountKey);
 
-  const account = getAccountInformation();
+  const account = getAccountInformation(accountKey);
   if (!account) {
-    console.error(`[execution] skip ${signal.pair} ${signal.id}: no account information available yet`);
-    return { status: "blocked", code: "no_account", reason: "no account information available yet" };
+    const reason =
+      accountKey === "demo" && !isAccountConfigured("demo")
+        ? "demo account is not configured (missing METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID)"
+        : "no account information available yet";
+    console.error(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${reason}`);
+    return { status: "blocked", code: "no_account", reason };
   }
 
-  const dayState = riskState.current(now, account.equity);
+  const dayState = riskState.current(now, account.equity, accountKey);
   const riskCheck = checkRiskLimits({
     killSwitchActive: isKillSwitchActive(config.killSwitchFile),
     haltedForToday: dayState.haltedForToday,
-    openPositionCount: getOpenPositionCount(),
+    openPositionCount: getOpenPositionCount(accountKey),
     maxConcurrentPositions: config.maxConcurrentPositions,
     tradesOpenedToday: dayState.tradesOpenedToday,
     maxTradesPerDay: config.maxTradesPerDay,
@@ -64,20 +75,20 @@ export async function attemptExecution(signal: Signal): Promise<ExecutionResult>
   });
 
   if (!riskCheck.allowed) {
-    console.log(`[execution] skip ${signal.pair} ${signal.id}: ${riskCheck.reason}`);
-    if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity);
+    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${riskCheck.reason}`);
+    if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity, accountKey);
     return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
   }
 
-  const spec = getSymbolSpecification(signal.pair);
+  const spec = getSymbolSpecification(signal.pair, accountKey);
   if (!spec) {
-    console.error(`[execution] skip ${signal.pair} ${signal.id}: no symbol specification available yet`);
+    console.error(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): no symbol specification available yet`);
     return { status: "blocked", code: "no_symbol_spec", reason: "no symbol specification available yet" };
   }
 
   const sizing = computeLotSize(signal, account.equity, config.riskPerTradePct, spec);
   if ("skipped" in sizing) {
-    console.log(`[execution] skip ${signal.pair} ${signal.id}: ${sizing.reason}`);
+    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);
     return { status: "skipped_sizing", reason: sizing.reason };
   }
 
@@ -86,6 +97,7 @@ export async function attemptExecution(signal: Signal): Promise<ExecutionResult>
   const record = positionStore.recordAttempt({
     id: randomUUID(),
     signalId: signal.id,
+    account: accountKey,
     pair: signal.pair,
     direction: signal.direction,
     requestedLots: sizing.lots,
@@ -103,12 +115,13 @@ export async function attemptExecution(signal: Signal): Promise<ExecutionResult>
     signal.stopLoss,
     signal.takeProfit,
     signal.entry,
-    shortClientId(signal.id)
+    shortClientId(signal.id),
+    accountKey
   );
 
   if (!result.success) {
-    positionStore.markRejected(signal.id, result.message);
-    console.error(`[execution] rejected ${signal.pair} ${signal.id}: ${result.message}`, {
+    positionStore.markRejected(signal.id, result.message, accountKey);
+    console.error(`[execution] rejected ${signal.pair} ${signal.id} (${accountKey}): ${result.message}`, {
       numericCode: result.numericCode,
       stringCode: result.stringCode,
       lots: sizing.lots,
@@ -117,15 +130,19 @@ export async function attemptExecution(signal: Signal): Promise<ExecutionResult>
   }
 
   const filledAt = Date.now();
-  positionStore.markFilled(signal.id, {
-    filledEntry: result.filledEntry,
-    brokerPositionId: result.brokerPositionId,
-    brokerOrderId: result.brokerOrderId,
-    filledAt,
-  });
-  riskState.recordTradeOpened(now, account.equity);
+  positionStore.markFilled(
+    signal.id,
+    {
+      filledEntry: result.filledEntry,
+      brokerPositionId: result.brokerPositionId,
+      brokerOrderId: result.brokerOrderId,
+      filledAt,
+    },
+    accountKey
+  );
+  riskState.recordTradeOpened(now, account.equity, accountKey);
   console.log(
-    `[execution] filled ${signal.direction} ${sizing.lots} lots ${signal.pair} @ ${result.filledEntry} (signal ${signal.id})`
+    `[execution] filled ${signal.direction} ${sizing.lots} lots ${signal.pair} @ ${result.filledEntry} (signal ${signal.id}, ${accountKey})`
   );
   return {
     status: "filled",

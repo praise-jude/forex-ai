@@ -4,7 +4,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Forex AI signal dashboard
 
-`/dashboard` is a live SMC/ICT-style trading system for MT5 majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD). It detects setups (liquidity sweep → structure break → retest of an unmitigated order block/fair value gap, during a London/NY killzone, with D1/H4/H1 trend agreement) and shows entry/SL/TP suggestions on the dashboard as Jude (long) / Omini (short) signal cards, each carrying a weighted confidence score. A score of 90%+ (95%+ for "strong buy") gets a Buy/Sell button; 80-89% is shown as "watch" — informational only, no button, since it didn't clear the bar for a real signal. **Nothing is sent to the broker automatically** — each executable card has a Buy or Sell button (matching the signal's direction) that a user must click to actually place the trade. See "Manual execution" below before pointing this at a real account; the dashboard-only signal detection is unaffected by, and independent of, whether a signal ever gets executed.
+`/dashboard` is a live SMC/ICT-style trading system for MT5 majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD). It detects setups (liquidity sweep → structure break → retest of an unmitigated order block/fair value gap, during a London/NY killzone, with D1/H4/H1 trend agreement) and shows entry/SL/TP suggestions on the dashboard as Jude (long) / Omini (short) signal cards, each carrying a weighted confidence score. A score of 90%+ (95%+ for "strong buy") gets a Buy/Sell button; 80-89% is shown as "watch" — informational only, no button, since it didn't clear the bar for a real signal. By default (**ANALYSIS** engine mode) **nothing is sent to the broker automatically** — each executable card has a Buy or Sell button (matching the signal's direction) that a user must click to actually place the trade. Optional **DEMO**/**LIVE** engine modes make confirmed signals auto-execute with no click — see "Engine mode" below. See "Manual execution" below before pointing this at a real account; the dashboard-only signal detection is unaffected by, and independent of, whether a signal ever gets executed.
 
 ### MetaApi setup
 
@@ -43,6 +43,20 @@ Either switch blocks a Buy/Sell click the same way it would have blocked an auto
 **What's not covered**: pending/limit orders (market orders only, fired at the moment Buy/Sell is clicked), trailing stops or partial take-profit (SL/TP are set once at open and never adjusted), and portfolio-level correlation limits (nothing stops correlated pairs from both being manually opened and stacking risk beyond `MAX_CONCURRENT_POSITIONS`). The execution ledger (which signal caused which trade) is in-memory only — a restart loses that audit trail, though open positions themselves are safe and are read directly from the broker, not from local memory.
 
 **Before going live**: test against a MetaApi **demo account** first. Confirm clicking Buy/Sell on a signal produces a correctly-sized order with SL/TP attached, confirm the kill-switch file actually blocks the click, and confirm `MAX_DAILY_LOSS_PCT` trips as expected before trusting this with real funds.
+
+### Engine mode: ANALYSIS / DEMO / LIVE (optional auto-pilot)
+
+The dashboard has a mode selector, next to the connection status and kill switch:
+
+- **ANALYSIS** (default, and the *only* mode on every fresh boot/restart — this is never persisted anywhere): signals are detected and shown, nothing executes automatically. A manual Buy/Sell click still fires against your **live** account, same as always.
+- **DEMO**: confirmed SMC signals auto-execute with no click, against a **separate** MetaApi demo account (`METAAPI_DEMO_TOKEN`/`METAAPI_DEMO_ACCOUNT_ID`) — never your live account. While DEMO mode is selected, a manual Buy/Sell click *also* targets the demo account instead of live, so testing can't accidentally place a real order. Requires the demo env vars to be set — otherwise the DEMO button is disabled and switching to it via the API returns 400.
+- **LIVE**: confirmed SMC signals auto-execute with no click against your **real** Exness account. This can only be turned on from the dashboard control by typing the exact confirmation phrase shown there (`ENABLE LIVE TRADING`) — re-validated server-side, not just client-side. There is no env var that enables LIVE mode; it is never enabled automatically by the app itself, on boot or otherwise.
+
+DEMO and LIVE go through **exactly the same risk checks** as manual execution — position sizing, max concurrent positions, daily loss limit, max trades/day, and both kill switches — no exceptions. DEMO has its own independent config (`DEMO_RISK_PER_TRADE_PCT`, `DEMO_MAX_CONCURRENT_POSITIONS`, `DEMO_MAX_DAILY_LOSS_PCT`, `DEMO_MAX_TRADES_PER_DAY`, `KILL_SWITCH_FILE_DEMO`) so it can be tuned without touching live's settings; the platform-level `TRADING_KILL_SWITCH` env var is the one exception — it's a single global switch that blocks **both** accounts at once, on purpose, as the "something is wrong, stop everything" escape hatch.
+
+**What auto-pilot does not affect**: the TradingView webhook (above) always targets your live account directly, completely unaffected by engine mode — it has its own dedicated, always-on execution path.
+
+**Before enabling DEMO**: create a free MT5 demo account with your broker (or any broker — MetaApi doesn't require it to match your live broker), add it in your MetaApi dashboard the same way you added the live account, and set `METAAPI_DEMO_TOKEN`/`METAAPI_DEMO_ACCOUNT_ID`. **Before ever typing the LIVE confirmation phrase**: validate the engine's behavior thoroughly in DEMO mode first — LIVE places real orders on real money the instant a signal is confirmed, with no further confirmation per trade.
 
 ### TradingView webhook (optional, auto-executes — read this before enabling)
 

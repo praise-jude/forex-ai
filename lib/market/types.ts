@@ -135,6 +135,10 @@ export type StreamEvent =
 
 // --- Execution ---
 
+/** Which broker account a connection/order/risk-check applies to. "live" is the real
+ * Exness account; "demo" is a separate MetaApi demo account used by DEMO engine mode. */
+export type AccountKey = "live" | "demo";
+
 export interface SymbolSpec {
   contractSize: number;
   volumeStep: number;
@@ -147,24 +151,12 @@ export interface AccountInfo {
   equity: number;
 }
 
-export interface OpenPosition {
-  id: string; // broker position id
-  pair: Pair;
-  direction: "long" | "short";
-  lots: number;
-  openPrice: number;
-  currentPrice: number;
-  stopLoss?: number;
-  takeProfit?: number;
-  profit: number; // in account currency
-  clientId?: string;
-}
-
 export type ExecutionStatus = "pending" | "filled" | "rejected";
 
 export interface ExecutedTrade {
   id: string;
   signalId: string;
+  account: AccountKey;
   pair: Pair;
   direction: "long" | "short";
   requestedLots: number;

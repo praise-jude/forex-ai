@@ -19,6 +19,10 @@ class SignalStore {
     existing.push(signal);
     this.byPair.set(signal.pair, existing);
     this.byId.set(signal.id, signal);
+    // Opportunistic, not scheduled -- add() is the only place new entries come in, so
+    // pruning here is what actually keeps byPair/byId bounded over a long-running
+    // process. Previously defined but never called, so the store grew unbounded forever.
+    this.prune();
   }
 
   get(id: string): Signal | undefined {

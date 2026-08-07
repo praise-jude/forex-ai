@@ -1,4 +1,4 @@
-import type { ExecutedTrade } from "./types";
+import type { AccountKey, ExecutedTrade } from "./types";
 
 type AttemptInput = Omit<ExecutedTrade, "status" | "filledEntry" | "brokerPositionId" | "brokerOrderId" | "rejectReason" | "filledAt">;
 
@@ -6,31 +6,41 @@ type AttemptInput = Omit<ExecutedTrade, "status" | "filledEntry" | "brokerPositi
  * The execution audit ledger — "why did we take this trade" (which signal, intended
  * risk %, requested vs filled). NOT a live-position mirror: what's actually open right
  * now with live P/L comes from the broker's own terminal state, not this store.
+ *
+ * Keyed by `account:signalId`, not just `signalId` — the same signal can legitimately be
+ * attempted once per account (e.g. auto-fired on demo, and separately, manually, on live)
+ * without those two attempts shadowing each other's idempotency guard.
  */
 class PositionStore {
-  private bySignalId = new Map<string, ExecutedTrade>();
+  private byKey = new Map<string, ExecutedTrade>();
 
-  /** True once a signal has been attempted, regardless of outcome. */
-  hasExecuted(signalId: string): boolean {
-    return this.bySignalId.has(signalId);
+  private key(signalId: string, account: AccountKey): string {
+    return `${account}:${signalId}`;
+  }
+
+  /** True once a signal has been attempted for this account, regardless of outcome. */
+  hasExecuted(signalId: string, account: AccountKey = "live"): boolean {
+    return this.byKey.has(this.key(signalId, account));
   }
 
   /**
-   * Reserves the signal id in "pending" status. Must be called synchronously — before
-   * the first `await` of the broker call — so it's race-free against Node's
-   * single-threaded execution and can't double-fire on a duplicate event delivery.
+   * Reserves the signal id (for its account) in "pending" status. Must be called
+   * synchronously — before the first `await` of the broker call — so it's race-free
+   * against Node's single-threaded execution and can't double-fire on a duplicate event
+   * delivery.
    */
   recordAttempt(input: AttemptInput): ExecutedTrade {
     const record: ExecutedTrade = { ...input, status: "pending" };
-    this.bySignalId.set(input.signalId, record);
+    this.byKey.set(this.key(input.signalId, input.account), record);
     return record;
   }
 
   markFilled(
     signalId: string,
-    update: { filledEntry: number; brokerPositionId?: string; brokerOrderId?: string; filledAt: number }
+    update: { filledEntry: number; brokerPositionId?: string; brokerOrderId?: string; filledAt: number },
+    account: AccountKey = "live"
   ): void {
-    const record = this.bySignalId.get(signalId);
+    const record = this.byKey.get(this.key(signalId, account));
     if (!record) return;
     record.status = "filled";
     record.filledEntry = update.filledEntry;
@@ -39,22 +49,15 @@ class PositionStore {
     record.filledAt = update.filledAt;
   }
 
-  markRejected(signalId: string, rejectReason: string): void {
-    const record = this.bySignalId.get(signalId);
+  markRejected(signalId: string, rejectReason: string, account: AccountKey = "live"): void {
+    const record = this.byKey.get(this.key(signalId, account));
     if (!record) return;
     record.status = "rejected";
     record.rejectReason = rejectReason;
   }
 
   all(): ExecutedTrade[] {
-    return Array.from(this.bySignalId.values()).sort((a, b) => b.attemptedAt - a.attemptedAt);
-  }
-
-  /** Filled trades whose attempt falls on the given UTC day. */
-  tradesOnDay(dayKey: string): ExecutedTrade[] {
-    return this.all().filter(
-      (trade) => trade.status === "filled" && new Date(trade.attemptedAt).toISOString().slice(0, 10) === dayKey
-    );
+    return Array.from(this.byKey.values()).sort((a, b) => b.attemptedAt - a.attemptedAt);
   }
 }
 

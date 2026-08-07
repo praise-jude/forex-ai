@@ -1,3 +1,5 @@
+import type { AccountKey } from "./types";
+
 export interface DailyRiskState {
   dayKey: string; // YYYY-MM-DD, UTC
   startOfDayEquity: number;
@@ -9,24 +11,29 @@ function dayKeyFor(nowMs: number): string {
   return new Date(nowMs).toISOString().slice(0, 10);
 }
 
+/** One independent daily-risk state per account — a bad demo day never halts live
+ * trading (or vice versa), since they're different accounts with different equity. */
 class RiskStateStore {
-  private state: DailyRiskState | null = null;
+  private states = new Map<AccountKey, DailyRiskState>();
 
-  /** Returns today's state, resetting it (fresh trade count, new equity anchor) if the UTC day rolled over. */
-  current(nowMs: number, currentEquity: number): DailyRiskState {
+  /** Returns today's state for the account, resetting it (fresh trade count, new equity anchor) if the UTC day rolled over. */
+  current(nowMs: number, currentEquity: number, account: AccountKey = "live"): DailyRiskState {
     const dayKey = dayKeyFor(nowMs);
-    if (!this.state || this.state.dayKey !== dayKey) {
-      this.state = { dayKey, startOfDayEquity: currentEquity, tradesOpenedToday: 0, haltedForToday: false };
+    const existing = this.states.get(account);
+    if (!existing || existing.dayKey !== dayKey) {
+      const fresh: DailyRiskState = { dayKey, startOfDayEquity: currentEquity, tradesOpenedToday: 0, haltedForToday: false };
+      this.states.set(account, fresh);
+      return fresh;
     }
-    return this.state;
+    return existing;
   }
 
-  recordTradeOpened(nowMs: number, currentEquity: number): void {
-    this.current(nowMs, currentEquity).tradesOpenedToday += 1;
+  recordTradeOpened(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
+    this.current(nowMs, currentEquity, account).tradesOpenedToday += 1;
   }
 
-  setHaltedForToday(nowMs: number, currentEquity: number): void {
-    this.current(nowMs, currentEquity).haltedForToday = true;
+  setHaltedForToday(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
+    this.current(nowMs, currentEquity, account).haltedForToday = true;
   }
 }
 

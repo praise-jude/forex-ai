@@ -1,0 +1,37 @@
+import { eventBus } from "./eventBus";
+import { attemptExecution } from "./executionEngine";
+import { autoExecutionAccount, getEngineMode } from "./engineMode";
+
+let started = false;
+
+/**
+ * The ONLY place a signal can auto-execute without a manual click. Subscribes to the
+ * same eventBus "signal" events the SSE stream already consumes -- a second subscriber,
+ * not a change to signalEngine.ts, which stays a pure, side-effect-free function.
+ *
+ * Checks engine mode fresh on every event (never cached) -- mode can only reach "live"
+ * via an explicit, server-validated confirmation (engineMode.ts), and this listener
+ * never sets it, only reads it.
+ *
+ * Deliberately ignores signal.source === "tradingview": that source already has its own
+ * dedicated, always-live execution path (the webhook route calls attemptExecution
+ * directly, unconditionally, regardless of engine mode). Reacting to it here too would
+ * risk auto-firing a TradingView alert against the demo account as a side effect of
+ * whatever engine mode happens to be selected -- behavior that integration was never
+ * designed for.
+ */
+export function startAutoExecutionListener(): void {
+  if (started) return;
+  started = true;
+
+  eventBus.subscribe((event) => {
+    if (event.type !== "signal" || event.signal.source !== "smc") return;
+
+    const accountKey = autoExecutionAccount(getEngineMode());
+    if (!accountKey) return; // ANALYSIS: no-op
+
+    attemptExecution(event.signal, accountKey).catch((error: unknown) => {
+      console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);
+    });
+  });
+}

@@ -33,4 +33,22 @@ describe("riskState", () => {
       haltedForToday: false,
     });
   });
+
+  it("keeps demo and live daily state fully independent", () => {
+    const day = Date.UTC(2024, 2, 1, 10, 0, 0);
+    riskState.current(day, 50000, "live");
+    riskState.current(day, 5000, "demo");
+
+    riskState.recordTradeOpened(day, 50000, "live");
+    riskState.recordTradeOpened(day, 5000, "demo");
+    riskState.recordTradeOpened(day, 5000, "demo");
+    riskState.setHaltedForToday(day, 5000, "demo");
+
+    const live = riskState.current(day, 50000, "live");
+    const demo = riskState.current(day, 5000, "demo");
+    expect(live.tradesOpenedToday).toBe(1);
+    expect(live.haltedForToday).toBe(false); // a halted demo day never halts live
+    expect(demo.tradesOpenedToday).toBe(2);
+    expect(demo.haltedForToday).toBe(true);
+  });
 });

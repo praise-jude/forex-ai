@@ -7,19 +7,19 @@ interface KillSwitchState {
   envControlled: boolean;
 }
 
-export function KillSwitchControl() {
+export function KillSwitchControl({ account = "live" }: { account?: "live" | "demo" }) {
   const [state, setState] = useState<KillSwitchState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/kill-switch")
+    fetch(`/api/kill-switch?account=${account}`)
       .then((res) => res.json())
       .then(setState)
       .catch(() => {
         // Best-effort; the button just stays hidden until this succeeds.
       });
-  }, []);
+  }, [account]);
 
   async function toggle(action: "pause" | "resume") {
     // Stopping is always the safe direction and needs no confirmation. Resuming is the
@@ -35,7 +35,7 @@ export function KillSwitchControl() {
       const res = await fetch("/api/kill-switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, account }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -52,10 +52,12 @@ export function KillSwitchControl() {
 
   if (!state) return null;
 
+  const label = account === "demo" ? "DEMO" : "LIVE";
+
   if (state.envControlled) {
     return (
       <span className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400">
-        🛑 PAUSED (platform switch)
+        🛑 {label} PAUSED (platform switch)
       </span>
     );
   }
@@ -70,7 +72,7 @@ export function KillSwitchControl() {
           disabled={busy}
           className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-[0_3px_0_#065f46] transition disabled:cursor-not-allowed disabled:opacity-60"
         >
-          ▶ RESUME TRADING
+          ▶ RESUME {label}
         </button>
       </div>
     );
@@ -85,7 +87,7 @@ export function KillSwitchControl() {
         disabled={busy}
         className="rounded-lg border border-rose-800 bg-gradient-to-b from-rose-500 to-rose-700 px-3 py-1.5 text-xs font-bold text-white shadow-[0_3px_0_#8f1c1c] transition disabled:cursor-not-allowed disabled:opacity-60"
       >
-        🛑 STOP ROBOT
+        🛑 STOP {label}
       </button>
     </div>
   );
