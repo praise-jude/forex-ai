@@ -151,6 +151,19 @@ export interface AccountInfo {
   equity: number;
 }
 
+export interface OpenPosition {
+  id: string; // broker position id
+  pair: Pair;
+  direction: "long" | "short";
+  lots: number;
+  openPrice: number;
+  currentPrice: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  profit: number; // in account currency
+  clientId?: string;
+}
+
 export type ExecutionStatus = "pending" | "filled" | "rejected";
 
 export interface ExecutedTrade {

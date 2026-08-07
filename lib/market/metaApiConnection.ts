@@ -8,7 +8,7 @@ import type {
   MetatraderTradeResponse,
   StreamingMetaApiConnectionInstance,
 } from "metaapi.cloud-sdk/node";
-import type { AccountInfo, AccountKey, Candle, Pair, SymbolSpec, Timeframe } from "./types";
+import type { AccountInfo, AccountKey, Candle, OpenPosition, Pair, SymbolSpec, Timeframe } from "./types";
 import { PAIRS } from "./types";
 import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
@@ -207,6 +207,29 @@ export function getAccountInformation(accountKey: AccountKey = "live"): AccountI
 /** Total open positions on the account, including any not opened by this app — used for risk limits. */
 export function getOpenPositionCount(accountKey: AccountKey = "live"): number {
   return stateFor(accountKey).connection?.terminalState.positions.length ?? 0;
+}
+
+/** Open positions mapped to our tracked pairs only (skips symbols outside the 5 majors, e.g. opened manually). */
+export function getOpenPositions(accountKey: AccountKey = "live"): OpenPosition[] {
+  const positions = stateFor(accountKey).connection?.terminalState.positions ?? [];
+  const result: OpenPosition[] = [];
+  for (const raw of positions) {
+    const pair = pairForBrokerSymbol(raw.symbol);
+    if (!pair) continue;
+    result.push({
+      id: String(raw.id),
+      pair,
+      direction: raw.type === "POSITION_TYPE_BUY" ? "long" : "short",
+      lots: raw.volume,
+      openPrice: raw.openPrice,
+      currentPrice: raw.currentPrice,
+      stopLoss: raw.stopLoss,
+      takeProfit: raw.takeProfit,
+      profit: raw.profit,
+      clientId: raw.clientId,
+    });
+  }
+  return result;
 }
 
 export function getSymbolSpecification(pair: Pair, accountKey: AccountKey = "live"): SymbolSpec | undefined {

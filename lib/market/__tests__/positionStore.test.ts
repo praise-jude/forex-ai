@@ -55,4 +55,31 @@ describe("positionStore", () => {
     positionStore.recordAttempt({ ...ATTEMPT, id: "trade-live", signalId: "signal-shared", account: "live" });
     expect(positionStore.hasExecuted("signal-shared", "live")).toBe(true);
   });
+
+  it("counts only filled trades for a given UTC day", () => {
+    positionStore.recordAttempt({ ...ATTEMPT, id: "trade-3", signalId: "signal-3" });
+    positionStore.markFilled("signal-3", { filledEntry: 1.105, filledAt: Date.UTC(2024, 1, 1, 8, 0, 2) });
+    positionStore.recordAttempt({ ...ATTEMPT, id: "trade-4", signalId: "signal-4" });
+    positionStore.markRejected("signal-4", "insufficient margin");
+
+    const filledToday = positionStore.tradesOnDay("2024-02-01");
+    expect(filledToday.map((t) => t.signalId)).toContain("signal-3");
+    expect(filledToday.map((t) => t.signalId)).not.toContain("signal-4");
+  });
+
+  it("scopes tradesOnDay to the requested account only", () => {
+    positionStore.recordAttempt({ ...ATTEMPT, id: "trade-demo-2", signalId: "signal-demo-2", account: "demo" });
+    positionStore.markFilled(
+      "signal-demo-2",
+      { filledEntry: 1.105, filledAt: Date.UTC(2024, 1, 1, 9, 0, 0) },
+      "demo"
+    );
+
+    const demoFilled = positionStore.tradesOnDay("2024-02-01", "demo");
+    expect(demoFilled.map((t) => t.signalId)).toContain("signal-demo-2");
+    expect(demoFilled.every((t) => t.account === "demo")).toBe(true);
+
+    const liveFilled = positionStore.tradesOnDay("2024-02-01", "live");
+    expect(liveFilled.some((t) => t.signalId === "signal-demo-2")).toBe(false);
+  });
 });

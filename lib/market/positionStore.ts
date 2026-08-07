@@ -59,6 +59,16 @@ class PositionStore {
   all(): ExecutedTrade[] {
     return Array.from(this.byKey.values()).sort((a, b) => b.attemptedAt - a.attemptedAt);
   }
+
+  /** Filled trades for the given account whose attempt falls on the given UTC day. */
+  tradesOnDay(dayKey: string, account: AccountKey = "live"): ExecutedTrade[] {
+    return this.all().filter(
+      (trade) =>
+        trade.account === account &&
+        trade.status === "filled" &&
+        new Date(trade.attemptedAt).toISOString().slice(0, 10) === dayKey
+    );
+  }
 }
 
 const globalKey = Symbol.for("forex-ai.positionStore");
