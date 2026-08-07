@@ -122,7 +122,9 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
             {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}%
           </span>
           <div className="mt-1 text-[11px] text-zinc-500">
-            Direction {signal.directionScore.toFixed(0)}% &middot; Entry {signal.entryScore.toFixed(0)}%
+            {signal.source === "tradingview"
+              ? "Source: TradingView"
+              : `Direction ${signal.directionScore.toFixed(0)}% · Entry ${signal.entryScore.toFixed(0)}%`}
           </div>
         </div>
       </div>
@@ -144,13 +146,15 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
           <dd className="text-emerald-400">{formatPrice(signal.pair, signal.takeProfit2)}</dd>
         </div>
       </dl>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {signal.confluences.map((c) => (
-          <span key={c} className="rounded-full bg-zinc-700/60 px-2 py-0.5 text-[11px] text-zinc-300">
-            {CONFLUENCE_LABEL[c]}
-          </span>
-        ))}
-      </div>
+      {signal.confluences.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {signal.confluences.map((c) => (
+            <span key={c} className="rounded-full bg-zinc-700/60 px-2 py-0.5 text-[11px] text-zinc-300">
+              {CONFLUENCE_LABEL[c]}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
         <span>
           R:R {signal.riskReward.toFixed(1)} &middot; {signal.session}

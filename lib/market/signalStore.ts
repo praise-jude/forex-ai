@@ -6,7 +6,15 @@ class SignalStore {
   private byPair = new Map<Pair, Signal[]>();
   private byId = new Map<string, Signal>();
 
+  /**
+   * No-ops for an id already present. The SMC engine always generates a fresh
+   * randomUUID so this never triggers there, but a redelivered/retried TradingView
+   * webhook alert reuses the same id deliberately (see tradingViewWebhook.ts) --
+   * without this guard it'd show as a visual duplicate on the dashboard even though
+   * positionStore already treats it as a single execution attempt.
+   */
   add(signal: Signal): void {
+    if (this.byId.has(signal.id)) return;
     const existing = this.byPair.get(signal.pair) ?? [];
     existing.push(signal);
     this.byPair.set(signal.pair, existing);

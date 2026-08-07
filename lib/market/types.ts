@@ -106,8 +106,11 @@ export type Confluence =
 
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
+export type SignalSource = "smc" | "tradingview";
+
 export interface Signal {
   id: string;
+  source: SignalSource;
   pair: Pair;
   direction: "long" | "short";
   entry: number;

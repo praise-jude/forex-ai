@@ -3,6 +3,7 @@ import type { Signal, SymbolSpec } from "../types";
 export function buildSignal(overrides: Partial<Signal> = {}): Signal {
   return {
     id: "test-signal",
+    source: "smc",
     pair: "EUR/USD",
     direction: "long",
     entry: 1.105,

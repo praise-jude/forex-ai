@@ -246,6 +246,7 @@ export function assembleSignals(
 
   const signal: Signal = {
     id: randomUUID(),
+    source: "smc",
     pair,
     direction,
     entry,

@@ -44,6 +44,35 @@ Either switch blocks a Buy/Sell click the same way it would have blocked an auto
 
 **Before going live**: test against a MetaApi **demo account** first. Confirm clicking Buy/Sell on a signal produces a correctly-sized order with SL/TP attached, confirm the kill-switch file actually blocks the click, and confirm `MAX_DAILY_LOSS_PCT` trips as expected before trusting this with real funds.
 
+### TradingView webhook (optional, auto-executes — read this before enabling)
+
+The one exception to "nothing trades automatically": `POST /api/webhooks/tradingview` accepts alerts from a TradingView strategy/indicator and places the order immediately, with **no manual click**. It's disabled by default (the route returns 500 until `TRADINGVIEW_WEBHOOK_SECRET` is set) and, once enabled, still goes through the exact same risk checks and both kill switches described above — no exceptions there. Only enable this for a strategy you've already validated; it bypasses the SMC engine's confidence scoring entirely, since the decision to trade comes from your own TradingView logic instead.
+
+**Setup**:
+1. Set `TRADINGVIEW_WEBHOOK_SECRET` in `.env.local` to a long random value. Anyone with the URL *and* this secret can place trades on your account — keep both private, and don't commit the secret.
+2. In TradingView, create an alert with the webhook URL set to `https://your-deployment/api/webhooks/tradingview`, and set the alert's **Message** to JSON matching this shape:
+
+```json
+{
+  "secret": "the same value as TRADINGVIEW_WEBHOOK_SECRET",
+  "pair": "{{ticker}}",
+  "direction": "{{strategy.order.action}}",
+  "entry": "{{close}}",
+  "stopLoss": 1.0830,
+  "takeProfit": 1.0890,
+  "id": "{{timenow}}"
+}
+```
+
+- `pair`: any recognizable ticker — `EURUSD`, `OANDA:XAUUSD`, `FX:GBPUSD` all work (the exchange prefix is stripped). Unrecognized symbols are rejected, never guessed.
+- `direction`: `"buy"`/`"long"` or `"sell"`/`"short"`.
+- `stopLoss`/`takeProfit`: your strategy's own levels — this app never invents a stop for you here. Must be on the correct side of `entry` for the direction (a long needs `stopLoss < entry < takeProfit`) or the alert is rejected. `takeProfit2` is optional and defaults to `takeProfit`.
+- `id`: **required**, and must be stable per genuine alert (use `{{timenow}}`, not a fixed string) — this is what prevents a retried/redelivered alert from opening a second position. Two alerts with the same `id` are treated as the same signal; only the first executes.
+
+**What it doesn't do**: apply the killzone/session gate (your strategy controls timing, not this app's ICT session logic), or run any SMC confluence checks. It **does** still apply position sizing, `MAX_CONCURRENT_POSITIONS`, `MAX_DAILY_LOSS_PCT`, `MAX_TRADES_PER_DAY`, and both kill switches, same as everything else.
+
+**Before enabling on a real account**: send a test alert (or `curl`) while a kill switch is active and confirm the response is `{"status":"blocked","code":"kill_switch",...}` — proves the whole pipeline works without ever reaching the broker. Confirm a wrong secret returns 401 and a malformed payload returns 400 with a clear reason before trusting it with a live strategy.
+
 ### Deployment: not Vercel
 
 The dashboard keeps one persistent MetaApi streaming connection and an in-memory candle/signal store per server process (started once from `instrumentation.ts` on boot). That needs a single **always-on Node process** — `next build && next start` on a VPS, Docker container, or a "web service" host (Railway, Render, Fly, etc.) — not Vercel serverless functions, which are ephemeral per-request and would never keep the connection alive. Run a single instance only: multiple replicas would each open a duplicate MetaApi connection against the same account.

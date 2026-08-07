@@ -37,6 +37,26 @@ export function isCrypto(pair: Pair): boolean {
   return CRYPTO_PAIRS.has(pair);
 }
 
+const BY_PLAIN_SYMBOL: Map<string, Pair> = new Map(
+  Object.entries(BASE_CONFIG).map(([pair, cfg]) => [cfg.symbol, pair as Pair])
+);
+
+/**
+ * Maps an external, unsuffixed ticker (e.g. a TradingView alert's "OANDA:XAUUSD" or
+ * "EURUSD") to a Pair, reusing BASE_CONFIG as the single source of truth rather than a
+ * second hand-maintained table. Strips a leading "EXCHANGE:" prefix and any "/", then
+ * matches case-insensitively. Returns undefined for anything unrecognized -- callers
+ * must reject rather than guess a pair for money-moving input.
+ */
+export function pairForPlainSymbol(symbol: string): Pair | undefined {
+  const normalized = symbol
+    .trim()
+    .toUpperCase()
+    .replace(/^[A-Z_]+:/, "")
+    .replace(/\//g, "");
+  return BY_PLAIN_SYMBOL.get(normalized);
+}
+
 const CONFIG: Record<Pair, PairConfig> = Object.fromEntries(
   Object.entries(BASE_CONFIG).map(([pair, cfg]) => [
     pair,
