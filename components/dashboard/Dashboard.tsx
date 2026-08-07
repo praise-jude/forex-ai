@@ -1,10 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PAIRS, type ExecutedTrade, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
 import { SignalsPanel } from "./SignalsPanel";
+import { SignalToastStack, type ToastEntry } from "./SignalToast";
 
 const PriceChart = dynamic(() => import("./PriceChart").then((mod) => mod.PriceChart), { ssr: false });
 
@@ -21,6 +22,15 @@ export function Dashboard() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [executedTrades, setExecutedTrades] = useState<ExecutedTrade[]>([]);
   const [latestEvent, setLatestEvent] = useState<StreamEvent | null>(null);
+  const [toasts, setToasts] = useState<ToastEntry[]>([]);
+
+  // A redelivered/retried webhook alert publishes another "signal" SSE event with the same
+  // id -- tracked here (not just in `signals` state) so a toast doesn't fire twice for it.
+  const seenSignalIds = useRef<Set<string>>(new Set());
+
+  const dismissToast = useCallback((key: string) => {
+    setToasts((prev) => prev.filter((t) => t.key !== key));
+  }, []);
 
   useEffect(() => {
     fetch("/api/signals")
@@ -29,6 +39,7 @@ export function Dashboard() {
         setWatchlist(data.watchlist);
         setSignals(data.signals);
         setExecutedTrades(data.executedTrades);
+        for (const signal of data.signals) seenSignalIds.current.add(signal.id);
       })
       .catch(() => {
         // Best-effort initial snapshot; the SSE stream will still catch up live data.
@@ -44,7 +55,16 @@ export function Dashboard() {
           prev.map((entry) => (entry.pair === event.pair ? { ...entry, bid: event.bid, ask: event.ask, time: event.time } : entry))
         );
       } else if (event.type === "signal") {
+        if (seenSignalIds.current.has(event.signal.id)) return;
+        seenSignalIds.current.add(event.signal.id);
+
         setSignals((prev) => [event.signal, ...prev].slice(0, MAX_SIGNALS));
+
+        // Watch-tier signals are informational only (no execute button) -- match that by
+        // not popping a toast for them either.
+        if (event.signal.tier !== "watch") {
+          setToasts((prev) => [...prev, { key: `${event.signal.id}-${Date.now()}`, signal: event.signal }]);
+        }
       }
     };
 
@@ -66,6 +86,7 @@ export function Dashboard() {
       </section>
 
       <SignalsPanel signals={signals} executedTrades={executedTrades} />
+      <SignalToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
