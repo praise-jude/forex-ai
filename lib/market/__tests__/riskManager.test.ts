@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { checkRiskLimits, isKillSwitchActive, type RiskCheckInput } from "../riskManager";
+import { checkRiskLimits, isEnvKillSwitchActive, isKillSwitchActive, type RiskCheckInput } from "../riskManager";
 
 function buildInput(overrides: Partial<RiskCheckInput> = {}): RiskCheckInput {
   return {
@@ -80,5 +80,17 @@ describe("isKillSwitchActive", () => {
     expect(isKillSwitchActive(NONEXISTENT_FILE)).toBe(false);
     process.env.TRADING_KILL_SWITCH = "false";
     expect(isKillSwitchActive(NONEXISTENT_FILE)).toBe(false);
+  });
+});
+
+describe("isEnvKillSwitchActive", () => {
+  afterEach(() => {
+    delete process.env.TRADING_KILL_SWITCH;
+  });
+
+  it("is false when unset, true when set truthy -- independent of any file", () => {
+    expect(isEnvKillSwitchActive()).toBe(false);
+    process.env.TRADING_KILL_SWITCH = "1";
+    expect(isEnvKillSwitchActive()).toBe(true);
   });
 });

@@ -59,6 +59,14 @@ export function checkRiskLimits(input: RiskCheckInput): RiskCheckResult {
 
 const FALSY_ENV_VALUES = new Set(["", "0", "false"]);
 
+/** The platform-level switch alone — split out so callers (the STOP ROBOT API route)
+ * can tell "blocked by the env var" apart from "blocked by the file", since only the
+ * file can be toggled at runtime from within the app itself. */
+export function isEnvKillSwitchActive(): boolean {
+  const envValue = process.env.TRADING_KILL_SWITCH?.toLowerCase() ?? "";
+  return !FALSY_ENV_VALUES.has(envValue);
+}
+
 /**
  * Two independent switches, either one blocks trading: the file (works anywhere with a
  * persistent filesystem — e.g. a VPS, where it can be toggled live without a restart)
@@ -68,8 +76,7 @@ const FALSY_ENV_VALUES = new Set(["", "0", "false"]);
  * platform's dashboard is guaranteed present from the very first boot).
  */
 export function isKillSwitchActive(killSwitchFile: string): boolean {
-  const envValue = process.env.TRADING_KILL_SWITCH?.toLowerCase() ?? "";
-  if (!FALSY_ENV_VALUES.has(envValue)) return true;
+  if (isEnvKillSwitchActive()) return true;
 
   try {
     return fs.existsSync(killSwitchFile);
