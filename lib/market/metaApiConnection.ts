@@ -31,6 +31,7 @@ class MarketSyncListener extends SynchronizationListener {
       priceStore.set({ pair, bid: raw.bid, ask: raw.ask, time });
       eventBus.publish({ type: "price", pair, bid: raw.bid, ask: raw.ask, time });
     }
+    if (prices.length > 0) connectionState.lastUpdateAt = Date.now();
   }
 
   async onCandlesUpdated(_instanceIndex: string, candles: MetatraderCandle[]): Promise<void> {
@@ -83,7 +84,20 @@ function requireEnv(name: string): string {
 // Set once the streaming connection is up, read by the broker accessors below. This is
 // the only module allowed to hold a reference to the SDK connection — everything else
 // (execution engine, risk manager, API routes) goes through the narrow functions here.
-let activeConnection: StreamingMetaApiConnectionInstance | null = null;
+// globalThis-keyed for the same reason every store in this app is (see priceStore.ts) —
+// a plain module-level `let` here isn't reliably shared across Next.js's route-handler
+// and instrumentation module instances, which silently made every accessor below think
+// there was no connection even while data was streaming fine through the (correctly
+// globalThis-keyed) priceStore/candleStore.
+interface ConnectionState {
+  connection: StreamingMetaApiConnectionInstance | null;
+  lastUpdateAt: number | null;
+}
+const connectionStateKey = Symbol.for("forex-ai.metaApiConnection.state");
+type GlobalWithConnectionState = typeof globalThis & { [connectionStateKey]?: ConnectionState };
+const connectionStateGlobal = globalThis as GlobalWithConnectionState;
+const connectionState: ConnectionState =
+  connectionStateGlobal[connectionStateKey] ?? (connectionStateGlobal[connectionStateKey] = { connection: null, lastUpdateAt: null });
 
 async function connect(): Promise<void> {
   const token = requireEnv("METAAPI_TOKEN");
@@ -111,26 +125,43 @@ async function connect(): Promise<void> {
     ]);
   }
 
-  activeConnection = connection;
+  connectionState.connection = connection;
   console.log(`[market] connected and streaming ${PAIRS.join(", ")}`);
 }
 
 // --- Broker accessors (execution engine + API routes read through these, never the SDK directly) ---
 
+export type ConnectionStatus = "live" | "reconnecting" | "disconnected";
+
+/**
+ * "live" requires the full chain to be healthy: MetaApi's own sync finished, MetaApi is
+ * connected to the MT5 terminal, and that terminal is itself connected to the broker.
+ * Any one of those being false means data could be stale even though the process is
+ * technically still running -- "reconnecting" covers all of those cases without trying
+ * to distinguish which specific link dropped.
+ */
+export function getConnectionStatus(): { status: ConnectionStatus; lastUpdateAt: number | null } {
+  const connection = connectionState.connection;
+  if (!connection) return { status: "disconnected", lastUpdateAt: connectionState.lastUpdateAt };
+
+  const healthy = connection.synchronized && connection.terminalState.connected && connection.terminalState.connectedToBroker;
+  return { status: healthy ? "live" : "reconnecting", lastUpdateAt: connectionState.lastUpdateAt };
+}
+
 export function getAccountInformation(): AccountInfo | undefined {
-  const info = activeConnection?.terminalState.accountInformation;
+  const info = connectionState.connection?.terminalState.accountInformation;
   if (!info) return undefined;
   return { balance: info.balance, equity: info.equity };
 }
 
 /** Total open positions on the account, including any not opened by this app — used for risk limits. */
 export function getOpenPositionCount(): number {
-  return activeConnection?.terminalState.positions.length ?? 0;
+  return connectionState.connection?.terminalState.positions.length ?? 0;
 }
 
 /** Open positions mapped to our tracked pairs only (skips symbols outside the 5 majors, e.g. opened manually). */
 export function getOpenPositions(): OpenPosition[] {
-  const positions = activeConnection?.terminalState.positions ?? [];
+  const positions = connectionState.connection?.terminalState.positions ?? [];
   const result: OpenPosition[] = [];
   for (const raw of positions) {
     const pair = pairForBrokerSymbol(raw.symbol);
@@ -152,7 +183,7 @@ export function getOpenPositions(): OpenPosition[] {
 }
 
 export function getSymbolSpecification(pair: Pair): SymbolSpec | undefined {
-  const spec = activeConnection?.terminalState.specification(brokerSymbol(pair));
+  const spec = connectionState.connection?.terminalState.specification(brokerSymbol(pair));
   if (!spec) return undefined;
   return { contractSize: spec.contractSize, volumeStep: spec.volumeStep, volumeMin: spec.minVolume, volumeMax: spec.maxVolume };
 }
@@ -173,7 +204,8 @@ export async function placeMarketOrder(
   requestedEntry: number,
   clientId: string
 ): Promise<PlaceOrderResult> {
-  if (!activeConnection) return { success: false, message: "no active MetaApi connection" };
+  const connection = connectionState.connection;
+  if (!connection) return { success: false, message: "no active MetaApi connection" };
   const symbol = brokerSymbol(pair);
   // Shows up as the position's comment in MT5 itself, so a trade is identifiable
   // in the broker terminal, not just on the dashboard.
@@ -183,8 +215,8 @@ export async function placeMarketOrder(
   try {
     response =
       direction === "long"
-        ? await activeConnection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment })
-        : await activeConnection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment });
+        ? await connection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment })
+        : await connection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment });
   } catch (error) {
     return { success: false, message: error instanceof Error ? error.message : String(error) };
   }
@@ -196,7 +228,7 @@ export async function placeMarketOrder(
   // The trade response doesn't carry the actual fill price — read it back from the
   // now-open position if the local terminal state has already synced it, falling back
   // to the requested price (which was the current ask/bid at signal time) otherwise.
-  const openedPosition = activeConnection.terminalState.positions.find((p) => p.id === Number(response.positionId));
+  const openedPosition = connection.terminalState.positions.find((p) => p.id === Number(response.positionId));
   return {
     success: true,
     filledEntry: openedPosition?.openPrice ?? requestedEntry,

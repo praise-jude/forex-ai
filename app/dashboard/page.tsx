@@ -1,5 +1,6 @@
 import { Dashboard } from "@/components/dashboard/Dashboard";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
+import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
 
 export default function DashboardPage() {
   return (
@@ -9,7 +10,10 @@ export default function DashboardPage() {
           <h1 className="text-lg font-semibold">Forex AI &mdash; SMC Signals</h1>
           <p className="text-sm text-zinc-500">Signal-only &middot; not financial advice &middot; no trades are placed automatically</p>
         </div>
-        <KillSwitchControl />
+        <div className="flex items-center gap-4">
+          <ConnectionStatus />
+          <KillSwitchControl />
+        </div>
       </header>
       <Dashboard />
     </main>
