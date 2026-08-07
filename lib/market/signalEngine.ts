@@ -8,6 +8,7 @@ import { detectLiquiditySweeps } from "./detectors/liquiditySweeps";
 import { marketStructureTrend } from "./detectors/marketStructure";
 import { detectCandlestickPattern } from "./detectors/candlestickPatterns";
 import { getActiveSession, isKillzone } from "./sessions";
+import { isCrypto } from "./symbols";
 import { calculateEma } from "./indicators/ema";
 import { calculateRsi } from "./indicators/rsi";
 import { calculateMacd } from "./indicators/macd";
@@ -69,8 +70,9 @@ function trendDirection(candles: Candle[]): "bullish" | "bearish" | "neutral" {
 /**
  * Assembles a trade signal from the current M15 candle close. A liquidity sweep,
  * structure break in the implied reversal direction, and a first-time retest of the
- * resulting unmitigated FVG/order block during a killzone locate the *candidate*
- * trade (its entry/SL/TP). D1/H4/H1 trend agreement, ADX, and ATR are then hard
+ * resulting unmitigated FVG/order block during a killzone (crypto pairs exempted —
+ * see isCrypto) locate the *candidate* trade (its entry/SL/TP). D1/H4/H1 trend
+ * agreement, ADX, and ATR are then hard
  * pre-gates. If those pass, a weighted confidence score (trend, market structure,
  * SMC zone quality, volume, MACD, RSI, candlestick pattern) is computed; a Signal is
  * constructed at 80%+ (watch — informational only, not executable), 90%+ (buy), or
@@ -89,7 +91,10 @@ export function assembleSignals(
   const lastIndex = candles.length - 1;
   const lastCandle = candles[lastIndex];
 
-  if (!isKillzone(lastCandle.time)) return [];
+  // Crypto trades 24/7 with no ICT-style institutional session structure the killzone
+  // gate was built around, so it's exempted here rather than arbitrarily restricted to
+  // forex trading hours — every other pre-gate below still fully applies.
+  if (!isCrypto(pair) && !isKillzone(lastCandle.time)) return [];
 
   // Hoisted ahead of sweep detection: the sweep tolerance below needs it, and it's a
   // pure function of `candles` with no dependency on anything computed in between, so

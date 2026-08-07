@@ -23,6 +23,11 @@ describe("pipValuePerLot", () => {
     expect(pipValuePerLot("USOIL", 1000)).toBeCloseTo(1000, 5);
   });
 
+  it("computes pip value directly for crypto, same USD-quote shape as forex majors", () => {
+    // BTC/USD quotes directly in USD -- pip 0.01 * a 1-BTC contract = $0.01 per pip per lot.
+    expect(pipValuePerLot("BTC/USD", 1)).toBeCloseTo(0.01, 5);
+  });
+
   it("converts through the live price for USD-base pairs", () => {
     priceStore.set({ pair: "USD/JPY", bid: 149.0, ask: 149.02, time: Date.now() });
     // pip size 0.01 * contractSize 100000 = 1000 JPY per pip per lot; mid price 149.01

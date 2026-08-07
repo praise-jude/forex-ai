@@ -25,7 +25,17 @@ const BASE_CONFIG: Record<Pair, { symbol: string; pip: number; decimals: number 
   "XAG/USD": { symbol: "XAGUSD", pip: 0.01, decimals: 3 },
   "USOIL": { symbol: "USOIL", pip: 1, decimals: 3 },
   "UKOIL": { symbol: "UKOIL", pip: 1, decimals: 3 },
+  "BTC/USD": { symbol: "BTCUSD", pip: 0.01, decimals: 2 },
 };
+
+// Crypto trades 24/7 with no ICT-style institutional session structure the killzone
+// concept (see sessions.ts) was built around — signalEngine.ts exempts these pairs
+// from that gate rather than arbitrarily restricting them to forex trading hours.
+const CRYPTO_PAIRS: ReadonlySet<Pair> = new Set(["BTC/USD"]);
+
+export function isCrypto(pair: Pair): boolean {
+  return CRYPTO_PAIRS.has(pair);
+}
 
 const CONFIG: Record<Pair, PairConfig> = Object.fromEntries(
   Object.entries(BASE_CONFIG).map(([pair, cfg]) => [

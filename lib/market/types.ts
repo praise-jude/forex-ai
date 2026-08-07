@@ -1,6 +1,16 @@
 export type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 
-export type Pair = "EUR/USD" | "GBP/USD" | "USD/JPY" | "AUD/USD" | "USD/CAD" | "XAU/USD" | "XAG/USD" | "USOIL" | "UKOIL";
+export type Pair =
+  | "EUR/USD"
+  | "GBP/USD"
+  | "USD/JPY"
+  | "AUD/USD"
+  | "USD/CAD"
+  | "XAU/USD"
+  | "XAG/USD"
+  | "USOIL"
+  | "UKOIL"
+  | "BTC/USD";
 
 export const PAIRS: Pair[] = [
   "EUR/USD",
@@ -12,6 +22,7 @@ export const PAIRS: Pair[] = [
   "XAG/USD",
   "USOIL",
   "UKOIL",
+  "BTC/USD",
 ];
 
 export interface Candle {

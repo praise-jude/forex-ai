@@ -161,6 +161,17 @@ describe("assembleSignals", () => {
     expect(assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual([]);
   });
 
+  it("exempts crypto pairs from the killzone gate", () => {
+    const candles = buildCandles();
+    const offSession = new Date(candles[candles.length - 1].time);
+    offSession.setUTCHours(18); // same off-session time the EUR/USD test above is blocked at
+    candles[candles.length - 1] = { ...candles[candles.length - 1], time: offSession.getTime() };
+
+    const signals = assembleSignals(candles, "BTC/USD", "15m", buildHigherTimeframes("up"));
+    expect(signals).toHaveLength(1);
+    expect(signals[0].session).toBe("off-session"); // still reported accurately, just not gated on
+  });
+
   it("does not re-fire once price has already tagged the zone", () => {
     const candles = buildCandles();
     // One more candle that also dips back into the FVG -- only the first tap (already
