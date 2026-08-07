@@ -1,9 +1,16 @@
 import { signalStore } from "@/lib/market/signalStore";
 import { eventBus } from "@/lib/market/eventBus";
 import { attemptExecution } from "@/lib/market/executionEngine";
-import { parseTradingViewAlert } from "@/lib/market/tradingViewWebhook";
+import { DEFAULT_MAX_ALERT_AGE_MS, parseTradingViewAlert } from "@/lib/market/tradingViewWebhook";
 
 export const runtime = "nodejs";
+
+function maxAlertAgeMs(): number {
+  const raw = process.env.TRADINGVIEW_MAX_ALERT_AGE_SECONDS;
+  if (!raw) return DEFAULT_MAX_ALERT_AGE_MS;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : DEFAULT_MAX_ALERT_AGE_MS;
+}
 
 // TradingView's alert webhooks POST a plain configured message body with no custom
 // headers, so the shared secret has to travel inside the JSON body itself -- standard
@@ -20,7 +27,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const parsed = parseTradingViewAlert(body);
+  const parsed = parseTradingViewAlert(body, { maxAgeMs: maxAlertAgeMs() });
   if ("error" in parsed) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }

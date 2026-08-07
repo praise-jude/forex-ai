@@ -60,7 +60,8 @@ The one exception to "nothing trades automatically": `POST /api/webhooks/trading
   "entry": "{{close}}",
   "stopLoss": 1.0830,
   "takeProfit": 1.0890,
-  "id": "{{timenow}}"
+  "id": "{{timenow}}",
+  "timestamp": "{{timenow}}"
 }
 ```
 
@@ -68,10 +69,11 @@ The one exception to "nothing trades automatically": `POST /api/webhooks/trading
 - `direction`: `"buy"`/`"long"` or `"sell"`/`"short"`.
 - `stopLoss`/`takeProfit`: your strategy's own levels — this app never invents a stop for you here. Must be on the correct side of `entry` for the direction (a long needs `stopLoss < entry < takeProfit`) or the alert is rejected. `takeProfit2` is optional and defaults to `takeProfit`.
 - `id`: **required**, and must be stable per genuine alert (use `{{timenow}}`, not a fixed string) — this is what prevents a retried/redelivered alert from opening a second position. Two alerts with the same `id` are treated as the same signal; only the first executes.
+- `timestamp`: **required**, TradingView's `{{timenow}}` (UNIX seconds — also accepts milliseconds, auto-detected). The alert is rejected if it's older, or further in the future (clock skew), than `TRADINGVIEW_MAX_ALERT_AGE_SECONDS` (default 60s) — protects against a delayed or queued alert firing on market conditions that no longer hold.
 
-**What it doesn't do**: apply the killzone/session gate (your strategy controls timing, not this app's ICT session logic), or run any SMC confluence checks. It **does** still apply position sizing, `MAX_CONCURRENT_POSITIONS`, `MAX_DAILY_LOSS_PCT`, `MAX_TRADES_PER_DAY`, and both kill switches, same as everything else.
+**What it doesn't do**: apply the killzone/session gate (your strategy controls timing, not this app's ICT session logic), or run any SMC confluence checks. It **does** still apply position sizing, `MAX_CONCURRENT_POSITIONS`, `MAX_DAILY_LOSS_PCT`, `MAX_TRADES_PER_DAY`, both kill switches, and now stale-alert rejection, same as everything else.
 
-**Before enabling on a real account**: send a test alert (or `curl`) while a kill switch is active and confirm the response is `{"status":"blocked","code":"kill_switch",...}` — proves the whole pipeline works without ever reaching the broker. Confirm a wrong secret returns 401 and a malformed payload returns 400 with a clear reason before trusting it with a live strategy.
+**Before enabling on a real account**: send a test alert (or `curl`) while a kill switch is active and confirm the response is `{"status":"blocked","code":"kill_switch",...}` — proves the whole pipeline works without ever reaching the broker. Confirm a wrong secret returns 401, a malformed payload (or a `timestamp` outside the max age) returns 400 with a clear reason, before trusting it with a live strategy.
 
 ### Deployment: not Vercel
 

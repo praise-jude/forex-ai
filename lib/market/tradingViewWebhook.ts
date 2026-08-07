@@ -4,6 +4,18 @@ import { getActiveSession } from "./sessions";
 
 const TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 const DEFAULT_TIMEFRAME: Timeframe = "15m";
+export const DEFAULT_MAX_ALERT_AGE_MS = 60_000;
+
+// A timestamp this large can only be milliseconds already (a seconds-based Unix time
+// won't reach 10^12 until the year 33658) -- TradingView's {{timenow}} is documented as
+// UNIX seconds, so this auto-detects and normalizes rather than requiring the user to
+// do unit conversion inside Pine Script, which isn't a natural place for it.
+const MS_THRESHOLD = 10 ** 12;
+
+export interface ParseOptions {
+  maxAgeMs?: number;
+  now?: number;
+}
 
 export type ParseResult = { signal: Signal } | { error: string };
 
@@ -25,7 +37,9 @@ function parseDirection(value: unknown): "long" | "short" | undefined {
  * this feeds directly into live order placement, so bad input must be rejected, not
  * guessed at.
  */
-export function parseTradingViewAlert(body: unknown): ParseResult {
+export function parseTradingViewAlert(body: unknown, options: ParseOptions = {}): ParseResult {
+  const maxAgeMs = options.maxAgeMs ?? DEFAULT_MAX_ALERT_AGE_MS;
+  const nowMs = options.now ?? Date.now();
   if (!body || typeof body !== "object") return { error: "payload must be a JSON object" };
   const b = body as Record<string, unknown>;
 
@@ -67,7 +81,20 @@ export function parseTradingViewAlert(body: unknown): ParseResult {
       ? (b.timeframe as Timeframe)
       : DEFAULT_TIMEFRAME;
 
-  const now = Date.now();
+  // Required, separate from `id` (which only needs to be stable, not a real clock
+  // reading) -- a delayed or queued alert must not fire on market conditions that no
+  // longer hold. Accepts TradingView's {{timenow}} (UNIX seconds) directly.
+  if (!isFiniteNumber(b.timestamp)) {
+    return { error: "timestamp is required (use TradingView's {{timenow}})" };
+  }
+  const timestampMs = b.timestamp < MS_THRESHOLD ? b.timestamp * 1000 : b.timestamp;
+  const ageMs = nowMs - timestampMs;
+  if (Math.abs(ageMs) > maxAgeMs) {
+    const ageSeconds = (ageMs / 1000).toFixed(1);
+    return { error: `alert is stale or clock-skewed (${ageSeconds}s from now, max allowed ${maxAgeMs / 1000}s)` };
+  }
+
+  const now = nowMs;
   const signal: Signal = {
     id: `tv-${id}`,
     source: "tradingview",
