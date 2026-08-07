@@ -1,8 +1,18 @@
 export type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 
-export type Pair = "EUR/USD" | "GBP/USD" | "USD/JPY" | "AUD/USD" | "USD/CAD" | "XAU/USD" | "XAG/USD";
+export type Pair = "EUR/USD" | "GBP/USD" | "USD/JPY" | "AUD/USD" | "USD/CAD" | "XAU/USD" | "XAG/USD" | "USOIL" | "UKOIL";
 
-export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "XAU/USD", "XAG/USD"];
+export const PAIRS: Pair[] = [
+  "EUR/USD",
+  "GBP/USD",
+  "USD/JPY",
+  "AUD/USD",
+  "USD/CAD",
+  "XAU/USD",
+  "XAG/USD",
+  "USOIL",
+  "UKOIL",
+];
 
 export interface Candle {
   time: number; // unix ms, candle open time

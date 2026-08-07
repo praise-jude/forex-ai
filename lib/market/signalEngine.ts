@@ -8,7 +8,6 @@ import { detectLiquiditySweeps } from "./detectors/liquiditySweeps";
 import { marketStructureTrend } from "./detectors/marketStructure";
 import { detectCandlestickPattern } from "./detectors/candlestickPatterns";
 import { getActiveSession, isKillzone } from "./sessions";
-import { pipSize } from "./symbols";
 import { calculateEma } from "./indicators/ema";
 import { calculateRsi } from "./indicators/rsi";
 import { calculateMacd } from "./indicators/macd";
@@ -24,6 +23,11 @@ const SWEEP_LOOKBACK_CANDLES = 30;
 // broker's "pip" is just 10x its smallest quotable tick (a display convention), not
 // something proportional to real volatility (see symbols.ts's XAU/USD comment).
 const ATR_BUFFER_FRACTION = 0.25;
+// Same reasoning as ATR_BUFFER_FRACTION, applied to the liquidity-sweep wick-overshoot
+// tolerance (see detectLiquiditySweeps) instead of the SL buffer. Smaller than the SL
+// buffer fraction since this is meant for tight equal-highs/lows clustering, not a
+// full safety margin.
+const SWEEP_TOLERANCE_ATR_FRACTION = 0.1;
 const MIN_RISK_REWARD = 1.5;
 const FALLBACK_RISK_REWARD = 2;
 const MIN_RISK_REWARD_2 = 2.5;
@@ -87,9 +91,20 @@ export function assembleSignals(
 
   if (!isKillzone(lastCandle.time)) return [];
 
+  // Hoisted ahead of sweep detection: the sweep tolerance below needs it, and it's a
+  // pure function of `candles` with no dependency on anything computed in between, so
+  // this doesn't change gate ordering or outcomes — just makes it available earlier.
+  const atrSeries = calculateAtr(candles);
+  const atr = atrSeries[lastIndex];
+
   const swings = detectSwingPoints(candles);
   const structureEvents = detectStructureBreaks(candles, swings);
-  const sweeps = detectLiquiditySweeps(candles, swings, pipSize(pair) * 2);
+  // A candle's wick must clear the swept swing by more than this to count as a genuine
+  // sweep rather than noise — scaled to the instrument's own ATR instead of a flat pip
+  // multiple, since a broker's pip isn't proportional to real volatility (see
+  // ATR_BUFFER_FRACTION below, and symbols.ts's XAU/USD comment).
+  const sweepTolerance = atr * SWEEP_TOLERANCE_ATR_FRACTION;
+  const sweeps = detectLiquiditySweeps(candles, swings, sweepTolerance);
 
   const recentSweeps = sweeps.filter((s) => s.sweepIndex >= lastIndex - SWEEP_LOOKBACK_CANDLES);
   if (recentSweeps.length === 0) return [];
@@ -110,8 +125,6 @@ export function assembleSignals(
   const adx = calculateAdx(candles)[lastIndex];
   if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return [];
 
-  const atrSeries = calculateAtr(candles);
-  const atr = atrSeries[lastIndex];
   const atrWindow = atrSeries.slice(lastIndex - ATR_AVERAGE_PERIOD, lastIndex);
   const atrAverage = atrWindow.reduce((sum, v) => sum + v, 0) / atrWindow.length;
   if (Number.isNaN(atr) || !(atr > atrAverage)) return [];

@@ -18,6 +18,11 @@ describe("pipValuePerLot", () => {
     expect(pipValuePerLot("XAG/USD", 5000)).toBeCloseTo(50, 5);
   });
 
+  it("computes pip value directly for oil, same USD-quote shape as forex majors", () => {
+    // USOIL quotes directly in USD -- pip 1 * a 1000-barrel contract = $1000 per pip per lot.
+    expect(pipValuePerLot("USOIL", 1000)).toBeCloseTo(1000, 5);
+  });
+
   it("converts through the live price for USD-base pairs", () => {
     priceStore.set({ pair: "USD/JPY", bid: 149.0, ask: 149.02, time: Date.now() });
     // pip size 0.01 * contractSize 100000 = 1000 JPY per pip per lot; mid price 149.01

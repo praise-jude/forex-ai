@@ -16,13 +16,15 @@ const BASE_CONFIG: Record<Pair, { symbol: string; pip: number; decimals: number 
   "USD/JPY": { symbol: "USDJPY", pip: 0.01, decimals: 3 },
   "AUD/USD": { symbol: "AUDUSD", pip: 0.0001, decimals: 5 },
   "USD/CAD": { symbol: "USDCAD", pip: 0.0001, decimals: 5 },
-  // pip/decimals both confirmed directly from the broker's own symbol spec (not
-  // guessed) — Exness quotes both metals to 3 digits with pipSize 0.01. The SL buffer
-  // no longer scales off pip (see signalEngine.ts's ATR-relative buffer), so pip here
-  // only feeds the sweep-tolerance and position-sizing math, where the broker's own
+  // pip/decimals all confirmed directly from each broker symbol's own spec (not
+  // guessed). Neither the SL buffer nor the sweep tolerance scale off pip anymore
+  // (see signalEngine.ts's ATR-relative versions of both) — pip here only feeds
+  // position sizing, where it's dimensionally self-cancelling, so the broker's own
   // value is the right one to use rather than an artificial calibration.
   "XAU/USD": { symbol: "XAUUSD", pip: 0.01, decimals: 3 },
   "XAG/USD": { symbol: "XAGUSD", pip: 0.01, decimals: 3 },
+  "USOIL": { symbol: "USOIL", pip: 1, decimals: 3 },
+  "UKOIL": { symbol: "UKOIL", pip: 1, decimals: 3 },
 };
 
 const CONFIG: Record<Pair, PairConfig> = Object.fromEntries(
