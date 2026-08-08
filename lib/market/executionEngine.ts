@@ -13,6 +13,8 @@ import {
   isAccountConfigured,
   placeMarketOrder,
 } from "./metaApiConnection";
+import { sendNotification } from "./pushNotifier";
+import { formatPrice } from "./format";
 
 // MT5's comment+clientId combined length cap is ~26-31 chars, so the raw signal.id
 // (a 36-char UUID) doesn't fit — use a short hash instead, as defense-in-depth
@@ -145,6 +147,12 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
       stringCode: result.stringCode,
       lots: sizing.lots,
     });
+    void sendNotification({
+      category: "order_rejected",
+      title: `JUDE AI — Order rejected: ${signal.pair}`,
+      body: result.message,
+      data: { signalId: signal.id, pair: signal.pair, account: accountKey },
+    });
     return { status: "rejected", trade: { ...record, status: "rejected", rejectReason: result.message } };
   }
 
@@ -163,6 +171,12 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   console.log(
     `[execution] filled ${signal.direction} ${sizing.lots} lots ${signal.pair} @ ${result.filledEntry} (signal ${signal.id}, ${accountKey})`
   );
+  void sendNotification({
+    category: "trade_opened",
+    title: `JUDE AI — Position opened: ${signal.pair}`,
+    body: `${signal.direction === "long" ? "LONG" : "SHORT"} ${sizing.lots} lots @ ${formatPrice(signal.pair, result.filledEntry)} (${accountKey})`,
+    data: { signalId: signal.id, pair: signal.pair, account: accountKey },
+  });
   return {
     status: "filled",
     trade: {

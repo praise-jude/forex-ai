@@ -185,3 +185,51 @@ export interface ExecutedTrade {
   attemptedAt: number;
   filledAt?: number;
 }
+
+// --- Push notifications (mobile) ---
+
+/** Independently toggleable per device -- matches the mobile Settings screen's
+ * checkbox list. `minConfidence` additionally gates buy_signal/sell_signal only. */
+export interface NotificationPrefs {
+  buySignals: boolean;
+  sellSignals: boolean;
+  tradeExecution: boolean;
+  tpSl: boolean;
+  riskAlerts: boolean;
+  connectionAlerts: boolean;
+  minConfidence: number;
+}
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  buySignals: true,
+  sellSignals: true,
+  tradeExecution: true,
+  tpSl: true,
+  riskAlerts: true,
+  connectionAlerts: true,
+  minConfidence: 80,
+};
+
+export type NotificationCategory =
+  | "buy_signal"
+  | "sell_signal"
+  | "trade_opened"
+  | "trade_closed"
+  | "order_rejected"
+  | "risk_alert"
+  | "connection_alert";
+
+export type DevicePlatform = "ios" | "android" | "web";
+
+/** One row per installed app instance (not per user -- this app has no login system,
+ * see basicAuth.ts). A single operator with two phones gets two rows, each with its own
+ * prefs, so muting signals on a tablet doesn't silence a phone. */
+export interface PushDevice {
+  deviceId: string;
+  pushToken: string;
+  platform: DevicePlatform;
+  appVersion?: string;
+  notificationPrefs: NotificationPrefs;
+  createdAt: number;
+  updatedAt: number;
+}

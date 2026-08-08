@@ -101,9 +101,25 @@ The SMC detectors, the signal engine, and the position sizing/risk-limit logic a
 npm run test
 ```
 
+### Push notifications & JUDE voice (mobile)
+
+The companion mobile app (`forex-ai-mobile`, a separate Expo Router project) talks to this backend over its existing REST API and adds two things this dashboard-only backend doesn't otherwise have: push notifications when the app isn't open, and a voice assistant. Both are optional and off until configured.
+
+**Push notifications** — devices register themselves via `POST /api/devices` (upserted by `deviceId`; prefs via `PATCH /api/devices/[deviceId]`), persisted to a JSON file (`DEVICE_STORE_FILE`, see below) since this app has no database. Sending goes through Expo's push service (`lib/market/pushNotifier.ts`, using `expo-server-sdk`) rather than talking to Firebase/APNs directly — Expo routes to FCM (Android) and APNs (iOS) for you, so this backend never needs Firebase Admin credentials or an Apple push key itself; those are only needed on the mobile app's EAS project (see that repo's setup docs). A notification fires from exactly one place per event type — `signalPublisher.ts` for new buy/sell signals (both the SMC engine and the TradingView webhook funnel through it, so neither can silently skip mobile push), `executionEngine.ts` for trade opened/rejected, `metaApiConnection.ts`'s `onDealAdded` for trade closed (distinguishing stop-loss vs take-profit vs a manual close via the broker deal's own `reason` field) and for the daily-loss/cooldown risk alerts, and `connectionWatcher.ts` (a 30-second poll of `getConnectionStatus`, started from `bootstrap.ts`) for connection lost/restored. Every send is best-effort: a push failure is logged, never thrown, so it can't take down signal detection or trade execution. A device whose token Expo reports as `DeviceNotRegistered` is automatically pruned from the store.
+
+**JUDE voice (speech-to-text)** — `POST /api/voice/transcribe` proxies a recorded voice command to OpenAI's Whisper API using `OPENAI_API_KEY`, so that key never has to live on the phone. Text-to-speech and command parsing both happen entirely on-device in the mobile app (no server involvement) — this route only turns audio into text. A voice command that would place a real trade still goes through the exact same `/api/signals/[id]/execute` route (and therefore the exact same risk checks) as a dashboard Buy/Sell click; the mobile app requires an explicit spoken "CONFIRM" before calling it.
+
+**Config** (`.env.local`, both optional):
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `EXPO_ACCESS_TOKEN` | unset | Only needed if your Expo project requires enhanced-security push tokens; sending works without it otherwise. |
+| `DEVICE_STORE_FILE` | `.device-tokens.json` | Where device tokens/prefs persist. Must be on a persistent volume (see "Deployment: not Vercel" below) or every device has to re-register after a redeploy. |
+| `OPENAI_API_KEY` | unset | Powers `/api/voice/transcribe`. Without it, that route returns 500; nothing else is affected. |
+
 ### Not built yet
 
-Auth, subscriptions, Telegram/push/webhook notifications, a backtesting engine, a mobile app, a positions panel in the dashboard UI, and database persistence (both signals and the execution ledger live only in memory and reset when the server restarts) are intentionally out of scope for this pass.
+Auth, subscriptions, a backtesting engine, and full database persistence (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens are file-persisted) are intentionally out of scope for this pass.
 
 ## Getting Started
 

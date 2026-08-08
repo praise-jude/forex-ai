@@ -13,14 +13,15 @@ import type { AccountInfo, AccountKey, Candle, OpenPosition, Pair, SymbolSpec, T
 import { PAIRS } from "./types";
 import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
-import { signalStore } from "./signalStore";
 import { eventBus } from "./eventBus";
 import { assembleSignals } from "./signalEngine";
+import { publishSignal } from "./signalPublisher";
 import { brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
 import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
+import { sendNotification } from "./pushNotifier";
 
 const SIGNAL_TIMEFRAME: Timeframe = "15m";
 const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
@@ -87,8 +88,7 @@ class MarketSyncListener extends SynchronizationListener {
           d1: candleStore.get(pair, "1d"),
         };
         for (const signal of assembleSignals(priorSeries, pair, SIGNAL_TIMEFRAME, higherTimeframes)) {
-          signalStore.add(signal);
-          eventBus.publish({ type: "signal", signal });
+          publishSignal(signal);
         }
       }
     }
@@ -118,13 +118,44 @@ class MarketSyncListener extends SynchronizationListener {
 
     const now = Date.now();
     const config = loadExecutionConfig(this.accountKey);
+
+    const pair = deal.symbol ? pairForBrokerSymbol(deal.symbol) : undefined;
+    if (pair) void sendNotification(closedPositionNotification(pair, deal, this.accountKey));
+
+    // Captured before recordTradeClosed mutates it in place -- the only way to tell
+    // "cooldown just tripped on this deal" from "cooldown was already active" below.
+    const cooldownUntilBefore = riskState.current(now, equity, this.accountKey).cooldownUntil;
     riskState.recordTradeClosed(now, equity, deal.profit, config.maxConsecutiveLosses, config.cooldownMinutes, this.accountKey);
 
     const dayState = riskState.current(now, equity, this.accountKey);
+    if (cooldownUntilBefore === null && dayState.cooldownUntil !== null) {
+      void sendNotification({
+        category: "risk_alert",
+        title: "JUDE AI — Cooldown active",
+        body: `${config.maxConsecutiveLosses} consecutive losses on ${this.accountKey}. New entries paused for ${config.cooldownMinutes} minutes.`,
+      });
+    }
+
     if (!dayState.haltedForToday && isDailyLossBreached(dayState.startOfDayEquity, equity, config.maxDailyLossPct)) {
       riskState.setHaltedForToday(now, equity, this.accountKey);
+      void sendNotification({
+        category: "risk_alert",
+        title: "JUDE AI — Autopilot locked",
+        body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${this.accountKey}. No new trades until the next trading day.`,
+      });
     }
   }
+}
+
+function closedPositionNotification(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey) {
+  const outcome = deal.profit >= 0 ? "Profit" : "Loss";
+  const reasonLabel = deal.reason === "DEAL_REASON_SL" ? "Stop loss hit" : deal.reason === "DEAL_REASON_TP" ? "Take profit hit" : "Position closed";
+  return {
+    category: "trade_closed" as const,
+    title: `JUDE AI — ${reasonLabel}: ${pair}`,
+    body: `${outcome} ${deal.profit >= 0 ? "+" : ""}${deal.profit.toFixed(2)} on ${accountKey}`,
+    data: { pair, profit: deal.profit, reason: deal.reason },
+  };
 }
 
 function requireEnv(name: string): string {

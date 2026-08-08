@@ -1,5 +1,4 @@
-import { signalStore } from "@/lib/market/signalStore";
-import { eventBus } from "@/lib/market/eventBus";
+import { publishSignal } from "@/lib/market/signalPublisher";
 import { attemptExecution } from "@/lib/market/executionEngine";
 import { DEFAULT_MAX_ALERT_AGE_MS, parseTradingViewAlert } from "@/lib/market/tradingViewWebhook";
 
@@ -32,8 +31,7 @@ export async function POST(request: Request) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
 
-  signalStore.add(parsed.signal);
-  eventBus.publish({ type: "signal", signal: parsed.signal });
+  publishSignal(parsed.signal);
 
   const result = await attemptExecution(parsed.signal);
   return Response.json(result);
