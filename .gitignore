@@ -44,6 +44,12 @@ yarn-error.log*
 # MetaApi SDK's local runtime cache (account deal/order history), not source
 .metaapi/
 
+# Expo/EAS config -- this is a Next.js app, not an Expo project. eas.json/app.json keep
+# getting written here by `eas`/`expo` commands run from the wrong cwd (should be
+# ../mobile-forex-ai instead) -- ignored so a stray write here can never get committed.
+/eas.json
+/app.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
