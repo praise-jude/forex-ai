@@ -209,7 +209,7 @@ export function getOpenPositionCount(accountKey: AccountKey = "live"): number {
   return stateFor(accountKey).connection?.terminalState.positions.length ?? 0;
 }
 
-/** Open positions mapped to our tracked pairs only (skips symbols outside the 5 majors, e.g. opened manually). */
+/** Open positions mapped to our tracked pairs only (skips symbols outside PAIRS, e.g. opened manually). */
 export function getOpenPositions(accountKey: AccountKey = "live"): OpenPosition[] {
   const positions = stateFor(accountKey).connection?.terminalState.positions ?? [];
   const result: OpenPosition[] = [];
