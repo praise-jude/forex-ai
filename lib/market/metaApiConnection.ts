@@ -4,6 +4,7 @@
 import MetaApi, { SynchronizationListener } from "metaapi.cloud-sdk/node";
 import type {
   MetatraderCandle,
+  MetatraderDeal,
   MetatraderSymbolPrice,
   MetatraderTradeResponse,
   StreamingMetaApiConnectionInstance,
@@ -17,6 +18,9 @@ import { eventBus } from "./eventBus";
 import { assembleSignals } from "./signalEngine";
 import { brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
+import { loadExecutionConfig } from "./executionConfig";
+import { isDailyLossBreached } from "./riskManager";
+import { riskState } from "./riskState";
 
 const SIGNAL_TIMEFRAME: Timeframe = "15m";
 const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
@@ -87,6 +91,38 @@ class MarketSyncListener extends SynchronizationListener {
           eventBus.publish({ type: "signal", signal });
         }
       }
+    }
+  }
+
+  /**
+   * Drives the revenge-trading cooldown and passive daily-loss detection (riskState /
+   * riskManager) off real position closes -- covers the WHOLE account, not just trades
+   * this app opened, matching getOpenPositionCount's same philosophy.
+   *
+   * `onDealAdded` also fires once per historical deal during the initial sync replay (and
+   * again after any reconnect resync) -- `connection.synchronized` is still false for the
+   * entire replay window and only flips true once it's caught up, so gating on it here is
+   * what stops years of old trade history from being misread as "just happened".
+   */
+  async onDealAdded(_instanceIndex: string, deal: MetatraderDeal): Promise<void> {
+    const state = stateFor(this.accountKey);
+    const connection = state.connection;
+    if (!connection?.synchronized) return;
+
+    const isPositionClose = deal.entryType === "DEAL_ENTRY_OUT" || deal.entryType === "DEAL_ENTRY_OUT_BY";
+    const isTradeDeal = deal.type === "DEAL_TYPE_BUY" || deal.type === "DEAL_TYPE_SELL";
+    if (!isPositionClose || !isTradeDeal) return;
+
+    const equity = connection.terminalState.accountInformation?.equity;
+    if (equity === undefined) return;
+
+    const now = Date.now();
+    const config = loadExecutionConfig(this.accountKey);
+    riskState.recordTradeClosed(now, equity, deal.profit, config.maxConsecutiveLosses, config.cooldownMinutes, this.accountKey);
+
+    const dayState = riskState.current(now, equity, this.accountKey);
+    if (!dayState.haltedForToday && isDailyLossBreached(dayState.startOfDayEquity, equity, config.maxDailyLossPct)) {
+      riskState.setHaltedForToday(now, equity, this.accountKey);
     }
   }
 }

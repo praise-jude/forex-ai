@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import type { Pair, Signal } from "@/lib/market/types";
-import { buildConfirmPhrase, buildResultAnnouncement, buildSignalAnnouncement, parseVoiceCommand } from "@/lib/voice/grammar";
+import {
+  buildConfirmPhrase,
+  buildCooldownAnnouncement,
+  buildDailyLossAnnouncement,
+  buildResultAnnouncement,
+  buildSignalAnnouncement,
+  parseVoiceCommand,
+} from "@/lib/voice/grammar";
 import { DEFAULT_VOICE_SETTINGS, loadVoiceSettings, saveVoiceSettings, type VoiceSettings } from "@/lib/voice/settings";
 import { VoiceEngine, type VoiceEngineStatus } from "@/lib/voice/voiceEngine";
 
@@ -18,7 +25,15 @@ interface PositionsResponse {
   positions: { pair: Pair; direction: "long" | "short"; profit: number }[];
 }
 
+interface RiskStatusResponse {
+  haltedForToday: boolean;
+  cooldownUntil: number | null;
+  maxConsecutiveLosses: number;
+  maxDailyLossPct: number;
+}
+
 const ENGINE_MODE_POLL_MS = 7000;
+const RISK_STATUS_POLL_MS = 7000;
 // How long JUDE keeps listening after asking "would you like me to place this trade?"
 // before giving up -- ambiguous/absent input must never execute, so a timeout always
 // resolves to "not placed", never a fallback confirm.
@@ -78,6 +93,9 @@ export function useVoiceAssistant({ statuses, executeSignal }: UseVoiceAssistant
   settingsRef.current = settings;
   const engineModeRef = useRef(engineMode);
   engineModeRef.current = engineMode;
+  // Previous poll's guardian state -- compared against each new poll to speak only on the
+  // moment a cooldown/halt actually trips, not on every single poll while it stays active.
+  const prevRiskStatusRef = useRef<RiskStatusResponse | null>(null);
 
   useEffect(() => {
     // Swaps in the real localStorage value post-mount, deliberately -- reading it during
@@ -101,6 +119,39 @@ export function useVoiceAssistant({ statuses, executeSignal }: UseVoiceAssistant
     }
     poll();
     const pollId = setInterval(poll, ENGINE_MODE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(pollId);
+    };
+  }, []);
+
+  // The JUDE AI Trade Guardian's proactive side -- speaks the moment a cooldown or daily
+  // halt trips, not just reactively the next time a blocked execution attempt happens to
+  // surface the same code (see blockedReasonSpeech in grammar.ts for that reactive path).
+  useEffect(() => {
+    let cancelled = false;
+    function poll() {
+      fetch("/api/risk-status")
+        .then((res) => res.json())
+        .then((json: RiskStatusResponse) => {
+          if (cancelled) return;
+          const prev = prevRiskStatusRef.current;
+          if (settingsRef.current.voiceMode !== "off") {
+            if (json.haltedForToday && !prev?.haltedForToday) {
+              speak(buildDailyLossAnnouncement(json.maxDailyLossPct));
+            } else if (json.cooldownUntil && json.cooldownUntil !== prev?.cooldownUntil) {
+              const cooldownMinutes = Math.round((json.cooldownUntil - Date.now()) / 60_000);
+              speak(buildCooldownAnnouncement(json.maxConsecutiveLosses, Math.max(1, cooldownMinutes)));
+            }
+          }
+          prevRiskStatusRef.current = json;
+        })
+        .catch(() => {
+          // Best-effort; a missed poll just means the next one catches the transition.
+        });
+    }
+    poll();
+    const pollId = setInterval(poll, RISK_STATUS_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(pollId);

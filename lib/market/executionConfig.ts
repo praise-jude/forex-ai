@@ -6,6 +6,11 @@ export interface ExecutionConfig {
   maxDailyLossPct: number;
   maxTradesPerDay: number;
   killSwitchFile: string;
+  /** Consecutive losing deals (any symbol, any origin -- see getOpenPositionCount's same
+   * whole-account philosophy) that trip the revenge-trading cooldown below. */
+  maxConsecutiveLosses: number;
+  /** How long new execution is paused for once maxConsecutiveLosses is hit. */
+  cooldownMinutes: number;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -26,6 +31,8 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     maxConcurrentPositions: envNumber(`${prefix}MAX_CONCURRENT_POSITIONS`, 3),
     maxDailyLossPct: envNumber(`${prefix}MAX_DAILY_LOSS_PCT`, 5),
     maxTradesPerDay: envNumber(`${prefix}MAX_TRADES_PER_DAY`, 5),
+    maxConsecutiveLosses: envNumber(`${prefix}MAX_CONSECUTIVE_LOSSES`, 3),
+    cooldownMinutes: envNumber(`${prefix}COOLDOWN_MINUTES`, 30),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

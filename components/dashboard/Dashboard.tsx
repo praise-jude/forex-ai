@@ -7,6 +7,7 @@ import { executeSignalRequest, statusFromTrade, type CardStatus } from "@/lib/ma
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
 import { SignalsPanel } from "./SignalsPanel";
 import { PositionsPanel } from "./PositionsPanel";
+import { RiskGuardianBanner } from "./RiskGuardianBanner";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
 import { useVoiceAssistant } from "./useVoiceAssistant";
 import { SignalToastStack, type ToastEntry } from "./SignalToast";
@@ -109,6 +110,7 @@ export function Dashboard() {
 
   return (
     <div className="flex flex-col gap-4 p-5">
+      <RiskGuardianBanner />
       <VoiceAssistantPanel {...voice} />
 
       <div className="grid gap-4 lg:grid-cols-[220px_1fr_260px]">

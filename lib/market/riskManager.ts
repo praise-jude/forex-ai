@@ -3,6 +3,9 @@ import fs from "node:fs";
 export interface RiskCheckInput {
   killSwitchActive: boolean;
   haltedForToday: boolean;
+  now: number;
+  /** Epoch ms the revenge-trading cooldown lifts, or null when none is active. */
+  cooldownUntil: number | null;
   openPositionCount: number;
   maxConcurrentPositions: number;
   tradesOpenedToday: number;
@@ -12,7 +15,19 @@ export interface RiskCheckInput {
   maxDailyLossPct: number;
 }
 
-export type RiskBlockCode = "kill_switch" | "halted" | "max_positions" | "max_trades" | "daily_loss" | "stale_price";
+export type RiskBlockCode = "kill_switch" | "halted" | "cooldown" | "max_positions" | "max_trades" | "daily_loss" | "stale_price";
+
+function computeDrawdownPct(startOfDayEquity: number, currentEquity: number): number {
+  if (startOfDayEquity <= 0) return 0;
+  return ((startOfDayEquity - currentEquity) / startOfDayEquity) * 100;
+}
+
+/** Same daily-loss math checkRiskLimits uses, exposed standalone so metaApiConnection.ts's
+ * deal-close listener can detect a breach the moment equity changes -- not just the next
+ * time a trade happens to be attempted. */
+export function isDailyLossBreached(startOfDayEquity: number, currentEquity: number, maxDailyLossPct: number): boolean {
+  return startOfDayEquity > 0 && computeDrawdownPct(startOfDayEquity, currentEquity) >= maxDailyLossPct;
+}
 
 export type RiskCheckResult = { allowed: true } | { allowed: false; code: RiskBlockCode; reason: string };
 
@@ -30,6 +45,14 @@ export function checkRiskLimits(input: RiskCheckInput): RiskCheckResult {
   if (input.haltedForToday) {
     return { allowed: false, code: "halted", reason: "trading halted for today (daily loss limit already tripped)" };
   }
+  if (input.cooldownUntil !== null && input.now < input.cooldownUntil) {
+    const remainingMin = Math.ceil((input.cooldownUntil - input.now) / 60_000);
+    return {
+      allowed: false,
+      code: "cooldown",
+      reason: `trading paused after too many consecutive losses -- ${remainingMin} minute(s) remaining`,
+    };
+  }
   if (input.openPositionCount >= input.maxConcurrentPositions) {
     return {
       allowed: false,
@@ -44,15 +67,13 @@ export function checkRiskLimits(input: RiskCheckInput): RiskCheckResult {
       reason: `max trades per day reached (${input.tradesOpenedToday}/${input.maxTradesPerDay})`,
     };
   }
-  if (input.startOfDayEquity > 0) {
-    const drawdownPct = ((input.startOfDayEquity - input.currentEquity) / input.startOfDayEquity) * 100;
-    if (drawdownPct >= input.maxDailyLossPct) {
-      return {
-        allowed: false,
-        code: "daily_loss",
-        reason: `daily loss limit reached (${drawdownPct.toFixed(2)}% >= ${input.maxDailyLossPct}%)`,
-      };
-    }
+  if (isDailyLossBreached(input.startOfDayEquity, input.currentEquity, input.maxDailyLossPct)) {
+    const drawdownPct = computeDrawdownPct(input.startOfDayEquity, input.currentEquity);
+    return {
+      allowed: false,
+      code: "daily_loss",
+      reason: `daily loss limit reached (${drawdownPct.toFixed(2)}% >= ${input.maxDailyLossPct}%)`,
+    };
   }
   return { allowed: true };
 }

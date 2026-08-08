@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   checkPriceDrift,
   checkRiskLimits,
+  isDailyLossBreached,
   isEnvKillSwitchActive,
   isKillSwitchActive,
   STALE_PRICE_FRACTION_OF_STOP,
@@ -13,6 +14,8 @@ function buildInput(overrides: Partial<RiskCheckInput> = {}): RiskCheckInput {
   return {
     killSwitchActive: false,
     haltedForToday: false,
+    now: 1_000_000,
+    cooldownUntil: null,
     openPositionCount: 0,
     maxConcurrentPositions: 3,
     tradesOpenedToday: 0,
@@ -41,6 +44,18 @@ describe("checkRiskLimits", () => {
       code: "halted",
       reason: "trading halted for today (daily loss limit already tripped)",
     });
+  });
+
+  it("blocks while a revenge-trading cooldown is still active", () => {
+    const result = checkRiskLimits(buildInput({ now: 1_000_000, cooldownUntil: 1_000_000 + 5 * 60_000 }));
+    expect(result.allowed).toBe(false);
+    expect((result as { code: string }).code).toBe("cooldown");
+    expect((result as { reason: string }).reason).toContain("5 minute");
+  });
+
+  it("allows execution once the cooldown has lifted", () => {
+    const result = checkRiskLimits(buildInput({ now: 1_000_000, cooldownUntil: 999_000 }));
+    expect(result).toEqual({ allowed: true });
   });
 
   it("blocks at the max concurrent positions limit", () => {
@@ -108,6 +123,14 @@ describe("checkPriceDrift", () => {
     const tolerance = STALE_PRICE_FRACTION_OF_STOP * stopDistance;
     expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance })).allowed).toBe(true);
     expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance + 0.00001 })).allowed).toBe(false);
+  });
+});
+
+describe("isDailyLossBreached", () => {
+  it("mirrors checkRiskLimits's daily_loss threshold, usable outside an execution attempt", () => {
+    expect(isDailyLossBreached(10000, 9500, 5)).toBe(true);
+    expect(isDailyLossBreached(10000, 9600, 5)).toBe(false);
+    expect(isDailyLossBreached(0, 9600, 5)).toBe(false); // no anchor yet -- never reports a breach
   });
 });
 

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildConfirmPhrase, buildResultAnnouncement, buildSignalAnnouncement, parseVoiceCommand } from "../grammar";
+import {
+  buildConfirmPhrase,
+  buildCooldownAnnouncement,
+  buildDailyLossAnnouncement,
+  buildResultAnnouncement,
+  buildSignalAnnouncement,
+  parseVoiceCommand,
+} from "../grammar";
 import { buildSignal } from "../../market/__tests__/fixtures";
 
 describe("buildConfirmPhrase", () => {
@@ -75,6 +82,17 @@ describe("buildResultAnnouncement", () => {
     const text = buildResultAnnouncement(signal, { status: "blocked", code: "stale_price", reason: "irrelevant raw reason" });
     expect(text).toContain("market has moved");
     expect(text).toContain("review the updated setup");
+  });
+});
+
+describe("buildCooldownAnnouncement / buildDailyLossAnnouncement", () => {
+  it("states the concrete threshold and cooldown length", () => {
+    expect(buildCooldownAnnouncement(3, 30)).toContain("3 losses in a row");
+    expect(buildCooldownAnnouncement(3, 30)).toContain("30 minutes");
+  });
+
+  it("states the concrete daily loss percentage", () => {
+    expect(buildDailyLossAnnouncement(5)).toContain("5 percent");
   });
 });
 

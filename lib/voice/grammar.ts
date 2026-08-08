@@ -46,10 +46,17 @@ export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number)
 }
 
 function blockedReasonSpeech(code: string, reason: string): string {
-  if (code === "stale_price") {
-    return "The market has moved since I gave you the recommendation. I have cancelled the original order. Would you like me to review the updated setup?";
+  switch (code) {
+    case "stale_price":
+      return "The market has moved since I gave you the recommendation. I have cancelled the original order. Would you like me to review the updated setup?";
+    case "cooldown":
+      return "Your trading activity has exceeded your configured risk limit, so I'm not able to place this. " + reason;
+    case "daily_loss":
+    case "halted":
+      return "Autopilot is locked for today -- the daily loss limit has already been reached.";
+    default:
+      return reason;
   }
-  return reason;
 }
 
 /** Never says "trade placed" unless `result.status === "filled"` -- MetaApi's own
@@ -84,6 +91,17 @@ export function buildResultAnnouncement(signal: Signal, result: ExecuteResponse)
     case "network_error":
       return "I couldn't reach the server to place that trade. No trade has been placed.";
   }
+}
+
+/** Proactive JUDE AI Trade Guardian announcements -- spoken the moment a cooldown/halt
+ * trips (see useVoiceAssistant's risk-status poll), not just reactively when a blocked
+ * execution attempt happens to surface the same code (see blockedReasonSpeech above). */
+export function buildCooldownAnnouncement(maxConsecutiveLosses: number, cooldownMinutes: number): string {
+  return `Jude, pause. Your trading activity has exceeded your configured risk limit -- ${maxConsecutiveLosses} losses in a row. No new trade will be allowed for ${cooldownMinutes} minutes.`;
+}
+
+export function buildDailyLossAnnouncement(maxDailyLossPct: number): string {
+  return `Jude, the daily loss limit of ${maxDailyLossPct} percent has been reached. Autopilot is now locked until the next trading day.`;
 }
 
 export type VoiceCommand =

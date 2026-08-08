@@ -6,11 +6,15 @@ const ENV_VARS = [
   "MAX_CONCURRENT_POSITIONS",
   "MAX_DAILY_LOSS_PCT",
   "MAX_TRADES_PER_DAY",
+  "MAX_CONSECUTIVE_LOSSES",
+  "COOLDOWN_MINUTES",
   "KILL_SWITCH_FILE",
   "DEMO_RISK_PER_TRADE_PCT",
   "DEMO_MAX_CONCURRENT_POSITIONS",
   "DEMO_MAX_DAILY_LOSS_PCT",
   "DEMO_MAX_TRADES_PER_DAY",
+  "DEMO_MAX_CONSECUTIVE_LOSSES",
+  "DEMO_COOLDOWN_MINUTES",
   "KILL_SWITCH_FILE_DEMO",
 ];
 
@@ -25,6 +29,8 @@ describe("loadExecutionConfig", () => {
       maxConcurrentPositions: 3,
       maxDailyLossPct: 5,
       maxTradesPerDay: 5,
+      maxConsecutiveLosses: 3,
+      cooldownMinutes: 30,
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
@@ -32,6 +38,8 @@ describe("loadExecutionConfig", () => {
       maxConcurrentPositions: 3,
       maxDailyLossPct: 5,
       maxTradesPerDay: 5,
+      maxConsecutiveLosses: 3,
+      cooldownMinutes: 30,
       killSwitchFile: ".trading-paused-demo",
     });
   });
@@ -47,6 +55,16 @@ describe("loadExecutionConfig", () => {
   it("falls back to the shared default, not live's configured value, when a DEMO_ var is unset", () => {
     process.env.MAX_CONCURRENT_POSITIONS = "10"; // live tuned way up
     expect(loadExecutionConfig("demo").maxConcurrentPositions).toBe(3); // demo still gets the plain default
+  });
+
+  it("reads the cooldown settings independently per account too", () => {
+    process.env.MAX_CONSECUTIVE_LOSSES = "5";
+    process.env.DEMO_COOLDOWN_MINUTES = "10";
+
+    expect(loadExecutionConfig("live").maxConsecutiveLosses).toBe(5);
+    expect(loadExecutionConfig("demo").maxConsecutiveLosses).toBe(3); // falls back to the shared default
+    expect(loadExecutionConfig("live").cooldownMinutes).toBe(30);
+    expect(loadExecutionConfig("demo").cooldownMinutes).toBe(10);
   });
 
   it("respects a custom KILL_SWITCH_FILE_DEMO path", () => {

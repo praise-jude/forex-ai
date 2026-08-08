@@ -66,6 +66,8 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   const riskCheck = checkRiskLimits({
     killSwitchActive: isKillSwitchActive(config.killSwitchFile),
     haltedForToday: dayState.haltedForToday,
+    now,
+    cooldownUntil: dayState.cooldownUntil,
     openPositionCount: getOpenPositionCount(accountKey),
     maxConcurrentPositions: config.maxConcurrentPositions,
     tradesOpenedToday: dayState.tradesOpenedToday,

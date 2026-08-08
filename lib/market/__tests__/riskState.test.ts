@@ -8,7 +8,13 @@ const DAY_2 = Date.UTC(2024, 1, 2, 0, 30, 0);
 describe("riskState", () => {
   it("anchors start-of-day equity on first use and doesn't drift within the same day", () => {
     const first = riskState.current(DAY_1, 10000);
-    expect(first).toMatchObject({ startOfDayEquity: 10000, tradesOpenedToday: 0, haltedForToday: false });
+    expect(first).toMatchObject({
+      startOfDayEquity: 10000,
+      tradesOpenedToday: 0,
+      haltedForToday: false,
+      consecutiveLosses: 0,
+      cooldownUntil: null,
+    });
 
     const later = riskState.current(DAY_1_LATER, 9800);
     expect(later.startOfDayEquity).toBe(10000); // unchanged even though "current equity" passed in differs
@@ -31,6 +37,8 @@ describe("riskState", () => {
       startOfDayEquity: 9700,
       tradesOpenedToday: 0,
       haltedForToday: false,
+      consecutiveLosses: 0,
+      cooldownUntil: null,
     });
   });
 
@@ -50,5 +58,36 @@ describe("riskState", () => {
     expect(live.haltedForToday).toBe(false); // a halted demo day never halts live
     expect(demo.tradesOpenedToday).toBe(2);
     expect(demo.haltedForToday).toBe(true);
+  });
+});
+
+describe("riskState.recordTradeClosed", () => {
+  const DAY = Date.UTC(2024, 3, 1, 10, 0, 0);
+
+  it("builds a losing streak and trips a cooldown once it reaches the threshold", () => {
+    riskState.recordTradeClosed(DAY, 10000, -50, 3, 30, "live");
+    riskState.recordTradeClosed(DAY, 9950, -50, 3, 30, "live");
+    expect(riskState.current(DAY, 9950, "live").consecutiveLosses).toBe(2);
+    expect(riskState.current(DAY, 9950, "live").cooldownUntil).toBeNull();
+
+    riskState.recordTradeClosed(DAY, 9900, -50, 3, 30, "live");
+    const state = riskState.current(DAY, 9900, "live");
+    expect(state.consecutiveLosses).toBe(0); // reset once the cooldown trips
+    expect(state.cooldownUntil).toBe(DAY + 30 * 60_000);
+  });
+
+  it("a win resets the streak without touching an unrelated active cooldown", () => {
+    riskState.recordTradeClosed(DAY, 10000, -50, 3, 30, "demo");
+    riskState.recordTradeClosed(DAY, 9950, -50, 3, 30, "demo");
+    riskState.recordTradeClosed(DAY, 9900, 200, 3, 30, "demo"); // a win before hitting the threshold
+    expect(riskState.current(DAY, 9900, "demo").consecutiveLosses).toBe(0);
+    expect(riskState.current(DAY, 9900, "demo").cooldownUntil).toBeNull();
+  });
+
+  it("a breakeven deal (profit exactly 0) leaves the streak unchanged", () => {
+    const day = Date.UTC(2024, 3, 2, 10, 0, 0);
+    riskState.recordTradeClosed(day, 10000, -50, 5, 30, "live");
+    riskState.recordTradeClosed(day, 9950, 0, 5, 30, "live");
+    expect(riskState.current(day, 9950, "live").consecutiveLosses).toBe(1);
   });
 });
