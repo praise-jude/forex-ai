@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { checkRiskLimits, isEnvKillSwitchActive, isKillSwitchActive, type RiskCheckInput } from "../riskManager";
+import {
+  checkPriceDrift,
+  checkRiskLimits,
+  isEnvKillSwitchActive,
+  isKillSwitchActive,
+  STALE_PRICE_FRACTION_OF_STOP,
+  type PriceDriftInput,
+  type RiskCheckInput,
+} from "../riskManager";
 
 function buildInput(overrides: Partial<RiskCheckInput> = {}): RiskCheckInput {
   return {
@@ -56,6 +64,50 @@ describe("checkRiskLimits", () => {
   it("allows when the drawdown is under the daily loss threshold", () => {
     const result = checkRiskLimits(buildInput({ startOfDayEquity: 10000, currentEquity: 9600, maxDailyLossPct: 5 }));
     expect(result).toEqual({ allowed: true });
+  });
+});
+
+function buildDriftInput(overrides: Partial<PriceDriftInput> = {}): PriceDriftInput {
+  return {
+    direction: "long",
+    entry: 1.1,
+    stopLoss: 1.09,
+    currentAsk: 1.1,
+    currentBid: 1.0998,
+    ...overrides,
+  };
+}
+
+describe("checkPriceDrift", () => {
+  it("allows execution when the current price is at (or very near) the entry", () => {
+    expect(checkPriceDrift(buildDriftInput())).toEqual({ allowed: true });
+  });
+
+  it("allows execution when no live price has been seen yet (fails open)", () => {
+    expect(checkPriceDrift(buildDriftInput({ currentAsk: undefined, currentBid: undefined }))).toEqual({ allowed: true });
+  });
+
+  it("uses ask for a long entry, blocking once drift exceeds the stop-relative tolerance", () => {
+    const stopDistance = 0.01; // entry 1.10, stop 1.09
+    const tolerance = STALE_PRICE_FRACTION_OF_STOP * stopDistance;
+    const result = checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance + 0.0001 }));
+    expect(result.allowed).toBe(false);
+    expect((result as { code: string }).code).toBe("stale_price");
+  });
+
+  it("uses bid, not ask, for a short entry", () => {
+    const input = buildDriftInput({ direction: "short", entry: 1.1, stopLoss: 1.11, currentBid: 1.15, currentAsk: 1.1 });
+    // Ask hasn't moved at all, but bid (the side a short entry actually fills against) has
+    // -- must block on bid, proving the direction-based side selection is respected.
+    const result = checkPriceDrift(input);
+    expect(result.allowed).toBe(false);
+  });
+
+  it("allows execution right at the tolerance boundary and blocks just past it", () => {
+    const stopDistance = 0.01;
+    const tolerance = STALE_PRICE_FRACTION_OF_STOP * stopDistance;
+    expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance })).allowed).toBe(true);
+    expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance + 0.00001 })).allowed).toBe(false);
   });
 });
 

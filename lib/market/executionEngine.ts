@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AccountKey, ExecutedTrade, Signal } from "./types";
 import { positionStore } from "./positionStore";
+import { priceStore } from "./priceStore";
 import { riskState } from "./riskState";
-import { checkRiskLimits, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
+import { checkPriceDrift, checkRiskLimits, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize } from "./positionSizing";
 import {
@@ -78,6 +79,22 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${riskCheck.reason}`);
     if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity, accountKey);
     return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
+  }
+
+  // Applies to every execution path (button and voice alike), not just voice -- but
+  // matters most there, since a spoken confirmation round trip leaves more time for the
+  // price to drift from the signal's entry than an immediate button click does.
+  const currentPrice = priceStore.get(signal.pair);
+  const priceDriftCheck = checkPriceDrift({
+    direction: signal.direction,
+    entry: signal.entry,
+    stopLoss: signal.stopLoss,
+    currentBid: currentPrice?.bid,
+    currentAsk: currentPrice?.ask,
+  });
+  if (!priceDriftCheck.allowed) {
+    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${priceDriftCheck.reason}`);
+    return { status: "blocked", code: priceDriftCheck.code, reason: priceDriftCheck.reason };
   }
 
   const spec = getSymbolSpecification(signal.pair, accountKey);

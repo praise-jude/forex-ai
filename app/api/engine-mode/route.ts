@@ -1,10 +1,16 @@
-import { enableLiveMode, getEngineMode, setEngineMode } from "@/lib/market/engineMode";
+import { enableLiveMode, getEngineMode, manualExecutionAccount, setEngineMode } from "@/lib/market/engineMode";
+import { loadExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  return Response.json({ mode: getEngineMode(), demoConfigured: isAccountConfigured("demo") });
+  const mode = getEngineMode();
+  // The account a manual click (or a voice hard-confirm, which goes through the same
+  // execute route) would currently target -- so the risk % JUDE speaks always matches
+  // what a confirmation would actually risk.
+  const riskPerTradePct = loadExecutionConfig(manualExecutionAccount(mode)).riskPerTradePct;
+  return Response.json({ mode, demoConfigured: isAccountConfigured("demo"), riskPerTradePct });
 }
 
 // Switching to "analysis"/"demo" is immediate, no confirmation -- both are the "safe"

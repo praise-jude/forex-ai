@@ -1,0 +1,144 @@
+import type { ExecuteResponse } from "../market/executionClient";
+import { formatPrice } from "../market/format";
+import type { Pair, Signal } from "../market/types";
+
+// Friendlier spoken names for the current PAIRS list (lib/market/types.ts) -- spells out
+// ticker-style pairs letter by letter so TTS engines don't mangle "EURUSD" as a word.
+const PAIR_SPOKEN_NAMES: Record<Pair, string> = {
+  "EUR/USD": "Euro against the US Dollar, E U R U S D",
+  "GBP/USD": "British Pound against the US Dollar, G B P U S D",
+  "USD/JPY": "US Dollar against the Japanese Yen, U S D J P Y",
+  "AUD/USD": "Australian Dollar against the US Dollar, A U D U S D",
+  "USD/CAD": "US Dollar against the Canadian Dollar, U S D C A D",
+  "XAU/USD": "Gold against the US Dollar",
+  "XAG/USD": "Silver against the US Dollar",
+  USOIL: "US Crude Oil",
+  UKOIL: "UK Brent Oil",
+  "BTC/USD": "Bitcoin against the US Dollar, B T C U S D",
+};
+
+/** Ticker form used in the spoken confirmation phrase, e.g. "BTC/USD" -> "BTCUSD". */
+function tickerWord(pair: Pair): string {
+  return pair.replace("/", "");
+}
+
+/** The exact phrase the user must say to hard-confirm a trade -- deliberately requires an
+ * exact match (see parseVoiceCommand) so background noise or a vague "yes" can never fire
+ * a live order by itself. */
+export function buildConfirmPhrase(signal: Signal): string {
+  const directionWord = signal.direction === "long" ? "BUY" : "SELL";
+  return `CONFIRM ${directionWord} ${tickerWord(signal.pair)}`;
+}
+
+export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number): string {
+  const directionWord = signal.direction === "long" ? "buy" : "sell";
+  return [
+    `Hello Jude. I have a potential ${directionWord} opportunity.`,
+    `The market is ${PAIR_SPOKEN_NAMES[signal.pair]}.`,
+    `The proposed entry is ${formatPrice(signal.pair, signal.entry)}.`,
+    `The stop loss is ${formatPrice(signal.pair, signal.stopLoss)}.`,
+    `The take profit is ${formatPrice(signal.pair, signal.takeProfit)}.`,
+    `The risk is ${riskPerTradePct} percent.`,
+    `The risk to reward ratio is ${signal.riskReward.toFixed(1)}.`,
+    `The AI confidence is ${Math.round(signal.confidence)} percent.`,
+    "Would you like me to place this trade?",
+  ].join(" ");
+}
+
+function blockedReasonSpeech(code: string, reason: string): string {
+  if (code === "stale_price") {
+    return "The market has moved since I gave you the recommendation. I have cancelled the original order. Would you like me to review the updated setup?";
+  }
+  return reason;
+}
+
+/** Never says "trade placed" unless `result.status === "filled"` -- MetaApi's own
+ * confirmation, relayed through the backend, is what triggers that line. */
+export function buildResultAnnouncement(signal: Signal, result: ExecuteResponse): string {
+  const pairWord = tickerWord(signal.pair);
+  const directionWord = signal.direction === "long" ? "buy" : "sell";
+
+  switch (result.status) {
+    case "filled": {
+      const { trade } = result;
+      return [
+        "Jude, the trade has been placed successfully.",
+        `${pairWord} ${directionWord}.`,
+        `Entry price ${formatPrice(signal.pair, trade.filledEntry ?? trade.requestedEntry)}.`,
+        `Stop loss ${formatPrice(signal.pair, trade.stopLoss)}.`,
+        `Take profit ${formatPrice(signal.pair, trade.takeProfit)}.`,
+        `Position size ${trade.requestedLots}.`,
+        "I'll monitor the position.",
+      ].join(" ");
+    }
+    case "rejected":
+      return `Jude, I could not place the trade. ${result.trade.rejectReason ?? "The broker rejected the order."}`;
+    case "blocked":
+      return `Jude, I could not place the trade. ${blockedReasonSpeech(result.code, result.reason)}`;
+    case "skipped_sizing":
+      return `Jude, I could not place the trade. ${result.reason}`;
+    case "duplicate":
+      return "That trade has already been submitted -- no second order was placed.";
+    case "not_found":
+      return "That signal has expired. No trade has been placed.";
+    case "network_error":
+      return "I couldn't reach the server to place that trade. No trade has been placed.";
+  }
+}
+
+export type VoiceCommand =
+  | { kind: "hard_confirm" }
+  | { kind: "soft_confirm" }
+  | { kind: "decline" }
+  | { kind: "emergency_stop" }
+  | { kind: "query_profit" }
+  | { kind: "query_positions" }
+  | { kind: "query_autopilot_status" }
+  | { kind: "unrecognized" };
+
+function normalize(text: string): string {
+  return text
+    .trim()
+    .toUpperCase()
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+// Soft phrases alone are deliberately NOT enough to execute -- they only arm a re-prompt
+// for the exact hard-confirm phrase (see useVoiceAssistant's "soft_confirm" handling).
+const SOFT_CONFIRM_PHRASES = ["approve", "place the trade", "yes place it", "confirm", "yes", "go ahead", "do it"];
+const DECLINE_PHRASES = ["reject", "cancel", "dont place it", "wait", "no"];
+const EMERGENCY_PHRASES = ["emergency stop", "stop trading", "disable autopilot", "halt trading"];
+const PROFIT_PHRASES = ["whats my current profit", "what is my profit", "show my profit", "current profit", "my profit"];
+const POSITIONS_PHRASES = ["show my open trades", "what trades are open", "show open trades", "open positions", "open trades"];
+const AUTOPILOT_PHRASES = ["is autopilot active", "is auto pilot active", "autopilot status"];
+
+function matchesAny(normalized: string, phrases: string[]): boolean {
+  return phrases.some((phrase) => {
+    const normalizedPhrase = normalize(phrase);
+    return normalized === normalizedPhrase || normalized.includes(normalizedPhrase);
+  });
+}
+
+/**
+ * Classifies a recognized transcript. `expectedConfirmPhrase` should be the exact phrase
+ * from `buildConfirmPhrase` for whichever signal is currently awaiting confirmation (or
+ * null if none is pending) -- only an exact match against it ever counts as "hard_confirm".
+ * Checked before every other bucket so "CONFIRM BUY BTCUSD" can't be misread as a bare
+ * "confirm" soft-trigger.
+ */
+export function parseVoiceCommand(transcript: string, expectedConfirmPhrase: string | null): VoiceCommand {
+  const normalized = normalize(transcript);
+  if (!normalized) return { kind: "unrecognized" };
+
+  if (expectedConfirmPhrase && normalized === normalize(expectedConfirmPhrase)) {
+    return { kind: "hard_confirm" };
+  }
+  if (matchesAny(normalized, EMERGENCY_PHRASES)) return { kind: "emergency_stop" };
+  if (matchesAny(normalized, DECLINE_PHRASES)) return { kind: "decline" };
+  if (matchesAny(normalized, PROFIT_PHRASES)) return { kind: "query_profit" };
+  if (matchesAny(normalized, POSITIONS_PHRASES)) return { kind: "query_positions" };
+  if (matchesAny(normalized, AUTOPILOT_PHRASES)) return { kind: "query_autopilot_status" };
+  if (matchesAny(normalized, SOFT_CONFIRM_PHRASES)) return { kind: "soft_confirm" };
+  return { kind: "unrecognized" };
+}

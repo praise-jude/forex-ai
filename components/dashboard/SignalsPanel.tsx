@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Confluence, ExecutedTrade, Signal } from "@/lib/market/types";
+import type { Confluence, Signal } from "@/lib/market/types";
+import type { CardStatus } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
 import { TradingRobot } from "./TradingRobot";
 
@@ -34,26 +34,6 @@ const TIER_BADGE_CLASSES: Record<Signal["tier"], string> = {
   buy: "bg-sky-500/15 text-sky-400",
   watch: "bg-amber-500/15 text-amber-400",
 };
-
-// Mirrors ExecutionResult from lib/market/executionEngine.ts (kept as a local, JSON-shaped
-// type here rather than importing that server module into a client component), plus two
-// client-only outcomes for responses that never reach attemptExecution at all.
-type ExecuteResponse =
-  | { status: "duplicate" }
-  | { status: "blocked"; code: string; reason: string }
-  | { status: "skipped_sizing"; reason: string }
-  | { status: "filled"; trade: ExecutedTrade }
-  | { status: "rejected"; trade: ExecutedTrade }
-  | { status: "not_found" }
-  | { status: "network_error" };
-
-type CardStatus = { state: "idle" } | { state: "loading" } | { state: "done"; result: ExecuteResponse };
-
-function statusFromTrade(trade: ExecutedTrade): CardStatus | null {
-  if (trade.status === "filled") return { state: "done", result: { status: "filled", trade } };
-  if (trade.status === "rejected") return { state: "done", result: { status: "rejected", trade } };
-  return null; // "pending" shouldn't outlive a single attemptExecution call; nothing to seed yet.
-}
 
 function relativeTime(fromMs: number): string {
   const seconds = Math.round((Date.now() - fromMs) / 1000);
@@ -166,33 +146,15 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
   );
 }
 
-export function SignalsPanel({ signals, executedTrades }: { signals: Signal[]; executedTrades: ExecutedTrade[] }) {
-  // Only ever set by a click in this tab (loading/done) — statuses for trades executed
-  // before this page loaded are derived below from `executedTrades` instead, so a click
-  // in this tab always wins over the seeded snapshot without needing to reconcile them.
-  const [localStatuses, setLocalStatuses] = useState<Record<string, CardStatus>>({});
-
-  const seededStatuses = useMemo(() => {
-    const seeded: Record<string, CardStatus> = {};
-    for (const trade of executedTrades) {
-      const status = statusFromTrade(trade);
-      if (status) seeded[trade.signalId] = status;
-    }
-    return seeded;
-  }, [executedTrades]);
-
-  async function execute(signal: Signal) {
-    setLocalStatuses((prev) => ({ ...prev, [signal.id]: { state: "loading" } }));
-    let result: ExecuteResponse;
-    try {
-      const res = await fetch(`/api/signals/${signal.id}/execute`, { method: "POST" });
-      result = (await res.json()) as ExecuteResponse;
-    } catch {
-      result = { status: "network_error" };
-    }
-    setLocalStatuses((prev) => ({ ...prev, [signal.id]: { state: "done", result } }));
-  }
-
+export function SignalsPanel({
+  signals,
+  statuses,
+  onExecute,
+}: {
+  signals: Signal[];
+  statuses: Record<string, CardStatus>;
+  onExecute: (signal: Signal) => void;
+}) {
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
       <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Active signals</h2>
@@ -204,8 +166,8 @@ export function SignalsPanel({ signals, executedTrades }: { signals: Signal[]; e
             <SignalCard
               key={signal.id}
               signal={signal}
-              status={localStatuses[signal.id] ?? seededStatuses[signal.id] ?? { state: "idle" }}
-              onExecute={() => execute(signal)}
+              status={statuses[signal.id] ?? { state: "idle" }}
+              onExecute={() => onExecute(signal)}
             />
           ))}
         </ul>
