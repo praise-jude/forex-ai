@@ -199,8 +199,23 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   useEffect(() => {
     if (!streamEvent || streamEvent.type !== "candle") return;
     if (streamEvent.pair !== pair || streamEvent.timeframe !== timeframe) return;
+
+    const prevLast = candlesRef.current[candlesRef.current.length - 1];
+    // True for the overwhelming majority of events: a new bar forming, or a correction
+    // to the bar still open on the chart. lightweight-charts' series.update() handles
+    // both in O(1) -- no need to re-serialize and re-set every candle on the chart for
+    // what's usually a single new/changed bar.
+    const isAppendOrCurrentBar = !prevLast || streamEvent.candle.time >= prevLast.time;
     candlesRef.current = upsertCandle(candlesRef.current, streamEvent.candle);
-    renderAll(candlesRef.current);
+
+    if (isAppendOrCurrentBar) {
+      seriesRef.current?.update(toBar(streamEvent.candle));
+    } else {
+      // Rare: a late "final" correction to a bar that's already closed on the chart (see
+      // upsertCandle's own doc comment) -- series.update() only supports the most recent
+      // bar, so this one case still needs a full redraw to land correctly.
+      renderAll(candlesRef.current);
+    }
   }, [streamEvent, pair, timeframe, renderAll]);
 
   // Redraw annotations/forecast whenever the prediction itself changes (new evaluation

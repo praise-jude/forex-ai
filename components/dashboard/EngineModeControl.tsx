@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
 type EngineMode = "analysis" | "demo" | "live";
 
@@ -25,31 +26,17 @@ const MODE_LABEL: Record<EngineMode, string> = {
 };
 
 export function EngineModeControl() {
-  const [data, setData] = useState<EngineModeResponse | null>(null);
+  // Shared with useVoiceAssistant.ts, which polls this exact same "engine-mode" key --
+  // usePolledResource dedupes them into a single interval/request instead of two.
+  const { data, setData } = usePolledResource<EngineModeResponse>(
+    "engine-mode",
+    () => fetch("/api/engine-mode").then((res) => res.json()),
+    POLL_INTERVAL_MS
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const [phraseInput, setPhraseInput] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    function poll() {
-      fetch("/api/engine-mode")
-        .then((res) => res.json())
-        .then((json: EngineModeResponse) => {
-          if (!cancelled) setData(json);
-        })
-        .catch(() => {
-          // Best-effort; keep showing the last known state rather than flashing an error.
-        });
-    }
-    poll();
-    const pollId = setInterval(poll, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(pollId);
-    };
-  }, []);
 
   async function setMode(mode: EngineMode, confirmationPhrase?: string) {
     setBusy(true);
@@ -65,7 +52,7 @@ export function EngineModeControl() {
         setError(json.message ?? "Request failed");
         return;
       }
-      setData((prev) => (prev ? { ...prev, mode: json.mode } : prev));
+      if (data) setData({ ...data, mode: json.mode });
       setShowLiveConfirm(false);
       setPhraseInput("");
     } catch {

@@ -2,6 +2,13 @@ import type { AccountKey, ExecutedTrade } from "./types";
 
 type AttemptInput = Omit<ExecutedTrade, "status" | "filledEntry" | "brokerPositionId" | "brokerOrderId" | "rejectReason" | "filledAt">;
 
+// Bounds the audit ledger so a long-running process doesn't grow this (and the
+// /api/signals payload that serializes all of it) unbounded -- generous relative to
+// realistic trade volume (a handful of trades/day), so this only ever prunes ancient
+// history. See PositionStore.prune()'s own comment for why this is safe with respect to
+// hasExecuted()'s idempotency guard.
+const MAX_RECORDS = 1000;
+
 /**
  * The execution audit ledger — "why did we take this trade" (which signal, intended
  * risk %, requested vs filled). NOT a live-position mirror: what's actually open right
@@ -32,7 +39,24 @@ class PositionStore {
   recordAttempt(input: AttemptInput): ExecutedTrade {
     const record: ExecutedTrade = { ...input, status: "pending" };
     this.byKey.set(this.key(input.signalId, input.account), record);
+    this.prune();
     return record;
+  }
+
+  /**
+   * Drops the oldest-attempted entries once the ledger exceeds MAX_RECORDS. Safe with
+   * respect to hasExecuted()'s idempotency guard: a signal can only ever reach
+   * attemptExecution() while it still exists in signalStore, which itself prunes after
+   * 4 hours (see signalStore.ts's STALE_AFTER_MS) -- by the time an entry here is old
+   * enough to be evicted, the signal it was guarding is already unreachable via the
+   * normal execute route (signalStore.get() returns undefined first), so eviction can
+   * never actually reopen a duplicate-execution window in practice.
+   */
+  private prune(): void {
+    if (this.byKey.size <= MAX_RECORDS) return;
+    const entries = Array.from(this.byKey.entries()).sort((a, b) => a[1].attemptedAt - b[1].attemptedAt);
+    const excess = entries.length - MAX_RECORDS;
+    for (let i = 0; i < excess; i++) this.byKey.delete(entries[i][0]);
   }
 
   markFilled(

@@ -82,4 +82,22 @@ describe("positionStore", () => {
     const liveFilled = positionStore.tradesOnDay("2024-02-01", "live");
     expect(liveFilled.some((t) => t.signalId === "signal-demo-2")).toBe(false);
   });
+
+  it("evicts the oldest-attempted entries once the ledger exceeds 1000 records", () => {
+    const base = Date.UTC(2025, 0, 1, 0, 0, 0);
+    for (let i = 0; i < 1005; i++) {
+      positionStore.recordAttempt({
+        ...ATTEMPT,
+        id: `prune-trade-${i}`,
+        signalId: `prune-signal-${i}`,
+        attemptedAt: base + i * 1000,
+      });
+    }
+
+    const all = positionStore.all();
+    expect(all.length).toBeLessThanOrEqual(1000);
+    // The oldest of this batch (index 0-4) were evicted; the newest (index 1004) survives.
+    expect(positionStore.hasExecuted("prune-signal-0")).toBe(false);
+    expect(positionStore.hasExecuted("prune-signal-1004")).toBe(true);
+  });
 });

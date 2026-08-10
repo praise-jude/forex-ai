@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { predictionHeadline } from "@/lib/market/predictionLabel";
 import type { Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
@@ -93,7 +94,19 @@ export function useVoiceAssistant({
   const [lastMessage, setLastMessage] = useState("");
   const [pendingSignal, setPendingSignal] = useState<Signal | null>(null);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
-  const [engineMode, setEngineModeState] = useState<EngineModeResponse | null>(null);
+  // Shared with EngineModeControl.tsx (same "engine-mode" key) and RiskGuardianBanner.tsx
+  // (same "risk-status" key) -- usePolledResource dedupes what were three independent
+  // pollers hitting the same two endpoints down to one request per endpoint per tick.
+  const { data: engineMode } = usePolledResource<EngineModeResponse>(
+    "engine-mode",
+    () => fetch("/api/engine-mode").then((res) => res.json()),
+    ENGINE_MODE_POLL_MS
+  );
+  const { data: riskStatus } = usePolledResource<RiskStatusResponse>(
+    "risk-status",
+    () => fetch("/api/risk-status").then((res) => res.json()),
+    RISK_STATUS_POLL_MS
+  );
 
   const engineRef = useRef<VoiceEngine | null>(null);
   if (!engineRef.current && typeof window !== "undefined") {
@@ -132,58 +145,24 @@ export function useVoiceAssistant({
     setSettings(loadVoiceSettings());
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    function poll() {
-      fetch("/api/engine-mode")
-        .then((res) => res.json())
-        .then((json: EngineModeResponse) => {
-          if (!cancelled) setEngineModeState(json);
-        })
-        .catch(() => {
-          // Best-effort; keep the last known mode rather than flashing an error.
-        });
-    }
-    poll();
-    const pollId = setInterval(poll, ENGINE_MODE_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(pollId);
-    };
-  }, []);
-
   // The JUDE AI Trade Guardian's proactive side -- speaks the moment a cooldown or daily
   // halt trips, not just reactively the next time a blocked execution attempt happens to
   // surface the same code (see blockedReasonSpeech in grammar.ts for that reactive path).
+  // Fires once per riskStatus update (same cadence the old dedicated poll had, since
+  // usePolledResource's shared "risk-status" cache produces a fresh object each tick).
   useEffect(() => {
-    let cancelled = false;
-    function poll() {
-      fetch("/api/risk-status")
-        .then((res) => res.json())
-        .then((json: RiskStatusResponse) => {
-          if (cancelled) return;
-          const prev = prevRiskStatusRef.current;
-          if (settingsRef.current.voiceMode !== "off") {
-            if (json.haltedForToday && !prev?.haltedForToday) {
-              speak(buildDailyLossAnnouncement(json.maxDailyLossPct));
-            } else if (json.cooldownUntil && json.cooldownUntil !== prev?.cooldownUntil) {
-              const cooldownMinutes = Math.round((json.cooldownUntil - Date.now()) / 60_000);
-              speak(buildCooldownAnnouncement(json.maxConsecutiveLosses, Math.max(1, cooldownMinutes)));
-            }
-          }
-          prevRiskStatusRef.current = json;
-        })
-        .catch(() => {
-          // Best-effort; a missed poll just means the next one catches the transition.
-        });
+    if (!riskStatus) return;
+    const prev = prevRiskStatusRef.current;
+    if (settingsRef.current.voiceMode !== "off") {
+      if (riskStatus.haltedForToday && !prev?.haltedForToday) {
+        speak(buildDailyLossAnnouncement(riskStatus.maxDailyLossPct));
+      } else if (riskStatus.cooldownUntil && riskStatus.cooldownUntil !== prev?.cooldownUntil) {
+        const cooldownMinutes = Math.round((riskStatus.cooldownUntil - Date.now()) / 60_000);
+        speak(buildCooldownAnnouncement(riskStatus.maxConsecutiveLosses, Math.max(1, cooldownMinutes)));
+      }
     }
-    poll();
-    const pollId = setInterval(poll, RISK_STATUS_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(pollId);
-    };
-  }, []);
+    prevRiskStatusRef.current = riskStatus;
+  }, [riskStatus]);
 
   function clearListenTimer() {
     if (listenTimerRef.current) {

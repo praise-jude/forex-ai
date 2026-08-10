@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
 interface RiskStatusResponse {
   account: "live" | "demo";
@@ -23,29 +24,18 @@ function formatRemaining(cooldownUntil: number, now: number): string {
 /** Renders nothing when nothing is active -- this is a guardian-tripped alert, not a
  * status-quo indicator (ConnectionStatus/EngineModeControl already cover normal state). */
 export function RiskGuardianBanner() {
-  const [data, setData] = useState<RiskStatusResponse | null>(null);
+  // Shared with useVoiceAssistant.ts, which polls this exact same "risk-status" key --
+  // usePolledResource dedupes them into a single interval/request instead of two.
+  const { data } = usePolledResource<RiskStatusResponse>(
+    "risk-status",
+    () => fetch("/api/risk-status").then((res) => res.json()),
+    POLL_INTERVAL_MS
+  );
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    let cancelled = false;
-    function poll() {
-      fetch("/api/risk-status")
-        .then((res) => res.json())
-        .then((json: RiskStatusResponse) => {
-          if (!cancelled) setData(json);
-        })
-        .catch(() => {
-          // Best-effort; keep showing the last known state rather than flashing an error.
-        });
-    }
-    poll();
-    const pollId = setInterval(poll, POLL_INTERVAL_MS);
     const tickId = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(pollId);
-      clearInterval(tickId);
-    };
+    return () => clearInterval(tickId);
   }, []);
 
   if (!data) return null;
