@@ -15,7 +15,10 @@ interface OnDisk {
 
 function readFromDisk(): Map<string, PushDevice> {
   try {
-    const raw = fs.readFileSync(STORE_FILE, "utf-8");
+    // turbopackIgnore: STORE_FILE is an operator-configured absolute path (often outside
+    // the project directory, e.g. a Railway persistent volume) -- not something to trace
+    // and bundle the whole project around.
+    const raw = fs.readFileSync(/* turbopackIgnore: true */ STORE_FILE, "utf-8");
     const parsed = JSON.parse(raw) as OnDisk;
     return new Map(parsed.devices.map((d) => [d.deviceId, d]));
   } catch {

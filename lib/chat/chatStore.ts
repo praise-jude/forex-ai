@@ -24,7 +24,10 @@ interface OnDisk {
 
 function readFromDisk(): ChatMessage[] {
   try {
-    const raw = fs.readFileSync(STORE_FILE, "utf-8");
+    // turbopackIgnore: STORE_FILE is an operator-configured absolute path (often outside
+    // the project directory, e.g. a Railway persistent volume) -- not something to trace
+    // and bundle the whole project around, same as deviceStore.ts's identical pattern.
+    const raw = fs.readFileSync(/* turbopackIgnore: true */ STORE_FILE, "utf-8");
     const parsed = JSON.parse(raw) as OnDisk;
     return parsed.messages;
   } catch {
