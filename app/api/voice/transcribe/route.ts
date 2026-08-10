@@ -52,7 +52,14 @@ export async function POST(request: Request) {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     console.error(`[voice] transcription failed (${response.status}): ${detail}`);
-    return Response.json({ error: "transcription_failed", message: "OpenAI transcription request failed" }, { status: 502 });
+    // Surfaces the real upstream status/detail to the client instead of a generic
+    // placeholder -- this is a single-operator app (the only person who'd ever see
+    // this message is the operator debugging their own setup), not a boundary where
+    // OpenAI's raw error needs to be hidden from an untrusted caller.
+    return Response.json(
+      { error: "transcription_failed", message: `OpenAI transcription request failed (${response.status}): ${detail.slice(0, 300)}` },
+      { status: 502 }
+    );
   }
 
   const json = (await response.json()) as { text?: string };
