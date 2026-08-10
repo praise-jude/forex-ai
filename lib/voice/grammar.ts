@@ -1,6 +1,8 @@
 import type { ExecuteResponse } from "../market/executionClient";
 import { formatPrice } from "../market/format";
-import type { Pair, Signal } from "../market/types";
+import { describeNoTradeReason } from "../market/noTradeReason";
+import { predictionHeadline } from "../market/predictionLabel";
+import type { Pair, PredictionUpdate, Signal } from "../market/types";
 
 // Friendlier spoken names for the current PAIRS list (lib/market/types.ts) -- spells out
 // ticker-style pairs letter by letter so TTS engines don't mangle "EURUSD" as a word.
@@ -43,6 +45,30 @@ export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number)
     `The AI confidence is ${Math.round(signal.confidence)} percent.`,
     "Would you like me to place this trade?",
   ].join(" ");
+}
+
+/**
+ * A short status readout for a prediction-headline change on the currently selected
+ * pair -- distinct from buildSignalAnnouncement's full trade pitch, since this fires on
+ * *any* headline change (including into NEUTRAL/NO TRADE), not just a new executable
+ * signal. Never fabricates a reason -- the no_trade/watch detail comes straight from
+ * describeNoTradeReason / the real Signal fields.
+ */
+export function buildPredictionAnnouncement(update: PredictionUpdate): string {
+  const pairName = PAIR_SPOKEN_NAMES[update.pair];
+
+  if (update.evaluation.status === "no_trade") {
+    return `Jude, ${pairName} is now no trade. ${describeNoTradeReason(update.evaluation.reason)}`;
+  }
+
+  const { signal } = update.evaluation;
+  if (signal.tier === "watch") {
+    const lean = signal.direction === "long" ? "buy" : "sell";
+    return `Jude, ${pairName} has moved to neutral -- leaning ${lean} at ${signal.confidence.toFixed(0)} percent, below the execution threshold.`;
+  }
+
+  const headline = predictionHeadline(update.evaluation).toLowerCase();
+  return `Jude, ${pairName} is now a ${headline} at ${signal.confidence.toFixed(0)} percent confidence.`;
 }
 
 function blockedReasonSpeech(code: string, reason: string): string {

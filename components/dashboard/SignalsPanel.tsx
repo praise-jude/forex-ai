@@ -5,7 +5,9 @@ import type { CardStatus } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
 import { TradingRobot } from "./TradingRobot";
 
-const CONFLUENCE_LABEL: Record<Confluence, string> = {
+// Exported for reuse by PredictionCard.tsx -- one place a confluence tag's display
+// name is defined, not duplicated between the two components that show them.
+export const CONFLUENCE_LABEL: Record<Confluence, string> = {
   liquidity_sweep: "Liquidity sweep",
   bos: "Structure break (BOS)",
   choch: "Change of character (CHoCH)",

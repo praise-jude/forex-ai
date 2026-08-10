@@ -2,10 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PAIRS, type ExecutedTrade, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
+import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal, type StreamEvent } from "@/lib/market/types";
 import { executeSignalRequest, statusFromTrade, type CardStatus } from "@/lib/market/executionClient";
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
 import { SignalsPanel } from "./SignalsPanel";
+import { PredictionCard } from "./PredictionCard";
 import { PositionsPanel } from "./PositionsPanel";
 import { RiskGuardianBanner } from "./RiskGuardianBanner";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
@@ -26,6 +27,7 @@ export function Dashboard() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(emptyWatchlist);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [executedTrades, setExecutedTrades] = useState<ExecutedTrade[]>([]);
+  const [predictions, setPredictions] = useState<Partial<Record<Pair, PredictionUpdate>>>({});
   const [latestEvent, setLatestEvent] = useState<StreamEvent | null>(null);
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
@@ -65,17 +67,25 @@ export function Dashboard() {
     return result;
   }, []);
 
-  const voice = useVoiceAssistant({ statuses: cardStatuses, executeSignal });
+  const voice = useVoiceAssistant({ statuses: cardStatuses, executeSignal, selectedPair });
 
   useEffect(() => {
     fetch("/api/signals")
       .then((res) => res.json())
-      .then((data: { watchlist: WatchlistEntry[]; signals: Signal[]; executedTrades: ExecutedTrade[] }) => {
-        setWatchlist(data.watchlist);
-        setSignals(data.signals);
-        setExecutedTrades(data.executedTrades);
-        for (const signal of data.signals) seenSignalIds.current.add(signal.id);
-      })
+      .then(
+        (data: {
+          watchlist: WatchlistEntry[];
+          signals: Signal[];
+          executedTrades: ExecutedTrade[];
+          predictions: PredictionUpdate[];
+        }) => {
+          setWatchlist(data.watchlist);
+          setSignals(data.signals);
+          setExecutedTrades(data.executedTrades);
+          setPredictions(Object.fromEntries(data.predictions.map((p) => [p.pair, p])));
+          for (const signal of data.signals) seenSignalIds.current.add(signal.id);
+        }
+      )
       .catch(() => {
         // Best-effort initial snapshot; the SSE stream will still catch up live data.
       });
@@ -101,6 +111,10 @@ export function Dashboard() {
           setToasts((prev) => [...prev, { key: `${event.signal.id}-${Date.now()}`, signal: event.signal }]);
           voice.onSignal(event.signal);
         }
+      } else if (event.type === "prediction") {
+        const update = { pair: event.pair, timeframe: event.timeframe, evaluation: event.evaluation, time: event.time };
+        setPredictions((prev) => ({ ...prev, [event.pair]: update }));
+        voice.onPredictionChange(update);
       }
     };
 
@@ -121,8 +135,16 @@ export function Dashboard() {
             <h2 className="text-base font-semibold text-zinc-100">{selectedPair}</h2>
             <span className="text-xs text-zinc-500">15-minute &middot; SMC signal timeframe</span>
           </div>
+          <div className="mb-3">
+            <PredictionCard update={predictions[selectedPair] ?? null} />
+          </div>
           <div className="h-105">
-            <PriceChart pair={selectedPair} timeframe={TIMEFRAME} streamEvent={latestEvent} />
+            <PriceChart
+              pair={selectedPair}
+              timeframe={TIMEFRAME}
+              streamEvent={latestEvent}
+              prediction={predictions[selectedPair] ?? null}
+            />
           </div>
         </section>
 

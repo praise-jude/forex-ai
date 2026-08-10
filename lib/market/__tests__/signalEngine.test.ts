@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { candle } from "../detectors/__tests__/fixtures";
-import { assembleSignals } from "../signalEngine";
+import { assembleSignals, evaluateSignal } from "../signalEngine";
 import { calculateAtr } from "../indicators/atr";
 import type { Candle } from "../types";
 
@@ -208,5 +208,64 @@ describe("assembleSignals", () => {
     // floor, so nothing fires at all.
     const candles = buildCandles({ strongFinalCandle: false });
     expect(assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual([]);
+  });
+});
+
+// Same fixtures as the assembleSignals tests above, exercising evaluateSignal (the
+// underlying function assembleSignals now wraps) directly so the *reason* a candle
+// close didn't qualify is asserted, not just the empty-array outcome.
+describe("evaluateSignal", () => {
+  it("returns status: signal with the same data assembleSignals extracts, on a qualifying close", () => {
+    const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
+    expect(evaluation.status).toBe("signal");
+    if (evaluation.status !== "signal") return;
+    expect(evaluation.signal).toMatchObject({ pair: "EUR/USD", direction: "long", tier: "buy", confidence: 90 });
+    // The real order-block/FVG zone bounds behind entry, for chart annotations.
+    expect(evaluation.signal.zoneTop).toBeGreaterThanOrEqual(evaluation.signal.zoneBottom!);
+    expect(evaluation.signal.entry).toBeGreaterThanOrEqual(evaluation.signal.zoneBottom!);
+    expect(evaluation.signal.entry).toBeLessThanOrEqual(evaluation.signal.zoneTop!);
+  });
+
+  it("reports below_threshold with the real DimensionScores when the weighted score misses", () => {
+    const candles = buildCandles({ strongFinalCandle: false });
+    const evaluation = evaluateSignal(candles, "EUR/USD", "15m", buildHigherTimeframes("up"));
+    expect(evaluation).toMatchObject({
+      status: "no_trade",
+      reason: { code: "below_threshold" },
+    });
+    if (evaluation.status !== "no_trade" || evaluation.reason.code !== "below_threshold") return;
+    expect(evaluation.reason.direction.total).toBeGreaterThan(0);
+    expect(evaluation.reason.entry.total).toBeLessThan(90);
+  });
+
+  it("reports outside_killzone when the same setup closes off-session", () => {
+    const candles = buildCandles();
+    const offSession = new Date(candles[candles.length - 1].time);
+    offSession.setUTCHours(18);
+    candles[candles.length - 1] = { ...candles[candles.length - 1], time: offSession.getTime() };
+
+    expect(evaluateSignal(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual({
+      status: "no_trade",
+      reason: { code: "outside_killzone" },
+    });
+  });
+
+  it("reports trend_disagreement with the real per-timeframe readings when D1/H4 disagree", () => {
+    const higherTimeframes = { ...buildHigherTimeframes("up"), h4: buildHigherTf(210, "down") };
+    const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", higherTimeframes);
+    expect(evaluation).toMatchObject({
+      status: "no_trade",
+      reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bullish", h4: "bearish" },
+    });
+  });
+
+  it("reports no_setup when price has already tagged the zone once", () => {
+    const candles = buildCandles();
+    candles.push(candle(t(WARMUP_LENGTH + 21), 1.04, 1.045, 1.02, 1.035));
+
+    expect(evaluateSignal(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual({
+      status: "no_trade",
+      reason: { code: "no_setup" },
+    });
   });
 });

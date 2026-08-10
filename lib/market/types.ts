@@ -1,3 +1,5 @@
+import type { DimensionScore } from "./confidenceScore";
+
 export type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 
 export type Pair =
@@ -126,12 +128,43 @@ export interface Signal {
   session: Session;
   timeframe: Timeframe;
   createdAt: number;
+  /** The real SMC order-block/FVG zone bounds behind `entry` (their midpoint), for
+   * drawing an actual zone on the chart instead of approximating one from `entry`
+   * alone. Optional -- TradingView-sourced signals have no zone concept and must not
+   * fabricate one (see tradingViewWebhook.ts). */
+  zoneTop?: number;
+  zoneBottom?: number;
 }
+
+/** Why a given M15 candle close did *not* produce a Signal -- computed by
+ * signalEngine.ts's evaluateSignal from the same real data the gates already checked,
+ * never guessed after the fact. `below_threshold` reuses confidenceScore.ts's own
+ * DimensionScore so the reason and the (never-created) signal's score can't disagree. */
+export type NoTradeReason =
+  | { code: "outside_killzone" }
+  | { code: "no_setup" } // no recent sweep, no matching structure break, no candidate zone, zone not freshly tagged, or degenerate risk<=0
+  | { code: "trend_disagreement"; impliedDirection: "long" | "short"; d1: string; h4: string; h1: string }
+  | { code: "weak_trend_adx"; adx: number }
+  | { code: "low_volatility"; atr: number; atrAverage: number }
+  | { code: "below_threshold"; direction: DimensionScore; entry: DimensionScore };
+
+export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 
 export type StreamEvent =
   | { type: "price"; pair: Pair; bid: number; ask: number; time: number }
   | { type: "candle"; pair: Pair; timeframe: Timeframe; candle: Candle }
-  | { type: "signal"; signal: Signal };
+  | { type: "signal"; signal: Signal }
+  | { type: "prediction"; pair: Pair; timeframe: Timeframe; evaluation: SignalEvaluation; time: number };
+
+/** Latest per-pair evaluation result -- overwritten every closed M15 candle, no
+ * history kept (see predictionStore.ts). Distinct from Signal: exists even when no
+ * signal qualified, so the dashboard can show real "why not" reasoning. */
+export interface PredictionUpdate {
+  pair: Pair;
+  timeframe: Timeframe;
+  evaluation: SignalEvaluation;
+  time: number;
+}
 
 // --- Execution ---
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Candle, Confluence, Pair, Signal, Timeframe } from "./types";
+import type { Candle, Confluence, NoTradeReason, Pair, Signal, SignalEvaluation, Timeframe } from "./types";
 import { detectSwingPoints } from "./detectors/swings";
 import { detectStructureBreaks } from "./detectors/structure";
 import { detectFairValueGaps } from "./detectors/fairValueGaps";
@@ -68,33 +68,37 @@ function trendDirection(candles: Candle[]): "bullish" | "bearish" | "neutral" {
 }
 
 /**
- * Assembles a trade signal from the current M15 candle close. A liquidity sweep,
- * structure break in the implied reversal direction, and a first-time retest of the
- * resulting unmitigated FVG/order block during a killzone (crypto pairs exempted —
- * see isCrypto) locate the *candidate* trade (its entry/SL/TP). D1/H4/H1 trend
- * agreement, ADX, and ATR are then hard
- * pre-gates. If those pass, a weighted confidence score (trend, market structure,
- * SMC zone quality, volume, MACD, RSI, candlestick pattern) is computed; a Signal is
- * constructed at 80%+ (watch — informational only, not executable), 90%+ (buy), or
- * 95%+ (strong_buy). Anything lower produces no signal at all. Only buy/strong_buy
- * can ever be manually executed (see executionEngine.ts's watch-tier guard) — watch
- * exists purely so a near-miss setup is visible on the dashboard. Call this once per
- * closed M15 candle — never on the still-forming candle, or signals will repaint.
+ * Evaluates the current M15 candle close and returns either a Signal or a NoTradeReason
+ * -- every exit point is accounted for, never silently dropped, so the dashboard can
+ * show real "why not" reasoning instead of nothing. A liquidity sweep, structure break
+ * in the implied reversal direction, and a first-time retest of the resulting
+ * unmitigated FVG/order block during a killzone (crypto pairs exempted — see isCrypto)
+ * locate the *candidate* trade (its entry/SL/TP). D1/H4/H1 trend agreement, ADX, and
+ * ATR are then hard pre-gates. If those pass, a weighted confidence score (trend,
+ * market structure, SMC zone quality, volume, MACD, RSI, candlestick pattern) is
+ * computed; a Signal is constructed at 80%+ (watch — informational only, not
+ * executable), 90%+ (buy), or 95%+ (strong_buy); below 80% is `below_threshold`, no
+ * signal. Only buy/strong_buy can ever be manually executed (see executionEngine.ts's
+ * watch-tier guard) — watch exists purely so a near-miss setup is visible on the
+ * dashboard. Call this once per closed M15 candle — never on the still-forming candle,
+ * or signals will repaint. See `assembleSignals` below for the Signal[]-only view.
  */
-export function assembleSignals(
+export function evaluateSignal(
   candles: Candle[],
   pair: Pair,
   timeframe: Timeframe,
   higherTimeframes: HigherTimeframeCandles
-): Signal[] {
-  if (candles.length < 10) return [];
+): SignalEvaluation {
+  const noTrade = (reason: NoTradeReason): SignalEvaluation => ({ status: "no_trade", reason });
+
+  if (candles.length < 10) return noTrade({ code: "no_setup" });
   const lastIndex = candles.length - 1;
   const lastCandle = candles[lastIndex];
 
   // Crypto trades 24/7 with no ICT-style institutional session structure the killzone
   // gate was built around, so it's exempted here rather than arbitrarily restricted to
   // forex trading hours — every other pre-gate below still fully applies.
-  if (!isCrypto(pair) && !isKillzone(lastCandle.time)) return [];
+  if (!isCrypto(pair) && !isKillzone(lastCandle.time)) return noTrade({ code: "outside_killzone" });
 
   // Hoisted ahead of sweep detection: the sweep tolerance below needs it, and it's a
   // pure function of `candles` with no dependency on anything computed in between, so
@@ -112,7 +116,7 @@ export function assembleSignals(
   const sweeps = detectLiquiditySweeps(candles, swings, sweepTolerance);
 
   const recentSweeps = sweeps.filter((s) => s.sweepIndex >= lastIndex - SWEEP_LOOKBACK_CANDLES);
-  if (recentSweeps.length === 0) return [];
+  if (recentSweeps.length === 0) return noTrade({ code: "no_setup" });
   const sweep = recentSweeps[recentSweeps.length - 1];
 
   // A buyside sweep (stops above a high taken out) implies a bearish reversal is
@@ -125,14 +129,18 @@ export function assembleSignals(
   const d1Trend = trendDirection(higherTimeframes.d1);
   const h4Trend = trendDirection(higherTimeframes.h4);
   const h1Trend = trendDirection(higherTimeframes.h1);
-  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== h1Trend || d1Trend !== zoneDirection) return [];
+  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== h1Trend || d1Trend !== zoneDirection) {
+    return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: d1Trend, h4: h4Trend, h1: h1Trend });
+  }
 
   const adx = calculateAdx(candles)[lastIndex];
-  if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return [];
+  if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return noTrade({ code: "weak_trend_adx", adx: Number.isNaN(adx) ? 0 : adx });
 
   const atrWindow = atrSeries.slice(lastIndex - ATR_AVERAGE_PERIOD, lastIndex);
   const atrAverage = atrWindow.reduce((sum, v) => sum + v, 0) / atrWindow.length;
-  if (Number.isNaN(atr) || !(atr > atrAverage)) return [];
+  if (Number.isNaN(atr) || !(atr > atrAverage)) {
+    return noTrade({ code: "low_volatility", atr: Number.isNaN(atr) ? 0 : atr, atrAverage });
+  }
 
   const structureEvent = structureEvents
     .filter((e) => e.breakIndex > sweep.sweepIndex && e.breakIndex <= lastIndex)
@@ -141,7 +149,7 @@ export function assembleSignals(
         ? e.type === "BOS_BULLISH" || e.type === "CHOCH_BULLISH"
         : e.type === "BOS_BEARISH" || e.type === "CHOCH_BEARISH"
     );
-  if (!structureEvent) return [];
+  if (!structureEvent) return noTrade({ code: "no_setup" });
 
   const [orderBlock] = detectOrderBlocks(candles, [structureEvent]);
   const fvgs = detectFairValueGaps(candles).filter(
@@ -165,21 +173,21 @@ export function assembleSignals(
       sinceIndex: Math.max(gap.startIndex + 2, structureEvent.breakIndex),
     });
   }
-  if (candidateZones.length === 0) return [];
+  if (candidateZones.length === 0) return noTrade({ code: "no_setup" });
 
   const overlaps = (candle: Candle, zone: Zone) => candle.low <= zone.top && candle.high >= zone.bottom;
   const taggedNow = candidateZones.find((zone) => overlaps(lastCandle, zone));
-  if (!taggedNow) return [];
+  if (!taggedNow) return noTrade({ code: "no_setup" });
   // Only fire the first time price returns to the zone after it formed, so a signal
   // doesn't repeat every candle while price chops around inside it.
   const alreadyTagged = candles.slice(taggedNow.sinceIndex + 1, lastIndex).some((c) => overlaps(c, taggedNow));
-  if (alreadyTagged) return [];
+  if (alreadyTagged) return noTrade({ code: "no_setup" });
 
   const entry = (taggedNow.top + taggedNow.bottom) / 2;
   const slBuffer = atr * ATR_BUFFER_FRACTION;
   const stopLoss = wantsBullish ? sweep.sweptSwing.price - slBuffer : sweep.sweptSwing.price + slBuffer;
   const risk = Math.abs(entry - stopLoss);
-  if (risk <= 0) return [];
+  if (risk <= 0) return noTrade({ code: "no_setup" });
 
   const opposingPrices = swings
     .filter((s) => s.index > structureEvent.breakIndex && s.type === (wantsBullish ? "high" : "low"))
@@ -230,7 +238,7 @@ export function assembleSignals(
     candlestickMatches,
   });
 
-  if (score.tier === "no_trade") return [];
+  if (score.tier === "no_trade") return noTrade({ code: "below_threshold", direction: score.direction, entry: score.entry });
 
   const structureConfluence: Confluence = structureEvent.type.startsWith("CHOCH") ? "choch" : "bos";
 
@@ -262,7 +270,24 @@ export function assembleSignals(
     session: getActiveSession(lastCandle.time),
     timeframe,
     createdAt: Date.now(),
+    zoneTop: taggedNow.top,
+    zoneBottom: taggedNow.bottom,
   };
 
-  return [signal];
+  return { status: "signal", signal };
+}
+
+/**
+ * Backward-compatible wrapper over evaluateSignal for existing callers that only care
+ * about "was a signal produced" (e.g. the test suite's existing assertions) -- not a
+ * second code path, just a projection of evaluateSignal's result.
+ */
+export function assembleSignals(
+  candles: Candle[],
+  pair: Pair,
+  timeframe: Timeframe,
+  higherTimeframes: HigherTimeframeCandles
+): Signal[] {
+  const result = evaluateSignal(candles, pair, timeframe, higherTimeframes);
+  return result.status === "signal" ? [result.signal] : [];
 }

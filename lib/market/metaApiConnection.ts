@@ -14,8 +14,9 @@ import { PAIRS } from "./types";
 import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
 import { eventBus } from "./eventBus";
-import { assembleSignals } from "./signalEngine";
+import { evaluateSignal } from "./signalEngine";
 import { publishSignal } from "./signalPublisher";
+import { predictionStore } from "./predictionStore";
 import { brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
 import { loadExecutionConfig } from "./executionConfig";
@@ -28,7 +29,7 @@ const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 
 // The demo account exists purely as a second AUTO-EXECUTION target for DEMO engine mode
 // -- never a second price feed or a second signal engine. Only "live" writes into the
-// shared candleStore/priceStore/signalStore or calls assembleSignals(); if both accounts
+// shared candleStore/priceStore/signalStore or calls evaluateSignal(); if both accounts
 // published market data, two connections streaming the same broker prices would race to
 // write duplicate/conflicting candle and signal events. The demo connection still needs
 // its own terminalState (for getAccountInformation/getSymbolSpecification/position count
@@ -87,9 +88,11 @@ class MarketSyncListener extends SynchronizationListener {
           h4: candleStore.get(pair, "4h"),
           d1: candleStore.get(pair, "1d"),
         };
-        for (const signal of assembleSignals(priorSeries, pair, SIGNAL_TIMEFRAME, higherTimeframes)) {
-          publishSignal(signal);
-        }
+        const evaluation = evaluateSignal(priorSeries, pair, SIGNAL_TIMEFRAME, higherTimeframes);
+        const time = Date.now();
+        predictionStore.set(pair, { pair, timeframe: SIGNAL_TIMEFRAME, evaluation, time });
+        eventBus.publish({ type: "prediction", pair, timeframe: SIGNAL_TIMEFRAME, evaluation, time });
+        if (evaluation.status === "signal") publishSignal(evaluation.signal);
       }
     }
   }
