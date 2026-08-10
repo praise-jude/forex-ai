@@ -101,7 +101,7 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
         <div className="text-right">
           <div className="font-semibold text-zinc-100">{signal.pair}</div>
           <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${TIER_BADGE_CLASSES[signal.tier]}`}>
-            {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}%
+            {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}% &middot; {signal.timeframe}
           </span>
           <div className="mt-1 text-[11px] text-zinc-500">
             {signal.source === "tradingview"

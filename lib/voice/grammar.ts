@@ -2,7 +2,7 @@ import type { ExecuteResponse } from "../market/executionClient";
 import { formatPrice } from "../market/format";
 import { describeNoTradeReason } from "../market/noTradeReason";
 import { predictionHeadline } from "../market/predictionLabel";
-import type { Pair, PredictionUpdate, Signal } from "../market/types";
+import type { Pair, PredictionUpdate, Signal, Timeframe } from "../market/types";
 
 // Friendlier spoken names for the current PAIRS list (lib/market/types.ts) -- spells out
 // ticker-style pairs letter by letter so TTS engines don't mangle "EURUSD" as a word.
@@ -17,6 +17,18 @@ const PAIR_SPOKEN_NAMES: Record<Pair, string> = {
   USOIL: "US Crude Oil",
   UKOIL: "UK Brent Oil",
   "BTC/USD": "Bitcoin against the US Dollar, B T C U S D",
+};
+
+// Three independent signal engines (15m/30m/1h, see SIGNAL_TIMEFRAMES in
+// metaApiConnection.ts) can now announce for the same pair moments apart -- spoken so a
+// listener can tell them apart rather than hearing two unqualified "BUY EURUSD"s in a row.
+const TIMEFRAME_SPOKEN: Record<Timeframe, string> = {
+  "5m": "5 minute",
+  "15m": "15 minute",
+  "30m": "30 minute",
+  "1h": "1 hour",
+  "4h": "4 hour",
+  "1d": "daily",
 };
 
 /** Ticker form used in the spoken confirmation phrase, e.g. "BTC/USD" -> "BTCUSD". */
@@ -36,7 +48,7 @@ export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number)
   const directionWord = signal.direction === "long" ? "buy" : "sell";
   return [
     `Hello Jude. I have a potential ${directionWord} opportunity.`,
-    `The market is ${PAIR_SPOKEN_NAMES[signal.pair]}.`,
+    `The market is ${PAIR_SPOKEN_NAMES[signal.pair]}, on the ${TIMEFRAME_SPOKEN[signal.timeframe]} timeframe.`,
     `The proposed entry is ${formatPrice(signal.pair, signal.entry)}.`,
     `The stop loss is ${formatPrice(signal.pair, signal.stopLoss)}.`,
     `The take profit is ${formatPrice(signal.pair, signal.takeProfit)}.`,
@@ -56,19 +68,20 @@ export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number)
  */
 export function buildPredictionAnnouncement(update: PredictionUpdate): string {
   const pairName = PAIR_SPOKEN_NAMES[update.pair];
+  const timeframeWord = TIMEFRAME_SPOKEN[update.timeframe];
 
   if (update.evaluation.status === "no_trade") {
-    return `Jude, ${pairName} is now no trade. ${describeNoTradeReason(update.evaluation.reason)}`;
+    return `Jude, ${pairName} is now no trade on the ${timeframeWord} timeframe. ${describeNoTradeReason(update.evaluation.reason)}`;
   }
 
   const { signal } = update.evaluation;
   if (signal.tier === "watch") {
     const lean = signal.direction === "long" ? "buy" : "sell";
-    return `Jude, ${pairName} has moved to neutral -- leaning ${lean} at ${signal.confidence.toFixed(0)} percent, below the execution threshold.`;
+    return `Jude, ${pairName} has moved to neutral on the ${timeframeWord} timeframe -- leaning ${lean} at ${signal.confidence.toFixed(0)} percent, below the execution threshold.`;
   }
 
   const headline = predictionHeadline(update.evaluation).toLowerCase();
-  return `Jude, ${pairName} is now a ${headline} at ${signal.confidence.toFixed(0)} percent confidence.`;
+  return `Jude, ${pairName} is now a ${headline} at ${signal.confidence.toFixed(0)} percent confidence on the ${timeframeWord} timeframe.`;
 }
 
 function blockedReasonSpeech(code: string, reason: string): string {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { predictionHeadline } from "@/lib/market/predictionLabel";
-import type { Pair, PredictionUpdate, Signal } from "@/lib/market/types";
+import type { Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
 import {
   buildConfirmPhrase,
   buildCooldownAnnouncement,
@@ -56,6 +56,9 @@ export interface UseVoiceAssistantOptions {
   /** Only the currently selected pair's prediction changes are ever spoken -- see
    * onPredictionChange. */
   selectedPair: Pair;
+  /** Three signal engines (15m/30m/1h) run concurrently per pair now -- only the
+   * currently selected timeframe's changes are spoken, same reasoning as selectedPair. */
+  selectedTimeframe: Timeframe;
 }
 
 export interface VoiceAssistantState {
@@ -77,7 +80,12 @@ function manualAccount(mode: EngineMode): AccountKey {
   return mode === "demo" ? "demo" : "live";
 }
 
-export function useVoiceAssistant({ statuses, executeSignal, selectedPair }: UseVoiceAssistantOptions): VoiceAssistantState {
+export function useVoiceAssistant({
+  statuses,
+  executeSignal,
+  selectedPair,
+  selectedTimeframe,
+}: UseVoiceAssistantOptions): VoiceAssistantState {
   // Starts from DEFAULT_VOICE_SETTINGS on both server and first client render (avoids a
   // hydration mismatch), then swaps in the real localStorage value post-mount.
   const [settings, setSettings] = useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
@@ -101,15 +109,20 @@ export function useVoiceAssistant({ statuses, executeSignal, selectedPair }: Use
   engineModeRef.current = engineMode;
   const selectedPairRef = useRef(selectedPair);
   selectedPairRef.current = selectedPair;
+  const selectedTimeframeRef = useRef(selectedTimeframe);
+  selectedTimeframeRef.current = selectedTimeframe;
   // Previous poll's guardian state -- compared against each new poll to speak only on the
   // moment a cooldown/halt actually trips, not on every single poll while it stays active.
   const prevRiskStatusRef = useRef<RiskStatusResponse | null>(null);
-  // Previous *headline* per pair (not raw confidence -- a same-tier confidence wobble,
-  // e.g. 91%->93%, must not re-announce). Tracked for every pair so switching back to a
-  // pair whose prediction changed while it was in the background doesn't misfire on
-  // return, and so a background pair's change is still recorded (silently) rather than
-  // announced later as if it had just happened.
-  const prevPredictionRef = useRef<Partial<Record<Pair, string>>>({});
+  // Previous *headline* per (pair, timeframe) composite key -- not raw confidence (a
+  // same-tier confidence wobble, e.g. 91%->93%, must not re-announce), and not per-pair
+  // alone anymore now that three signal engines (15m/30m/1h) run concurrently per pair --
+  // collapsing them into one remembered headline per pair would misfire the moment the
+  // timeframe selector changes (comparing e.g. the 1h headline against the last-remembered
+  // 15m one). Tracked for every pair+timeframe so switching back to one that changed while
+  // in the background doesn't misfire on return, and so a background change is still
+  // recorded (silently) rather than announced later as if it had just happened.
+  const prevPredictionRef = useRef<Partial<Record<string, string>>>({});
 
   useEffect(() => {
     // Swaps in the real localStorage value post-mount, deliberately -- reading it during
@@ -352,19 +365,22 @@ export function useVoiceAssistant({ statuses, executeSignal, selectedPair }: Use
    * A passive status readout, not an actionable trade opportunity -- deliberately
    * bypasses the FIFO queue/pendingSignalRef machinery above (that exists to guarantee
    * a real trade opportunity is never dropped or talked over), since only the *latest*
-   * headline for the selected pair ever matters here. Edge-triggered on the headline
-   * label only (STRONG BUY/BUY/NEUTRAL/SELL/STRONG SELL/NO TRADE), so a same-tier
-   * confidence wobble stays silent, and never announces for a pair that isn't currently
-   * selected -- VoiceEngine.speak()'s own internal queue still serializes this after
-   * whatever's currently being said, so it can't talk over a pending trade confirmation.
+   * headline for the selected pair+timeframe ever matters here. Edge-triggered on the
+   * headline label only (STRONG BUY/BUY/NEUTRAL/SELL/STRONG SELL/NO TRADE), so a
+   * same-tier confidence wobble stays silent, and never announces for a pair/timeframe
+   * that isn't currently selected -- VoiceEngine.speak()'s own internal queue still
+   * serializes this after whatever's currently being said, so it can't talk over a
+   * pending trade confirmation.
    */
   function onPredictionChange(update: PredictionUpdate) {
     const label = predictionHeadline(update.evaluation);
-    const prev = prevPredictionRef.current[update.pair];
-    prevPredictionRef.current[update.pair] = label;
+    const key = `${update.pair}|${update.timeframe}`;
+    const prev = prevPredictionRef.current[key];
+    prevPredictionRef.current[key] = label;
     if (prev === label) return;
     if (settingsRef.current.voiceMode === "off") return;
     if (update.pair !== selectedPairRef.current) return;
+    if (update.timeframe !== selectedTimeframeRef.current) return;
     speak(buildPredictionAnnouncement(update));
   }
 

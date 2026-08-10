@@ -2,11 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal, type StreamEvent } from "@/lib/market/types";
+import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal, type StreamEvent, type Timeframe } from "@/lib/market/types";
 import { executeSignalRequest, statusFromTrade, type CardStatus } from "@/lib/market/executionClient";
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
 import { SignalsPanel } from "./SignalsPanel";
 import { PredictionCard } from "./PredictionCard";
+import { TimeframeSelector } from "./TimeframeSelector";
 import { PositionsPanel } from "./PositionsPanel";
 import { RiskGuardianBanner } from "./RiskGuardianBanner";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
@@ -15,19 +16,30 @@ import { SignalToastStack, type ToastEntry } from "./SignalToast";
 
 const PriceChart = dynamic(() => import("./PriceChart").then((mod) => mod.PriceChart), { ssr: false });
 
-const TIMEFRAME = "15m";
 const MAX_SIGNALS = 50;
 
 function emptyWatchlist(): WatchlistEntry[] {
   return PAIRS.map((pair) => ({ pair, bid: null, ask: null, time: null }));
 }
 
+function buildPredictionMap(updates: PredictionUpdate[]): Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>> {
+  const map: Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>> = {};
+  for (const update of updates) {
+    map[update.pair] = { ...map[update.pair], [update.timeframe]: update };
+  }
+  return map;
+}
+
 export function Dashboard() {
   const [selectedPair, setSelectedPair] = useState<Pair>(PAIRS[0]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(emptyWatchlist);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [executedTrades, setExecutedTrades] = useState<ExecutedTrade[]>([]);
-  const [predictions, setPredictions] = useState<Partial<Record<Pair, PredictionUpdate>>>({});
+  // Nested by pair then timeframe -- three signal engines (15m/30m/1h) run concurrently
+  // per pair now, so a single PredictionUpdate per pair is no longer enough (mirrors
+  // predictionStore.ts's own nested-Map shape on the server).
+  const [predictions, setPredictions] = useState<Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>>>({});
   const [latestEvent, setLatestEvent] = useState<StreamEvent | null>(null);
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
@@ -67,7 +79,9 @@ export function Dashboard() {
     return result;
   }, []);
 
-  const voice = useVoiceAssistant({ statuses: cardStatuses, executeSignal, selectedPair });
+  const voice = useVoiceAssistant({ statuses: cardStatuses, executeSignal, selectedPair, selectedTimeframe });
+
+  const selectedPrediction = predictions[selectedPair]?.[selectedTimeframe] ?? null;
 
   useEffect(() => {
     fetch("/api/signals")
@@ -82,7 +96,7 @@ export function Dashboard() {
           setWatchlist(data.watchlist);
           setSignals(data.signals);
           setExecutedTrades(data.executedTrades);
-          setPredictions(Object.fromEntries(data.predictions.map((p) => [p.pair, p])));
+          setPredictions(buildPredictionMap(data.predictions));
           for (const signal of data.signals) seenSignalIds.current.add(signal.id);
         }
       )
@@ -113,7 +127,7 @@ export function Dashboard() {
         }
       } else if (event.type === "prediction") {
         const update = { pair: event.pair, timeframe: event.timeframe, evaluation: event.evaluation, time: event.time };
-        setPredictions((prev) => ({ ...prev, [event.pair]: update }));
+        setPredictions((prev) => ({ ...prev, [event.pair]: { ...prev[event.pair], [event.timeframe]: update } }));
         voice.onPredictionChange(update);
       }
     };
@@ -133,17 +147,17 @@ export function Dashboard() {
         <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-base font-semibold text-zinc-100">{selectedPair}</h2>
-            <span className="text-xs text-zinc-500">15-minute &middot; SMC signal timeframe</span>
+            <TimeframeSelector value={selectedTimeframe} onChange={setSelectedTimeframe} />
           </div>
           <div className="mb-3">
-            <PredictionCard update={predictions[selectedPair] ?? null} />
+            <PredictionCard update={selectedPrediction} />
           </div>
           <div className="h-105">
             <PriceChart
               pair={selectedPair}
-              timeframe={TIMEFRAME}
+              timeframe={selectedTimeframe}
               streamEvent={latestEvent}
-              prediction={predictions[selectedPair] ?? null}
+              prediction={selectedPrediction}
             />
           </div>
         </section>

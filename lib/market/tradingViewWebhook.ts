@@ -2,7 +2,7 @@ import type { Signal, Timeframe } from "./types";
 import { pairForPlainSymbol } from "./symbols";
 import { getActiveSession } from "./sessions";
 
-const TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
+const TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 const DEFAULT_TIMEFRAME: Timeframe = "15m";
 export const DEFAULT_MAX_ALERT_AGE_MS = 60_000;
 

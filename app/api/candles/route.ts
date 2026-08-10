@@ -3,7 +3,7 @@ import { candleStore } from "@/lib/market/candleStore";
 
 export const runtime = "nodejs";
 
-const TIMEFRAMES: Timeframe[] = ["5m", "15m"];
+const TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h"];
 
 function isPair(value: string | null): value is Pair {
   return PAIRS.includes(value as Pair);

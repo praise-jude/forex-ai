@@ -1,6 +1,6 @@
 import type { DimensionScore } from "./confidenceScore";
 
-export type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
+export type Timeframe = "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
 export type Pair =
   | "EUR/USD"

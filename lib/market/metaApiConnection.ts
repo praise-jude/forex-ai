@@ -24,8 +24,16 @@ import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
 import { sendNotification } from "./pushNotifier";
 
-const SIGNAL_TIMEFRAME: Timeframe = "15m";
-const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
+// Three independent signal engines run concurrently per pair, one per timeframe --
+// each closed candle on any of these is evaluated on its own, sharing the same
+// higherTimeframes (h1/h4/d1) trend-confirmation stack (see the call site below).
+// For the "1h" engine specifically, higherTimeframes.h1 ends up being the exact same
+// candles as the signal series itself, making that one trend-agreement check
+// self-referential -- still a real check (H1 EMA50/200 vs. the implied direction),
+// just tautological-sounding; not special-cased since it's harmless and avoids
+// branching complexity in signalEngine.ts for a cosmetic redundancy.
+const SIGNAL_TIMEFRAMES: Timeframe[] = ["15m", "30m", "1h"];
+const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 
 // The demo account exists purely as a second AUTO-EXECUTION target for DEMO engine mode
 // -- never a second price feed or a second signal engine. Only "live" writes into the
@@ -82,16 +90,16 @@ class MarketSyncListener extends SynchronizationListener {
       candleStore.upsert(pair, timeframe, candle);
       eventBus.publish({ type: "candle", pair, timeframe, candle });
 
-      if (barJustClosed && timeframe === SIGNAL_TIMEFRAME) {
+      if (barJustClosed && SIGNAL_TIMEFRAMES.includes(timeframe)) {
         const higherTimeframes = {
           h1: candleStore.get(pair, "1h"),
           h4: candleStore.get(pair, "4h"),
           d1: candleStore.get(pair, "1d"),
         };
-        const evaluation = evaluateSignal(priorSeries, pair, SIGNAL_TIMEFRAME, higherTimeframes);
+        const evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
         const time = Date.now();
-        predictionStore.set(pair, { pair, timeframe: SIGNAL_TIMEFRAME, evaluation, time });
-        eventBus.publish({ type: "prediction", pair, timeframe: SIGNAL_TIMEFRAME, evaluation, time });
+        predictionStore.set(pair, timeframe, { pair, timeframe, evaluation, time });
+        eventBus.publish({ type: "prediction", pair, timeframe, evaluation, time });
         if (evaluation.status === "signal") publishSignal(evaluation.signal);
       }
     }
@@ -236,6 +244,7 @@ async function connect(accountKey: AccountKey): Promise<void> {
             { type: "quotes" },
             { type: "candles", timeframe: "5m" },
             { type: "candles", timeframe: "15m" },
+            { type: "candles", timeframe: "30m" },
             { type: "candles", timeframe: "1h" },
             { type: "candles", timeframe: "4h" },
             { type: "candles", timeframe: "1d" },

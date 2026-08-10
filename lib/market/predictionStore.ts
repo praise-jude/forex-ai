@@ -1,24 +1,43 @@
-import type { Pair, PredictionUpdate } from "./types";
+import type { Pair, PredictionUpdate, Timeframe } from "./types";
 
 /**
- * Latest evaluation per pair -- overwritten every closed M15 candle, no history and no
- * staleness pruning (unlike signalStore.ts, which keeps a bounded history of actual
- * Signals). This exists purely so the dashboard can show "here's the current read on
- * this pair" -- including a real no_trade reason -- even when no Signal was produced.
+ * Latest evaluation per (pair, timeframe) -- overwritten every closed candle on that
+ * timeframe, no history and no staleness pruning (unlike signalStore.ts, which keeps a
+ * bounded history of actual Signals). This exists purely so the dashboard can show
+ * "here's the current read on this pair/timeframe" -- including a real no_trade reason
+ * -- even when no Signal was produced. Nested by timeframe (mirroring candleStore.ts's
+ * own two-dimensional-key pattern) since three signal engines (15m/30m/1h, see
+ * metaApiConnection.ts) run concurrently per pair.
  */
 class PredictionStore {
-  private byPair = new Map<Pair, PredictionUpdate>();
+  private byPair = new Map<Pair, Map<Timeframe, PredictionUpdate>>();
 
-  set(pair: Pair, update: PredictionUpdate): void {
-    this.byPair.set(pair, update);
+  private bucket(pair: Pair): Map<Timeframe, PredictionUpdate> {
+    let byTimeframe = this.byPair.get(pair);
+    if (!byTimeframe) {
+      byTimeframe = new Map();
+      this.byPair.set(pair, byTimeframe);
+    }
+    return byTimeframe;
   }
 
-  get(pair: Pair): PredictionUpdate | undefined {
-    return this.byPair.get(pair);
+  set(pair: Pair, timeframe: Timeframe, update: PredictionUpdate): void {
+    this.bucket(pair).set(timeframe, update);
   }
 
+  get(pair: Pair, timeframe: Timeframe): PredictionUpdate | undefined {
+    return this.bucket(pair).get(timeframe);
+  }
+
+  /** Every timeframe currently on record for one pair -- what the dashboard needs to
+   * resolve "the prediction for the selected pair, at whichever timeframe is selected". */
+  forPair(pair: Pair): PredictionUpdate[] {
+    return [...this.bucket(pair).values()];
+  }
+
+  /** Flattened across every pair and timeframe. */
   all(): PredictionUpdate[] {
-    return [...this.byPair.values()];
+    return [...this.byPair.values()].flatMap((byTimeframe) => [...byTimeframe.values()]);
   }
 }
 
