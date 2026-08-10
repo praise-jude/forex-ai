@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Dashboard } from "@/components/dashboard/Dashboard";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
@@ -16,6 +17,9 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex items-center gap-4">
+            <Link href="/chat" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
+              JUDE Chat
+            </Link>
             <ConnectionStatus />
             <KillSwitchControl />
           </div>

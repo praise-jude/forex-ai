@@ -140,7 +140,10 @@ export type VoiceCommand =
   | { kind: "query_autopilot_status" }
   | { kind: "unrecognized" };
 
-function normalize(text: string): string {
+/** Exported so other exact-phrase safety gates (e.g. the chat tool layer's confirm-phrase
+ * check) normalize identically to the voice grammar's own hard_confirm match -- one
+ * normalization rule, not two that could quietly drift apart. */
+export function normalize(text: string): string {
   return text
     .trim()
     .toUpperCase()

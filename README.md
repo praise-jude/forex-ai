@@ -117,6 +117,15 @@ The companion mobile app (`forex-ai-mobile`, a separate Expo Router project) tal
 | `DEVICE_STORE_FILE` | `.device-tokens.json` | Where device tokens/prefs persist. Must be on a persistent volume (see "Deployment: not Vercel" below) or every device has to re-register after a redeploy. |
 | `OPENAI_API_KEY` | unset | Powers `/api/voice/transcribe`. Without it, that route returns 500; nothing else is affected. |
 
+### JUDE Chat
+
+`POST /api/chat {message}` / `GET /api/chat` is a single shared conversational assistant (one history, persisted to `CHAT_HISTORY_FILE`, since this app has no per-user concept — see "Not built yet") backed by the Claude API (`lib/chat/engine.ts`, `ANTHROPIC_API_KEY`). It answers questions about current predictions/signals/positions/risk/engine mode via read-only tools (`lib/chat/tools.ts`), and can pause/resume trading, switch engine mode, or execute a specific trade signal via the exact same REST routes (`/api/kill-switch`, `/api/engine-mode`, `/api/signals/[id]/execute`) a manual dashboard click already uses — the chat layer never calls `attemptExecution`/`enableLiveMode`/the kill-switch file writes directly, so those functions are still only ever invoked from their one existing route handler each. Trade execution and enabling LIVE mode are gated exactly like voice: the tool implementation checks the raw, unmodified text of the user's current message against the real confirmation phrase (`buildConfirmPhrase`/`ENABLE LIVE TRADING`) itself, server-side, before making that call — the model's tool-call arguments are never trusted as proof of confirmation.
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | unset | Powers `/api/chat`. Without it, that route returns 502; nothing else is affected. |
+| `CHAT_HISTORY_FILE` | `.chat-history.json` | Where the shared conversation persists. Must be on a persistent volume or history resets on redeploy (same caveat as `DEVICE_STORE_FILE`). |
+
 ### Not built yet
 
 Auth, subscriptions, a backtesting engine, and full database persistence (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens are file-persisted) are intentionally out of scope for this pass.
