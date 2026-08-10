@@ -23,7 +23,7 @@ function ToastCard({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (key: s
   const label = signal.direction === "long" ? "BUY SIGNAL" : "SELL SIGNAL";
 
   return (
-    <div className="animate-toast-in pointer-events-auto w-80 rounded-xl border border-white/10 bg-zinc-900 p-3 shadow-2xl shadow-black/50">
+    <div className="animate-toast-in pointer-events-auto w-full rounded-xl border border-white/10 bg-zinc-900 p-3 shadow-2xl shadow-black/50 sm:w-80">
       <div className="flex items-start justify-between gap-2">
         <TradingRobot direction={signal.direction} />
         <button
@@ -54,7 +54,7 @@ function ToastCard({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (key: s
 export function SignalToastStack({ toasts, onDismiss }: { toasts: ToastEntry[]; onDismiss: (key: string) => void }) {
   if (toasts.length === 0) return null;
   return (
-    <div aria-live="polite" className="pointer-events-none fixed right-4 top-4 z-50 flex flex-col gap-2">
+    <div aria-live="polite" className="pointer-events-none fixed inset-x-4 top-4 z-50 flex flex-col gap-2 sm:inset-x-auto sm:right-4">
       {toasts.map((entry) => (
         <ToastCard key={entry.key} entry={entry} onDismiss={onDismiss} />
       ))}

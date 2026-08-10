@@ -6,9 +6,9 @@ import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 
 export default function DashboardPage() {
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <header className="flex flex-col gap-3 border-b border-white/10 px-5 py-4">
-        <div className="flex items-center justify-between">
+    <main className="min-h-dvh bg-zinc-950 text-zinc-100">
+      <header className="flex flex-col gap-3 border-b border-white/10 px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-lg font-semibold">Forex AI &mdash; SMC Signals</h1>
             <p className="text-sm text-zinc-500">
@@ -16,7 +16,7 @@ export default function DashboardPage() {
               signals &middot; manual Buy/Sell always targets the account matching the current mode
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4">
             <Link href="/chat" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
               JUDE Chat
             </Link>
