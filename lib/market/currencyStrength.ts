@@ -135,6 +135,20 @@ export function usdStrengthSupports(strength: UsdStrength, pair: Pair, direction
   return direction === "long" ? buySupportedByUsd : !buySupportedByUsd;
 }
 
+/** Debug snapshot for /api/health -- reports presence/health, never a secret value
+ * itself (same convention as getConnectionStatus in metaApiConnection.ts). */
+export function currencyStrengthStatus(): {
+  configured: boolean;
+  lastFetchOk: boolean | null;
+  snapshotCount: number;
+} {
+  return {
+    configured: Boolean(process.env.CURRENCYLAYER_API_KEY),
+    lastFetchOk: state.lastFetchOk,
+    snapshotCount: state.snapshots.length,
+  };
+}
+
 /** Used by tests to reset cache state between cases. */
 export function resetCurrencyStrengthForTests(): void {
   state.snapshots = [];

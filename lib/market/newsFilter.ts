@@ -152,6 +152,16 @@ export function checkNews(pair: Pair, atTimeMs: number): NewsStatus {
   return { status: "clear" };
 }
 
+/** Debug snapshot for /api/health -- reports presence/health, never a secret value
+ * itself (same convention as getConnectionStatus in metaApiConnection.ts). */
+export function newsFilterStatus(): { configured: boolean; lastFetchOk: boolean | null; eventCount: number } {
+  return {
+    configured: Boolean(process.env.FINNHUB_API_KEY),
+    lastFetchOk: state.lastFetchOk,
+    eventCount: state.events.length,
+  };
+}
+
 /** Used by tests to reset cache state between cases. */
 export function resetNewsFilterForTests(): void {
   state.events = [];
