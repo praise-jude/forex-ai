@@ -16,6 +16,9 @@ import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
 import { isAboveAverageVolume } from "./indicators/volume";
 import { isEmaStackAligned } from "./indicators/emaStack";
+import { calculateSupertrend } from "./indicators/supertrend";
+import { computeUsdStrength, usdStrengthSupports as computeUsdStrengthSupport } from "./currencyStrength";
+import { checkNews } from "./newsFilter";
 import { scoreSignal } from "./confidenceScore";
 
 const SWEEP_LOOKBACK_CANDLES = 30;
@@ -68,19 +71,25 @@ function trendDirection(candles: Candle[]): "bullish" | "bearish" | "neutral" {
 }
 
 /**
- * Evaluates the current M15 candle close and returns either a Signal or a NoTradeReason
- * -- every exit point is accounted for, never silently dropped, so the dashboard can
- * show real "why not" reasoning instead of nothing. A liquidity sweep, structure break
- * in the implied reversal direction, and a first-time retest of the resulting
- * unmitigated FVG/order block during a killzone (crypto pairs exempted — see isCrypto)
- * locate the *candidate* trade (its entry/SL/TP). D1/H4/H1 trend agreement, ADX, and
- * ATR are then hard pre-gates. If those pass, a weighted confidence score (trend,
- * market structure, SMC zone quality, volume, MACD, RSI, candlestick pattern) is
- * computed; a Signal is constructed at 80%+ (watch — informational only, not
- * executable), 90%+ (buy), or 95%+ (strong_buy); below 80% is `below_threshold`, no
- * signal. Only buy/strong_buy can ever be manually executed (see executionEngine.ts's
- * watch-tier guard) — watch exists purely so a near-miss setup is visible on the
- * dashboard. Call this once per closed M15 candle — never on the still-forming candle,
+ * Evaluates the current closed candle and returns either a Signal or a NoTradeReason --
+ * every exit point is accounted for, never silently dropped, so the dashboard can show
+ * real "why not" reasoning instead of nothing. SMC remains the PRIMARY entry engine,
+ * completely unchanged: a liquidity sweep, structure break in the implied reversal
+ * direction, and a first-time retest of the resulting unmitigated FVG/order block
+ * during a killzone (crypto pairs exempted — see isCrypto) locate the *candidate* trade
+ * (its entry/SL/TP). D1/H4/H1 trend agreement, ADX, and ATR are then hard pre-gates,
+ * followed by a news-blackout check (see newsFilter.ts — a hard hold, only when a
+ * high-impact release is genuinely detected as imminent, never from missing data). If
+ * all of that passes, a weighted confidence score across three independent dimensions
+ * is computed: direction (trend/structure), entry (SMC zone quality/volume/MACD/RSI/
+ * candlestick), and confirmation (Supertrend + USD strength — external evidence that
+ * can only confirm or downgrade the SMC setup above, never independently trigger one;
+ * see confidenceScore.ts). A Signal is constructed at 80%+ (watch — informational only,
+ * not executable), 90%+ (buy), or 95%+ (strong_buy) on the WEAKEST of the three
+ * dimensions; below 80% on any of them is `below_threshold`, no signal. Only
+ * buy/strong_buy can ever be manually executed (see executionEngine.ts's watch-tier
+ * guard) — watch exists purely so a near-miss setup is visible on the dashboard. Call
+ * this once per closed candle — never on the still-forming one,
  * or signals will repaint. See `assembleSignals` below for the Signal[]-only view.
  */
 export function evaluateSignal(
@@ -210,6 +219,22 @@ export function evaluateSignal(
     if (reward2 / risk >= MIN_RISK_REWARD_2) takeProfit2 = target2;
   }
 
+  // A decisive hold, not part of the weighted score below -- an SMC setup was just
+  // fully located (entry/SL/TP all computed above) and would otherwise be evaluated,
+  // but a high-impact release for one of this pair's currencies is imminent. Never
+  // fires from missing/unreachable news data (see checkNews's own "unavailable" vs
+  // "clear" distinction) -- only from a genuinely detected upcoming event.
+  const newsCheck = checkNews(pair, lastCandle.time);
+  if (newsCheck.status === "high_impact_soon") {
+    return noTrade({
+      code: "news_blackout",
+      impliedDirection: direction,
+      event: newsCheck.event,
+      currency: newsCheck.currency,
+      minutesUntil: newsCheck.minutesUntil,
+    });
+  }
+
   // --- Weighted confidence score over the remaining categories ---
   const emaStackAligned = isEmaStackAligned(candles, direction);
 
@@ -227,6 +252,16 @@ export function evaluateSignal(
   const pattern = detectCandlestickPattern(candles, lastIndex);
   const candlestickMatches = pattern !== null && (wantsBullish ? BULLISH_PATTERNS : BEARISH_PATTERNS).has(pattern);
 
+  // --- Confirmation layer: independent external evidence, never itself a trigger ---
+  // (see confidenceScore.ts's own scoreConfirmation for how "unavailable" is handled
+  // without silently sinking the score).
+  const supertrendPoint = calculateSupertrend(candles)[lastIndex];
+  const supertrendAgrees: boolean | "unavailable" =
+    supertrendPoint.trend === null ? "unavailable" : supertrendPoint.trend === (wantsBullish ? "up" : "down");
+
+  const usdStrength = computeUsdStrength();
+  const usdSupport = computeUsdStrengthSupport(usdStrength, pair, direction);
+
   const score = scoreSignal({
     emaStackAligned,
     adx,
@@ -236,9 +271,13 @@ export function evaluateSignal(
     macdAgrees,
     rsiAgrees,
     candlestickMatches,
+    supertrendAgrees,
+    usdStrengthSupports: usdSupport,
   });
 
-  if (score.tier === "no_trade") return noTrade({ code: "below_threshold", direction: score.direction, entry: score.entry });
+  if (score.tier === "no_trade") {
+    return noTrade({ code: "below_threshold", direction: score.direction, entry: score.entry, confirmation: score.confirmation });
+  }
 
   const structureConfluence: Confluence = structureEvent.type.startsWith("CHOCH") ? "choch" : "bos";
 
@@ -250,6 +289,7 @@ export function evaluateSignal(
     "multi_timeframe",
     ...score.direction.reasons,
     ...score.entry.reasons,
+    ...score.confirmation.reasons,
   ];
 
   const signal: Signal = {
@@ -265,6 +305,7 @@ export function evaluateSignal(
     confidence: score.total,
     directionScore: score.direction.total,
     entryScore: score.entry.total,
+    confirmationScore: score.confirmation.total,
     tier: score.tier,
     confluences,
     session: getActiveSession(lastCandle.time),
@@ -272,6 +313,9 @@ export function evaluateSignal(
     createdAt: Date.now(),
     zoneTop: taggedNow.top,
     zoneBottom: taggedNow.bottom,
+    supertrendTrend: supertrendPoint.trend ?? "unavailable",
+    usdStrengthStatus: usdSupport === "unavailable" ? "unavailable" : usdSupport ? "supports" : "conflicts",
+    newsStatus: newsCheck.status,
   };
 
   return { status: "signal", signal };

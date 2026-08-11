@@ -38,9 +38,11 @@ describe("describeNoTradeReason", () => {
       code: "below_threshold",
       direction: { total: 85, tier: "watch", reasons: ["trend_ema_stack", "market_structure"] }, // missing adx
       entry: { total: 60, tier: "no_trade", reasons: ["candlestick"] }, // missing macd/rsi/volume
+      confirmation: { total: 100, tier: "strong_buy", reasons: ["supertrend", "currency_strength"] },
     });
     expect(text).toContain("Direction confidence 85%");
     expect(text).toContain("entry confidence 60%");
+    expect(text).toContain("confirmation confidence 100%");
     expect(text).toMatch(/missing a strong adx reading/i);
     expect(text).toMatch(/MACD confirmation/);
     expect(text).toMatch(/RSI momentum/);
@@ -53,8 +55,35 @@ describe("describeNoTradeReason", () => {
       code: "below_threshold",
       direction: { total: 100, tier: "strong_buy", reasons: ["trend_ema_stack", "market_structure", "adx"] },
       entry: { total: 60, tier: "no_trade", reasons: ["candlestick"] },
+      confirmation: { total: 100, tier: "strong_buy", reasons: ["supertrend", "currency_strength"] },
     });
-    // Only one "missing ..." clause (for entry) -- direction has nothing missing.
+    // Only one "missing ..." clause (for entry) -- direction and confirmation have nothing missing.
     expect(text.match(/missing/gi)).toHaveLength(1);
+  });
+
+  it("describes below_threshold when confirmation itself is what's weak", () => {
+    const text = describeNoTradeReason({
+      code: "below_threshold",
+      direction: { total: 100, tier: "strong_buy", reasons: ["trend_ema_stack", "market_structure", "adx"] },
+      entry: { total: 100, tier: "strong_buy", reasons: ["candlestick", "macd_crossover", "rsi_momentum", "volume"] },
+      confirmation: { total: 0, tier: "no_trade", reasons: [] },
+    });
+    expect(text).toContain("confirmation confidence 0%");
+    expect(text).toMatch(/missing Supertrend agreement/i);
+    expect(text).toMatch(/supporting currency strength/i);
+  });
+
+  it("describes news_blackout with the real event, currency, and time until it", () => {
+    const text = describeNoTradeReason({
+      code: "news_blackout",
+      impliedDirection: "long",
+      event: "Non-Farm Payrolls",
+      currency: "USD",
+      minutesUntil: 12,
+    });
+    expect(text).toMatch(/buy setup/i);
+    expect(text).toContain("USD");
+    expect(text).toContain("Non-Farm Payrolls");
+    expect(text).toContain("12 minutes");
   });
 });

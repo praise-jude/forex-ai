@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { candle } from "../detectors/__tests__/fixtures";
 import { assembleSignals, evaluateSignal } from "../signalEngine";
 import { calculateAtr } from "../indicators/atr";
+import { resetNewsFilterForTests, setNewsFilterStateForTests, type EconomicEvent } from "../newsFilter";
+import { resetCurrencyStrengthForTests, setCurrencyStrengthStateForTests } from "../currencyStrength";
 import type { Candle } from "../types";
 
 // Sellside liquidity sweep -> BOS_BULLISH (breaks a swing high) -> a further push to a
@@ -267,5 +269,64 @@ describe("evaluateSignal", () => {
       status: "no_trade",
       reason: { code: "no_setup" },
     });
+  });
+
+  // The confirmation-layer additions (Supertrend + currency strength). buildCandles()
+  // is a strong, verified uptrend on its own, so Supertrend (derived from the same
+  // `candles` array) naturally agrees with the "long" direction here -- these two
+  // tests target the *other* confirmation input (currency strength, read independently
+  // from the currencylayer poll cache) and the separate news-blackout hard gate,
+  // without needing to touch the delicate hand-tuned SMC price fixture at all.
+  it("holds an otherwise-qualifying signal to WAIT when currency strength actively conflicts", () => {
+    // A EUR/USD BUY wants USD weak. Seed two currencylayer snapshots where every
+    // tracked USDxxx rate rises (USD strengthening against all 5 majors) -- currency
+    // strength alone (40 of confirmation's 100 points) disagreeing, while Supertrend
+    // (60 points) still agrees, lands confirmation at 60%, below the 80% watch floor --
+    // WAIT, even though SMC, trend, and Supertrend all say buy.
+    try {
+      setCurrencyStrengthStateForTests(
+        [
+          { atMs: 1000, rates: { EUR: 0.91, GBP: 0.77, JPY: 150, AUD: 1.5, CAD: 1.35 } },
+          { atMs: 2000, rates: { EUR: 0.92, GBP: 0.78, JPY: 151, AUD: 1.52, CAD: 1.36 } },
+        ],
+        true
+      );
+
+      const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
+      expect(evaluation.status).toBe("no_trade");
+      if (evaluation.status !== "no_trade" || evaluation.reason.code !== "below_threshold") {
+        throw new Error(`expected below_threshold, got ${JSON.stringify(evaluation)}`);
+      }
+      expect(evaluation.reason.confirmation.total).toBeLessThan(80);
+      expect(evaluation.reason.confirmation.reasons).toEqual(["supertrend"]); // supertrend still agreed; currency strength didn't
+    } finally {
+      // Leave the currencyStrength cache clean for every other test/file sharing this singleton.
+      resetCurrencyStrengthForTests();
+    }
+  });
+
+  it("holds an otherwise-qualifying signal to WAIT when a high-impact news event is imminent", () => {
+    const events: EconomicEvent[] = [
+      { currency: "EUR", country: "EU", event: "ECB Rate Decision", impact: "high", timeMs: t(WARMUP_LENGTH + 20) + 15 * 60_000 },
+    ];
+    setNewsFilterStateForTests(events, true);
+    try {
+      const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
+      expect(evaluation).toMatchObject({
+        status: "no_trade",
+        reason: { code: "news_blackout", impliedDirection: "long", currency: "EUR", event: "ECB Rate Decision" },
+      });
+    } finally {
+      resetNewsFilterForTests();
+    }
+  });
+
+  it("never blocks on news that's merely unavailable (not the same as clear)", () => {
+    // resetNewsFilterForTests() leaves lastFetchOk === null (never successfully
+    // fetched) -- checkNews reports "unavailable", which must never behave like an
+    // active blackout.
+    resetNewsFilterForTests();
+    const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
+    expect(evaluation.status).toBe("signal");
   });
 });

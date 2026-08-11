@@ -14,6 +14,23 @@ const HEADLINE_CLASSES: Record<PredictionHeadline, string> = {
   "NO TRADE": "bg-zinc-800 text-zinc-500",
 };
 
+const STATUS_COLOR = {
+  positive: "text-emerald-400",
+  negative: "text-rose-400",
+  neutral: "text-zinc-500",
+} as const;
+
+/** One row of the confirmation-layer breakdown -- always shows the real status,
+ * including "unavailable", never a fabricated agree/disagree. */
+function ConfirmationRow({ label, value, tone }: { label: string; value: string; tone: keyof typeof STATUS_COLOR }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-zinc-500">{label}</span>
+      <span className={STATUS_COLOR[tone]}>{value}</span>
+    </div>
+  );
+}
+
 /**
  * Surfaces the SMC engine's real per-candle evaluation for the selected pair -- either
  * a qualifying Signal (direction/confidence/evidence) or an honest NO TRADE with the
@@ -52,6 +69,54 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
           )}
           <div className="mt-2 text-[11px] text-zinc-500">
             Direction {update.evaluation.signal.directionScore.toFixed(0)}% &middot; Entry {update.evaluation.signal.entryScore.toFixed(0)}%
+            &middot; Confirmation {update.evaluation.signal.confirmationScore.toFixed(0)}%
+          </div>
+          <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-[11px]">
+            <ConfirmationRow
+              label="Supertrend"
+              value={update.evaluation.signal.supertrendTrend === "unavailable" ? "Unavailable" : update.evaluation.signal.supertrendTrend.toUpperCase()}
+              tone={
+                update.evaluation.signal.supertrendTrend === "unavailable"
+                  ? "neutral"
+                  : update.evaluation.signal.supertrendTrend === (update.evaluation.signal.direction === "long" ? "up" : "down")
+                    ? "positive"
+                    : "negative"
+              }
+            />
+            <ConfirmationRow
+              label="Currency strength"
+              value={
+                update.evaluation.signal.usdStrengthStatus === "unavailable"
+                  ? "Unavailable"
+                  : update.evaluation.signal.usdStrengthStatus === "supports"
+                    ? "Supports"
+                    : "Conflicts"
+              }
+              tone={
+                update.evaluation.signal.usdStrengthStatus === "unavailable"
+                  ? "neutral"
+                  : update.evaluation.signal.usdStrengthStatus === "supports"
+                    ? "positive"
+                    : "negative"
+              }
+            />
+            <ConfirmationRow
+              label="News"
+              value={
+                update.evaluation.signal.newsStatus === "unavailable"
+                  ? "Unavailable"
+                  : update.evaluation.signal.newsStatus === "clear"
+                    ? "Clear"
+                    : "High-impact soon"
+              }
+              tone={
+                update.evaluation.signal.newsStatus === "unavailable"
+                  ? "neutral"
+                  : update.evaluation.signal.newsStatus === "clear"
+                    ? "positive"
+                    : "negative"
+              }
+            />
           </div>
         </>
       ) : (

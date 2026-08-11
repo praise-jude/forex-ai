@@ -5,6 +5,7 @@ import type { Confluence, NoTradeReason } from "./types";
 // never to invent a new confluence concept.
 const DIRECTION_TAGS: Confluence[] = ["trend_ema_stack", "market_structure", "adx"];
 const ENTRY_TAGS: Confluence[] = ["candlestick", "macd_crossover", "rsi_momentum", "volume"];
+const CONFIRMATION_TAGS: Confluence[] = ["supertrend", "currency_strength"];
 
 const TAG_LABEL: Partial<Record<Confluence, string>> = {
   trend_ema_stack: "EMA stack alignment",
@@ -14,6 +15,8 @@ const TAG_LABEL: Partial<Record<Confluence, string>> = {
   macd_crossover: "MACD confirmation",
   rsi_momentum: "RSI momentum",
   volume: "above-average volume",
+  supertrend: "Supertrend agreement",
+  currency_strength: "supporting currency strength",
 };
 
 function missing(present: Confluence[], all: Confluence[]): string[] {
@@ -50,11 +53,19 @@ export function describeNoTradeReason(reason: NoTradeReason): string {
     case "below_threshold": {
       const missingDirection = missing(reason.direction.reasons, DIRECTION_TAGS);
       const missingEntry = missing(reason.entry.reasons, ENTRY_TAGS);
+      const missingConfirmation = missing(reason.confirmation.reasons, CONFIRMATION_TAGS);
       const parts: string[] = [];
-      parts.push(`Direction confidence ${reason.direction.total.toFixed(0)}%, entry confidence ${reason.entry.total.toFixed(0)}%`);
+      parts.push(
+        `Direction confidence ${reason.direction.total.toFixed(0)}%, entry confidence ${reason.entry.total.toFixed(0)}%, confirmation confidence ${reason.confirmation.total.toFixed(0)}%`
+      );
       if (missingDirection.length > 0) parts.push(`missing ${joinList(missingDirection)}`);
       if (missingEntry.length > 0) parts.push(`missing ${joinList(missingEntry)}`);
+      if (missingConfirmation.length > 0) parts.push(`missing ${joinList(missingConfirmation)}`);
       return `${parts.join(" -- ")}.`;
+    }
+    case "news_blackout": {
+      const directionWord = reason.impliedDirection === "long" ? "buy" : "sell";
+      return `A ${directionWord} setup formed, but a high-impact ${reason.currency} release ("${reason.event}") is due in about ${reason.minutesUntil} minute${reason.minutesUntil === 1 ? "" : "s"} -- holding off until after it clears.`;
     }
   }
 }

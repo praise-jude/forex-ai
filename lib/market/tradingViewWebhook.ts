@@ -112,11 +112,18 @@ export function parseTradingViewAlert(body: unknown, options: ParseOptions = {})
     confidence: 100,
     directionScore: 100,
     entryScore: 100,
+    confirmationScore: 100,
     tier: "buy",
     confluences: [],
     session: getActiveSession(now),
     timeframe,
     createdAt: now,
+    // The confirmation layer (Supertrend/currency strength/news) is derived from this
+    // app's own candle history and calendar cache -- neither applies to an externally
+    // sourced webhook signal, so these are honestly "unavailable", not fabricated.
+    supertrendTrend: "unavailable",
+    usdStrengthStatus: "unavailable",
+    newsStatus: "unavailable",
   };
 
   return { signal };

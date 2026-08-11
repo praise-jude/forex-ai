@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { scoreSignal, type DirectionScoreInput, type EntryScoreInput } from "../confidenceScore";
+import { scoreSignal, type DirectionScoreInput, type EntryScoreInput, type ConfirmationScoreInput } from "../confidenceScore";
 
-function buildInput(
-  overrides: Partial<DirectionScoreInput & EntryScoreInput> = {}
-): DirectionScoreInput & EntryScoreInput {
+type FullInput = DirectionScoreInput & EntryScoreInput & ConfirmationScoreInput;
+
+function buildInput(overrides: Partial<FullInput> = {}): FullInput {
   return {
     emaStackAligned: true,
     adx: 30,
@@ -13,15 +13,18 @@ function buildInput(
     macdAgrees: true,
     rsiAgrees: true,
     candlestickMatches: true,
+    supertrendAgrees: true,
+    usdStrengthSupports: true,
     ...overrides,
   };
 }
 
 describe("scoreSignal", () => {
-  it("scores a perfect setup at 100/100 and tiers strong_buy", () => {
+  it("scores a perfect setup at 100/100/100 and tiers strong_buy", () => {
     const result = scoreSignal(buildInput());
     expect(result.direction.total).toBe(100);
     expect(result.entry.total).toBe(100);
+    expect(result.confirmation.total).toBe(100);
     expect(result.total).toBe(100);
     expect(result.tier).toBe("strong_buy");
   });
@@ -69,5 +72,41 @@ describe("scoreSignal", () => {
     const withOrderBlock = scoreSignal(buildInput({ smcZoneType: "order_block" })).entry;
     const withFvg = scoreSignal(buildInput({ smcZoneType: "fvg" })).entry;
     expect(withOrderBlock.total - withFvg.total).toBe(10);
+  });
+
+  describe("confirmation dimension", () => {
+    it("bottlenecks the final tier to WAIT when direction and entry are perfect but confirmation conflicts", () => {
+      // The user's core "SMC found a setup but Supertrend/currency strength disagree"
+      // scenario -- must produce no_trade, not a forced trade riding on SMC alone.
+      const result = scoreSignal(buildInput({ supertrendAgrees: false, usdStrengthSupports: false }));
+      expect(result.direction.tier).toBe("strong_buy");
+      expect(result.entry.tier).toBe("strong_buy");
+      expect(result.confirmation.total).toBe(0);
+      expect(result.confirmation.tier).toBe("no_trade");
+      expect(result.tier).toBe("no_trade");
+    });
+
+    it("rescales around whichever single input is available rather than zeroing out the missing one", () => {
+      // Supertrend alone (60 of the 60 available points) should score 100, not 60/100 --
+      // an unavailable currency-strength reading must not silently sink the score.
+      const result = scoreSignal(buildInput({ supertrendAgrees: true, usdStrengthSupports: "unavailable" }));
+      expect(result.confirmation.total).toBe(100);
+      expect(result.confirmation.reasons).toEqual(["supertrend"]);
+    });
+
+    it("scores a neutral 100 (never the bottleneck) when both confirmation inputs are unavailable", () => {
+      // e.g. right after boot, before candle history has warmed up for either --  must
+      // never behave as if confirmation actively disagreed.
+      const result = scoreSignal(buildInput({ supertrendAgrees: "unavailable", usdStrengthSupports: "unavailable" }));
+      expect(result.confirmation.total).toBe(100);
+      expect(result.confirmation.reasons).toEqual([]);
+      expect(result.tier).toBe("strong_buy");
+    });
+
+    it("still gates on real disagreement even when the other confirmation input is unavailable", () => {
+      const result = scoreSignal(buildInput({ supertrendAgrees: false, usdStrengthSupports: "unavailable" }));
+      expect(result.confirmation.total).toBe(0);
+      expect(result.tier).toBe("no_trade");
+    });
   });
 });

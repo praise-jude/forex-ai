@@ -104,7 +104,9 @@ export type Confluence =
   | "market_structure"
   | "adx"
   | "candlestick"
-  | "multi_timeframe";
+  | "multi_timeframe"
+  | "supertrend"
+  | "currency_strength";
 
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
@@ -123,6 +125,10 @@ export interface Signal {
   confidence: number;
   directionScore: number;
   entryScore: number;
+  /** How strongly Supertrend + USD strength (see confidenceScore.ts's `confirmation`
+   * dimension) agree with this signal -- confirms or downgrades the SMC setup above,
+   * never independently produces one. */
+  confirmationScore: number;
   tier: ConfidenceTier;
   confluences: Confluence[];
   session: Session;
@@ -134,6 +140,14 @@ export interface Signal {
    * fabricate one (see tradingViewWebhook.ts). */
   zoneTop?: number;
   zoneBottom?: number;
+  /** Transparent confirmation-layer status, always present and honest about missing
+   * data ("unavailable" is a real, distinct value -- never silently omitted or
+   * fabricated as agreeing). TradingView-sourced signals don't compute these (no
+   * candle history to derive Supertrend/currency strength from here), so they default
+   * to "unavailable" for that source. */
+  supertrendTrend: "up" | "down" | "unavailable";
+  usdStrengthStatus: "supports" | "conflicts" | "unavailable";
+  newsStatus: "clear" | "high_impact_soon" | "unavailable";
 }
 
 /** Why a given M15 candle close did *not* produce a Signal -- computed by
@@ -146,7 +160,13 @@ export type NoTradeReason =
   | { code: "trend_disagreement"; impliedDirection: "long" | "short"; d1: string; h4: string; h1: string }
   | { code: "weak_trend_adx"; adx: number }
   | { code: "low_volatility"; atr: number; atrAverage: number }
-  | { code: "below_threshold"; direction: DimensionScore; entry: DimensionScore };
+  | { code: "below_threshold"; direction: DimensionScore; entry: DimensionScore; confirmation: DimensionScore }
+  // A decisive hold, not a weighted score -- an SMC setup was found and would otherwise
+  // have qualified, but a high-impact release for one of the pair's currencies is
+  // imminent (see lib/market/newsFilter.ts). Distinct from below_threshold: this never
+  // fires from missing/unavailable news data (see checkNews's own "unavailable" vs
+  // "clear" distinction) -- only from a genuinely detected upcoming event.
+  | { code: "news_blackout"; impliedDirection: "long" | "short"; event: string; currency: string; minutesUntil: number };
 
 export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 

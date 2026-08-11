@@ -14,11 +14,15 @@ export function buildSignal(overrides: Partial<Signal> = {}): Signal {
     confidence: 90,
     directionScore: 90,
     entryScore: 90,
+    confirmationScore: 90,
     tier: "buy",
     confluences: ["liquidity_sweep", "bos", "fvg", "killzone"],
     session: "london",
     timeframe: "15m",
     createdAt: Date.now(),
+    supertrendTrend: "up",
+    usdStrengthStatus: "supports",
+    newsStatus: "clear",
     ...overrides,
   };
 }

@@ -44,6 +44,23 @@ export function buildConfirmPhrase(signal: Signal): string {
   return `CONFIRM ${directionWord} ${tickerWord(signal.pair)}`;
 }
 
+/** Short spoken summary of which confirmation-layer factors actively support this
+ * signal's direction -- e.g. "Supertrend and currency strength are confirming the
+ * move." Omits factors that are unavailable or conflicting rather than mentioning
+ * them negatively here (a conflicting factor would already have kept the signal below
+ * threshold and never reached this announcement at all -- see confidenceScore.ts). */
+function confirmationSummary(signal: Signal): string {
+  const supporting: string[] = [];
+  if (signal.supertrendTrend !== "unavailable" && signal.supertrendTrend === (signal.direction === "long" ? "up" : "down")) {
+    supporting.push("Supertrend");
+  }
+  if (signal.usdStrengthStatus === "supports") supporting.push("currency strength");
+
+  if (supporting.length === 0) return "";
+  const list = supporting.length === 1 ? supporting[0] : `${supporting[0]} and ${supporting[1]}`;
+  return `${list} ${supporting.length === 1 ? "is" : "are"} confirming the move.`;
+}
+
 export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number): string {
   const directionWord = signal.direction === "long" ? "buy" : "sell";
   return [
@@ -54,9 +71,12 @@ export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number)
     `The take profit is ${formatPrice(signal.pair, signal.takeProfit)}.`,
     `The risk is ${riskPerTradePct} percent.`,
     `The risk to reward ratio is ${signal.riskReward.toFixed(1)}.`,
+    confirmationSummary(signal),
     `The AI confidence is ${Math.round(signal.confidence)} percent.`,
     "Would you like me to place this trade?",
-  ].join(" ");
+  ]
+    .filter((part) => part.length > 0)
+    .join(" ");
 }
 
 /**

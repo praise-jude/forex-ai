@@ -1,6 +1,8 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
+import { startNewsFilter } from "./newsFilter";
+import { startCurrencyStrength } from "./currencyStrength";
 
 let started = false;
 
@@ -33,4 +35,6 @@ export function startMarketEngine(): void {
 
   startAutoExecutionListener();
   startConnectionWatcher();
+  startNewsFilter();
+  startCurrencyStrength();
 }
