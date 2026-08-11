@@ -77,17 +77,16 @@ describe("describeNoTradeReason", () => {
     expect(text).toContain("72%");
   });
 
-  it("describes news_blackout with the real event, currency, and time until it", () => {
+  it("describes news_blackout with the real event and currency, never a fabricated time", () => {
     const text = describeNoTradeReason({
       code: "news_blackout",
       impliedDirection: "long",
-      event: "Non-Farm Payrolls",
+      event: "Employment Situation",
       currency: "USD",
-      minutesUntil: 12,
     });
     expect(text).toMatch(/buy setup/i);
     expect(text).toContain("USD");
-    expect(text).toContain("Non-Farm Payrolls");
-    expect(text).toContain("12 minutes");
+    expect(text).toContain("Employment Situation");
+    expect(text).toMatch(/later today/i);
   });
 });

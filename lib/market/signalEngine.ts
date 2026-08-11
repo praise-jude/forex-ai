@@ -220,17 +220,17 @@ export function evaluateSignal(
 
   // A decisive hold, not part of the weighted score below -- an SMC setup was just
   // fully located (entry/SL/TP all computed above) and would otherwise be evaluated,
-  // but a high-impact release for one of this pair's currencies is imminent. Never
-  // fires from missing/unreachable news data (see checkNews's own "unavailable" vs
-  // "clear" distinction) -- only from a genuinely detected upcoming event.
+  // but a curated major USD release is scheduled for the same UTC calendar day
+  // (FRED-sourced, day-level only -- see newsFilter.ts). Never fires from
+  // missing/unreachable news data (see checkNews's own "unavailable" vs "clear"
+  // distinction) -- only from a genuinely detected same-day event.
   const newsCheck = checkNews(pair, lastCandle.time);
-  if (newsCheck.status === "high_impact_soon") {
+  if (newsCheck.status === "high_impact_today") {
     return noTrade({
       code: "news_blackout",
       impliedDirection: direction,
       event: newsCheck.event,
       currency: newsCheck.currency,
-      minutesUntil: newsCheck.minutesUntil,
     });
   }
 

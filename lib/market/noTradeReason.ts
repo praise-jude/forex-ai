@@ -58,7 +58,7 @@ export function describeNoTradeReason(reason: NoTradeReason): string {
     }
     case "news_blackout": {
       const directionWord = reason.impliedDirection === "long" ? "buy" : "sell";
-      return `A ${directionWord} setup formed, but a high-impact ${reason.currency} release ("${reason.event}") is due in about ${reason.minutesUntil} minute${reason.minutesUntil === 1 ? "" : "s"} -- holding off until after it clears.`;
+      return `A ${directionWord} setup formed, but a high-impact ${reason.currency} release ("${reason.event}") is scheduled for later today -- holding off until it clears.`;
     }
     case "signer_b_neutral": {
       const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";

@@ -1,41 +1,59 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  checkNews,
-  parseEconomicCalendar,
-  resetNewsFilterForTests,
-  setNewsFilterStateForTests,
-  type EconomicEvent,
-} from "../newsFilter";
+import { checkNews, parseFredReleaseDates, resetNewsFilterForTests, setNewsFilterStateForTests, type EconomicEvent } from "../newsFilter";
 
-describe("parseEconomicCalendar", () => {
-  it("parses well-formed entries, mapping the EU country code to EUR", () => {
-    const events = parseEconomicCalendar({
-      economicCalendar: [
-        { country: "US", event: "Non-Farm Payrolls", impact: "high", time: "2026-01-05 13:30:00" },
-        { country: "EU", event: "ECB Rate Decision", impact: "high", time: "2026-01-06 12:45:00" },
+describe("parseFredReleaseDates", () => {
+  it("parses well-formed entries on the curated allowlist", () => {
+    const events = parseFredReleaseDates({
+      release_dates: [
+        { release_id: 50, release_name: "Employment Situation", date: "2026-01-05" },
+        { release_id: 10, release_name: "Consumer Price Index", date: "2026-01-06" },
       ],
     });
     expect(events).toHaveLength(2);
-    expect(events[0]).toMatchObject({ currency: "USD", event: "Non-Farm Payrolls", impact: "high" });
-    expect(events[1]).toMatchObject({ currency: "EUR", event: "ECB Rate Decision", impact: "high" });
+    expect(events[0]).toEqual({ currency: "USD", event: "Employment Situation", date: "2026-01-05" });
+    expect(events[1]).toEqual({ currency: "USD", event: "Consumer Price Index", date: "2026-01-06" });
+  });
+
+  it("excludes 'FOMC Press Release' -- live-verified to fire on nearly every day (~38 dates/3mo), not real meeting dates, so it must never be treated as a curated high-impact event", () => {
+    const events = parseFredReleaseDates({
+      release_dates: [{ release_id: 101, release_name: "FOMC Press Release", date: "2026-08-11" }],
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  it("skips releases not on the curated high-impact allowlist", () => {
+    const events = parseFredReleaseDates({
+      release_dates: [{ release_id: 200, release_name: "CBOE Market Statistics", date: "2026-01-05" }],
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  it("does not match GDP variant releases against the headline 'Gross Domestic Product' entry", () => {
+    const events = parseFredReleaseDates({
+      release_dates: [
+        { release_id: 1, release_name: "Gross Domestic Product by State", date: "2026-01-05" },
+        { release_id: 2, release_name: "Gross Domestic Product by Industry", date: "2026-01-05" },
+        { release_id: 3, release_name: "Gross Domestic Product", date: "2026-01-05" },
+      ],
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].event).toBe("Gross Domestic Product");
   });
 
   it("skips malformed entries instead of guessing", () => {
-    const events = parseEconomicCalendar({
-      economicCalendar: [
-        { country: "US", event: "Missing impact", time: "2026-01-05 13:30:00" }, // no impact
-        { country: "US", impact: "high", time: "2026-01-05 13:30:00" }, // no event name
-        { country: "ZZ", event: "Unknown country", impact: "high", time: "2026-01-05 13:30:00" }, // unmapped currency
-        { country: "US", event: "Bad time", impact: "high", time: "not-a-date" },
+    const events = parseFredReleaseDates({
+      release_dates: [
+        { release_id: 50, date: "2026-01-05" }, // no release_name
+        { release_id: 50, release_name: "Employment Situation" }, // no date
       ],
     });
     expect(events).toHaveLength(0);
   });
 
   it("returns an empty array (never throws) on a completely unexpected shape", () => {
-    expect(parseEconomicCalendar(null)).toEqual([]);
-    expect(parseEconomicCalendar({ error: "You don't have access to this resource." })).toEqual([]);
-    expect(parseEconomicCalendar("unexpected string")).toEqual([]);
+    expect(parseFredReleaseDates(null)).toEqual([]);
+    expect(parseFredReleaseDates({ error_message: "Bad Request." })).toEqual([]);
+    expect(parseFredReleaseDates("unexpected string")).toEqual([]);
   });
 });
 
@@ -48,47 +66,39 @@ describe("checkNews", () => {
     expect(checkNews("EUR/USD", Date.now())).toEqual({ status: "unavailable" });
   });
 
-  it("is clear when no high-impact event matches the pair's currencies", () => {
+  it("is clear when no curated event matches the same UTC day", () => {
     const now = Date.UTC(2026, 0, 5, 13, 0, 0);
-    const events: EconomicEvent[] = [{ currency: "JPY", country: "JP", event: "Tankan Survey", impact: "high", timeMs: now + 5 * 60_000 }];
+    const events: EconomicEvent[] = [{ currency: "USD", event: "Consumer Price Index", date: "2026-01-06" }];
     setNewsFilterStateForTests(events, true);
     expect(checkNews("EUR/USD", now)).toEqual({ status: "clear" });
   });
 
-  it("is clear when a matching event exists but isn't high-impact", () => {
+  it("flags a curated event scheduled for the same UTC day, with no minutesUntil (day-level only)", () => {
     const now = Date.UTC(2026, 0, 5, 13, 0, 0);
-    const events: EconomicEvent[] = [{ currency: "USD", country: "US", event: "Minor release", impact: "low", timeMs: now + 5 * 60_000 }];
+    const events: EconomicEvent[] = [{ currency: "USD", event: "Employment Situation", date: "2026-01-05" }];
     setNewsFilterStateForTests(events, true);
-    expect(checkNews("EUR/USD", now)).toEqual({ status: "clear" });
+    expect(checkNews("EUR/USD", now)).toEqual({ status: "high_impact_today", event: "Employment Situation", currency: "USD" });
   });
 
-  it("flags a high-impact event for a matching currency inside the 30-minute window", () => {
+  it("flags any pair with a USD leg, in either position", () => {
     const now = Date.UTC(2026, 0, 5, 13, 0, 0);
-    const events: EconomicEvent[] = [{ currency: "USD", country: "US", event: "Non-Farm Payrolls", impact: "high", timeMs: now + 20 * 60_000 }];
+    const events: EconomicEvent[] = [{ currency: "USD", event: "Employment Situation", date: "2026-01-05" }];
     setNewsFilterStateForTests(events, true);
-    const result = checkNews("EUR/USD", now);
-    expect(result).toMatchObject({ status: "high_impact_soon", currency: "USD", event: "Non-Farm Payrolls" });
+    expect(checkNews("GBP/USD", now)).toEqual({ status: "high_impact_today", event: "Employment Situation", currency: "USD" });
+    expect(checkNews("USD/JPY", now)).toEqual({ status: "high_impact_today", event: "Employment Situation", currency: "USD" });
   });
 
-  it("does not flag a high-impact event well outside the window", () => {
+  it("never fires for a pair with no USD leg -- FRED has no non-USD coverage (USOIL has no '/' to extract a currency from at all, matching this app's pre-existing pair-naming convention)", () => {
     const now = Date.UTC(2026, 0, 5, 13, 0, 0);
-    const events: EconomicEvent[] = [{ currency: "USD", country: "US", event: "CPI", impact: "high", timeMs: now + 6 * 60 * 60_000 }];
+    const events: EconomicEvent[] = [{ currency: "USD", event: "Employment Situation", date: "2026-01-05" }];
     setNewsFilterStateForTests(events, true);
-    expect(checkNews("EUR/USD", now)).toEqual({ status: "clear" });
+    expect(checkNews("USOIL", now)).toEqual({ status: "clear" });
   });
 
-  it("does not flag a currency irrelevant to the pair (e.g. JPY news for a EUR/USD signal)", () => {
+  it("matches a non-FX USD-denominated instrument (XAU/USD) against USD releases", () => {
     const now = Date.UTC(2026, 0, 5, 13, 0, 0);
-    const events: EconomicEvent[] = [{ currency: "JPY", country: "JP", event: "BOJ Rate Decision", impact: "high", timeMs: now + 10 * 60_000 }];
+    const events: EconomicEvent[] = [{ currency: "USD", event: "Consumer Price Index", date: "2026-01-05" }];
     setNewsFilterStateForTests(events, true);
-    expect(checkNews("EUR/USD", now)).toEqual({ status: "clear" });
-  });
-
-  it("matches a non-FX USD-denominated pair (XAU/USD) against USD news", () => {
-    const now = Date.UTC(2026, 0, 5, 13, 0, 0);
-    const events: EconomicEvent[] = [{ currency: "USD", country: "US", event: "Fed Rate Decision", impact: "high", timeMs: now + 10 * 60_000 }];
-    setNewsFilterStateForTests(events, true);
-    const result = checkNews("XAU/USD", now);
-    expect(result.status).toBe("high_impact_soon");
+    expect(checkNews("XAU/USD", now).status).toBe("high_impact_today");
   });
 });

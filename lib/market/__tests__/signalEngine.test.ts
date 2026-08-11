@@ -315,16 +315,15 @@ describe("evaluateSignal", () => {
   // SMC's own setup valid, so they'd always agree with it here regardless of what this
   // test seeded -- an artificial "pass" wouldn't actually exercise the conflict path.
 
-  it("holds an otherwise-qualifying signal to WAIT when a high-impact news event is imminent", () => {
-    const events: EconomicEvent[] = [
-      { currency: "EUR", country: "EU", event: "ECB Rate Decision", impact: "high", timeMs: t(WARMUP_LENGTH + 20) + 15 * 60_000 },
-    ];
+  it("holds an otherwise-qualifying signal to WAIT when a high-impact news event is scheduled the same day", () => {
+    const finalCandleDate = new Date(t(WARMUP_LENGTH + 20)).toISOString().slice(0, 10);
+    const events: EconomicEvent[] = [{ currency: "USD", event: "Employment Situation", date: finalCandleDate }];
     setNewsFilterStateForTests(events, true);
     try {
       const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
       expect(evaluation).toMatchObject({
         status: "no_trade",
-        reason: { code: "news_blackout", impliedDirection: "long", currency: "EUR", event: "ECB Rate Decision" },
+        reason: { code: "news_blackout", impliedDirection: "long", currency: "USD", event: "Employment Situation" },
       });
     } finally {
       resetNewsFilterForTests();

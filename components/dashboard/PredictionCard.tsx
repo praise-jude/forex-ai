@@ -150,7 +150,7 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
                     ? "Unavailable"
                     : update.evaluation.signal.newsStatus === "clear"
                       ? "Clear"
-                      : "High-impact soon"
+                      : "High-impact today"
                 }
                 tone={
                   update.evaluation.signal.newsStatus === "unavailable"
