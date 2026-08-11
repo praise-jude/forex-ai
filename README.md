@@ -38,6 +38,19 @@ Without these two env vars, the dashboard still runs but the watchlist stays emp
 
 Either switch blocks a Buy/Sell click the same way it would have blocked an automatic entry — clicking Buy/Sell while a switch is active returns "Blocked: kill switch is active" on the card instead of placing an order. Existing open positions are untouched by either switch — only new entries are blocked. Both are intentionally simple (no auth) to match the rest of the app.
 
+### Signal engine: two independent signers
+
+Every setup is found by SMC alone (Signer A — liquidity sweeps, structure breaks, order blocks/FVGs; see `lib/market/signalEngine.ts`), then checked against an independent second signer (Signer B — EMA trend, RSI momentum/divergence, Supertrend, currency strength, session; see `lib/market/signerB.ts`) that's computed without reference to SMC's own direction. A trade only proceeds when the two agree; a genuine tie or opposite-direction read from Signer B holds it (`lib/market/decisionMatrix.ts`) — but a merely-weaker, still-agreeing Signer B never drags SMC's own score down. No backtesting has been run to validate any confidence number as a win-rate — treat it as "how well-confirmed is this setup," not a probability of profit.
+
+London/New York killzone hours (`lib/market/sessions.ts`) default to 08:00–11:00 / 13:00–17:00 GMT, optionally overridable per `.env.local`:
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `LONDON_START_HOUR` / `LONDON_END_HOUR` | `8` / `11` | London killzone window, UTC hour (0-23) |
+| `NEW_YORK_START_HOUR` / `NEW_YORK_END_HOUR` | `13` / `17` | New York killzone window, UTC hour (0-23) |
+
+An invalid value (out of 0-23 range, or a start hour not before the end hour) is ignored and the default is used instead.
+
 **Deploying somewhere new (Railway, Render, a fresh VPS, etc.)**: set `TRADING_KILL_SWITCH=1` in that platform's env vars *before* the first deploy that has `METAAPI_TOKEN`/`METAAPI_ACCOUNT_ID` set, so a stray click during smoke-testing can't place a real order before you've verified the deploy. Only flip it off once you've confirmed the new instance is healthy — and make sure whatever instance you're moving away from is paused too, so you never have two processes trading the same account at once.
 
 **What's not covered**: pending/limit orders (market orders only, fired at the moment Buy/Sell is clicked), trailing stops or partial take-profit (SL/TP are set once at open and never adjusted), and portfolio-level correlation limits (nothing stops correlated pairs from both being manually opened and stacking risk beyond `MAX_CONCURRENT_POSITIONS`). The execution ledger (which signal caused which trade) is in-memory only — a restart loses that audit trail, though open positions themselves are safe and are read directly from the broker, not from local memory.

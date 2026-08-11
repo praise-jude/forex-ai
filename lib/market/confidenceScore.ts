@@ -14,20 +14,7 @@ export interface EntryScoreInput {
   candlestickMatches: boolean;
 }
 
-/**
- * Independent, external confirmation -- distinct from `direction` (does the SMC
- * structure itself look trending) and `entry` (does the entry trigger itself look
- * good). Both inputs can be `"unavailable"` (Supertrend needs a warmed-up ATR window;
- * currency strength needs all 5 tracked FX pairs' history loaded) -- never fabricated
- * as agreeing or disagreeing. See scoreConfirmation()'s own comment for how
- * unavailability is handled without silently zeroing out the score.
- */
-export interface ConfirmationScoreInput {
-  supertrendAgrees: boolean | "unavailable";
-  usdStrengthSupports: boolean | "unavailable";
-}
-
-type DimensionTier = ConfidenceTier | "no_trade";
+export type DimensionTier = ConfidenceTier | "no_trade";
 
 export interface DimensionScore {
   total: number;
@@ -38,14 +25,13 @@ export interface DimensionScore {
 export interface ScoreBreakdown {
   direction: DimensionScore;
   entry: DimensionScore;
-  confirmation: DimensionScore;
-  /** The weakest of direction.tier / entry.tier / confirmation.tier -- a strong trend
-   * or entry can't compensate for conflicting external confirmation, or vice versa.
-   * See confidenceScore's module doc for why. */
+  /** The weaker of direction.tier / entry.tier -- a strong trend can't compensate for
+   * a weak entry trigger, or vice versa. Independent, external confirmation (Signer
+   * B -- see signerB.ts/decisionMatrix.ts) is combined separately, downstream of this
+   * function: it can gate or upgrade the result, but never bottlenecks this number. */
   tier: DimensionTier;
-  /** min(direction.total, entry.total, confirmation.total) -- bottlenecked the same
-   * way tier is, so the headline number and the tier it produces never visually
-   * disagree. */
+  /** min(direction.total, entry.total) -- bottlenecked the same way tier is, so the
+   * headline number and the tier it produces never visually disagree. */
   total: number;
 }
 
@@ -58,7 +44,10 @@ const ADX_ADEQUATE = 20;
 
 const TIER_RANK: Record<DimensionTier, number> = { strong_buy: 3, buy: 2, watch: 1, no_trade: 0 };
 
-function tierOf(total: number): DimensionTier {
+/** Exported for reuse by signerB.ts (Signer B's own confidence bucketing) and
+ * decisionMatrix.ts (comparing tiers) -- one shared 95/90/80 bucketing rule for every
+ * tiered score in the app, never redefined per-caller. */
+export function tierOf(total: number): DimensionTier {
   if (total >= STRONG_BUY_THRESHOLD) return "strong_buy";
   if (total >= BUY_THRESHOLD) return "buy";
   if (total >= WATCH_THRESHOLD) return "watch";
@@ -70,19 +59,19 @@ function tierOf(total: number): DimensionTier {
  * perfect entry trigger doesn't matter if the higher-timeframe trend isn't really
  * there -- so trend/structure evidence (direction) and entry-timing evidence (entry)
  * are scored independently, each against the same 95/90/80 tier thresholds, and the
- * final signal is only as good as whichever of the two is weaker. Pure function --
- * the caller (signalEngine) is responsible for the hard pre-gates (killzone, D1/H4/H1
- * agreement, ADX floor, ATR health, the SMC trigger itself) that must pass before
- * this is ever called.
+ * result is only as good as whichever of the two is weaker. Pure function -- the
+ * caller (signalEngine) is responsible for the hard pre-gates (killzone, D1/H4/H1
+ * agreement, ADX floor, ATR health, the SMC trigger itself) before this is ever
+ * called, and for combining this result with Signer B's independent read afterward
+ * (see decisionMatrix.ts) -- external confirmation never bottlenecks this score.
  */
-export function scoreSignal(input: DirectionScoreInput & EntryScoreInput & ConfirmationScoreInput): ScoreBreakdown {
+export function scoreSignal(input: DirectionScoreInput & EntryScoreInput): ScoreBreakdown {
   const direction = scoreDirection(input);
   const entry = scoreEntry(input);
-  const confirmation = scoreConfirmation(input);
-  const weakest = [direction, entry, confirmation].reduce((worst, dim) => (TIER_RANK[dim.tier] < TIER_RANK[worst.tier] ? dim : worst));
-  const total = Math.min(direction.total, entry.total, confirmation.total);
+  const tier = TIER_RANK[direction.tier] < TIER_RANK[entry.tier] ? direction.tier : entry.tier;
+  const total = Math.min(direction.total, entry.total);
 
-  return { direction, entry, confirmation, tier: weakest.tier, total };
+  return { direction, entry, tier, total };
 }
 
 function scoreDirection(input: DirectionScoreInput): DimensionScore {
@@ -129,40 +118,6 @@ function scoreEntry(input: EntryScoreInput): DimensionScore {
     total += 10;
     reasons.push("volume");
   }
-
-  return { total, tier: tierOf(total), reasons };
-}
-
-/**
- * Unlike scoreDirection/scoreEntry, this dimension's inputs can each independently be
- * "unavailable" (Supertrend needs a warmed-up ATR window; USD strength needs all 5
- * tracked FX pairs' history loaded). An unavailable input is EXCLUDED from the tally
- * rather than counted as a miss -- the score is rescaled to what's actually knowable,
- * so a data source that simply hasn't warmed up yet can never silently sink every
- * signal to "no_trade" the way a hardcoded fixed-weight split would. Only genuine
- * disagreement pulls the score down; missing data just narrows what's being asked.
- */
-function scoreConfirmation(input: ConfirmationScoreInput): DimensionScore {
-  const checks: { agrees: boolean; weight: number; reason: Confluence }[] = [];
-
-  if (input.supertrendAgrees !== "unavailable") {
-    checks.push({ agrees: input.supertrendAgrees, weight: 60, reason: "supertrend" });
-  }
-  if (input.usdStrengthSupports !== "unavailable") {
-    checks.push({ agrees: input.usdStrengthSupports, weight: 40, reason: "currency_strength" });
-  }
-
-  const possible = checks.reduce((sum, c) => sum + c.weight, 0);
-  // Both inputs unavailable at once (e.g. right after boot, before candle history has
-  // warmed up for either) -- score as fully neutral (max, never the bottleneck) rather
-  // than 0. An empty confirmation dimension must never be indistinguishable from an
-  // actively-disagreeing one; each Signal also carries the raw supertrendTrend/
-  // usdStrengthStatus fields separately so "unavailable" is still visible downstream.
-  if (possible === 0) return { total: 100, tier: tierOf(100), reasons: [] };
-
-  const earned = checks.reduce((sum, c) => sum + (c.agrees ? c.weight : 0), 0);
-  const total = (earned / possible) * 100;
-  const reasons = checks.filter((c) => c.agrees).map((c) => c.reason);
 
   return { total, tier: tierOf(total), reasons };
 }

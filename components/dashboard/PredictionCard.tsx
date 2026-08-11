@@ -20,6 +20,21 @@ const STATUS_COLOR = {
   neutral: "text-zinc-500",
 } as const;
 
+/** Maps one Signer B factor's raw reading to a tone against this signal's own
+ * direction -- "unavailable"/"neutral" readings are real, honest non-answers (never
+ * fabricated as agreeing or disagreeing), so they stay neutral rather than reading as
+ * a disagreement. */
+function agreeTone<T extends string>(
+  value: T | "neutral" | "unavailable",
+  direction: "long" | "short",
+  bullishValue: T,
+  bearishValue: T
+): keyof typeof STATUS_COLOR {
+  if (value === "unavailable" || value === "neutral") return "neutral";
+  const wanted = direction === "long" ? bullishValue : bearishValue;
+  return value === wanted ? "positive" : "negative";
+}
+
 /** One row of the confirmation-layer breakdown -- always shows the real status,
  * including "unavailable", never a fabricated agree/disagree. */
 function ConfirmationRow({ label, value, tone }: { label: string; value: string; tone: keyof typeof STATUS_COLOR }) {
@@ -68,55 +83,84 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
             </div>
           )}
           <div className="mt-2 text-[11px] text-zinc-500">
-            Direction {update.evaluation.signal.directionScore.toFixed(0)}% &middot; Entry {update.evaluation.signal.entryScore.toFixed(0)}%
-            &middot; Confirmation {update.evaluation.signal.confirmationScore.toFixed(0)}%
+            SMC (Signer A) &middot; Direction {update.evaluation.signal.directionScore.toFixed(0)}% &middot; Entry{" "}
+            {update.evaluation.signal.entryScore.toFixed(0)}%
           </div>
-          <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-[11px]">
-            <ConfirmationRow
-              label="Supertrend"
-              value={update.evaluation.signal.supertrendTrend === "unavailable" ? "Unavailable" : update.evaluation.signal.supertrendTrend.toUpperCase()}
-              tone={
-                update.evaluation.signal.supertrendTrend === "unavailable"
-                  ? "neutral"
-                  : update.evaluation.signal.supertrendTrend === (update.evaluation.signal.direction === "long" ? "up" : "down")
-                    ? "positive"
-                    : "negative"
-              }
-            />
-            <ConfirmationRow
-              label="Currency strength"
-              value={
-                update.evaluation.signal.usdStrengthStatus === "unavailable"
+          <div className="mt-2 border-t border-white/10 pt-2">
+            <div className="flex items-center justify-between text-[11px] text-zinc-500">
+              <span>Signer B (independent confirmation)</span>
+              <span className={STATUS_COLOR[update.evaluation.signal.signerBDirection === "unavailable" ? "neutral" : "positive"]}>
+                {update.evaluation.signal.signerBDirection === "unavailable"
                   ? "Unavailable"
-                  : update.evaluation.signal.usdStrengthStatus === "supports"
-                    ? "Supports"
-                    : "Conflicts"
-              }
-              tone={
-                update.evaluation.signal.usdStrengthStatus === "unavailable"
-                  ? "neutral"
-                  : update.evaluation.signal.usdStrengthStatus === "supports"
-                    ? "positive"
-                    : "negative"
-              }
-            />
-            <ConfirmationRow
-              label="News"
-              value={
-                update.evaluation.signal.newsStatus === "unavailable"
-                  ? "Unavailable"
-                  : update.evaluation.signal.newsStatus === "clear"
-                    ? "Clear"
-                    : "High-impact soon"
-              }
-              tone={
-                update.evaluation.signal.newsStatus === "unavailable"
-                  ? "neutral"
-                  : update.evaluation.signal.newsStatus === "clear"
-                    ? "positive"
-                    : "negative"
-              }
-            />
+                  : `${update.evaluation.signal.signerBDirection.toUpperCase()} · ${update.evaluation.signal.signerBConfidence.toFixed(0)}%`}
+              </span>
+            </div>
+            <div className="mt-1 space-y-1 text-[11px]">
+              <ConfirmationRow
+                label="EMA trend"
+                value={
+                  update.evaluation.signal.signerBEmaTrend === "unavailable"
+                    ? "Unavailable"
+                    : update.evaluation.signal.signerBEmaTrend.charAt(0).toUpperCase() + update.evaluation.signal.signerBEmaTrend.slice(1)
+                }
+                tone={agreeTone(update.evaluation.signal.signerBEmaTrend, update.evaluation.signal.direction, "bullish", "bearish")}
+              />
+              <ConfirmationRow
+                label="Supertrend"
+                value={update.evaluation.signal.supertrendTrend === "unavailable" ? "Unavailable" : update.evaluation.signal.supertrendTrend.toUpperCase()}
+                tone={agreeTone(update.evaluation.signal.supertrendTrend, update.evaluation.signal.direction, "up", "down")}
+              />
+              <ConfirmationRow
+                label="RSI divergence"
+                value={
+                  update.evaluation.signal.rsiDivergence === "unavailable"
+                    ? "Unavailable"
+                    : update.evaluation.signal.rsiDivergence === "none"
+                      ? "None"
+                      : update.evaluation.signal.rsiDivergence.charAt(0).toUpperCase() + update.evaluation.signal.rsiDivergence.slice(1)
+                }
+                tone={
+                  update.evaluation.signal.rsiDivergence === "unavailable" || update.evaluation.signal.rsiDivergence === "none"
+                    ? "neutral"
+                    : agreeTone(update.evaluation.signal.rsiDivergence, update.evaluation.signal.direction, "bullish", "bearish")
+                }
+              />
+              <ConfirmationRow
+                label="Currency strength"
+                value={
+                  update.evaluation.signal.usdStrengthStatus === "unavailable"
+                    ? "Unavailable"
+                    : update.evaluation.signal.usdStrengthStatus === "supports"
+                      ? "Supports"
+                      : "Conflicts"
+                }
+                tone={
+                  update.evaluation.signal.usdStrengthStatus === "unavailable"
+                    ? "neutral"
+                    : update.evaluation.signal.usdStrengthStatus === "supports"
+                      ? "positive"
+                      : "negative"
+                }
+              />
+              <ConfirmationRow label="Session" value={update.evaluation.signal.session} tone="neutral" />
+              <ConfirmationRow
+                label="News"
+                value={
+                  update.evaluation.signal.newsStatus === "unavailable"
+                    ? "Unavailable"
+                    : update.evaluation.signal.newsStatus === "clear"
+                      ? "Clear"
+                      : "High-impact soon"
+                }
+                tone={
+                  update.evaluation.signal.newsStatus === "unavailable"
+                    ? "neutral"
+                    : update.evaluation.signal.newsStatus === "clear"
+                      ? "positive"
+                      : "negative"
+                }
+              />
+            </div>
           </div>
         </>
       ) : (

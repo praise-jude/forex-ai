@@ -9,7 +9,6 @@ import { marketStructureTrend } from "./detectors/marketStructure";
 import { detectCandlestickPattern } from "./detectors/candlestickPatterns";
 import { getActiveSession, isKillzone } from "./sessions";
 import { isCrypto } from "./symbols";
-import { calculateEma } from "./indicators/ema";
 import { calculateRsi } from "./indicators/rsi";
 import { calculateMacd } from "./indicators/macd";
 import { calculateAdx } from "./indicators/adx";
@@ -17,9 +16,12 @@ import { calculateAtr } from "./indicators/atr";
 import { isAboveAverageVolume } from "./indicators/volume";
 import { isEmaStackAligned } from "./indicators/emaStack";
 import { calculateSupertrend } from "./indicators/supertrend";
+import { emaTrendDirection } from "./indicators/emaTrend";
 import { computeUsdStrength, usdStrengthSupports as computeUsdStrengthSupport } from "./currencyStrength";
 import { checkNews } from "./newsFilter";
 import { scoreSignal } from "./confidenceScore";
+import { evaluateSignerB } from "./signerB";
+import { combineSigners } from "./decisionMatrix";
 
 const SWEEP_LOOKBACK_CANDLES = 30;
 // Fraction of the instrument's own ATR used as the SL buffer beyond the swept swing
@@ -56,41 +58,38 @@ interface HigherTimeframeCandles {
   d1: Candle[];
 }
 
-/** EMA50/EMA200 relationship only — used for the D1/H4 multi-timeframe agreement
- * pre-gate, distinct from the stricter 4-EMA stack scored in the Trend category. */
-function trendDirection(candles: Candle[]): "bullish" | "bearish" | "neutral" {
-  if (candles.length < 200) return "neutral";
-  const closes = candles.map((c) => c.close);
-  const index = candles.length - 1;
-  const fast = calculateEma(closes, 50)[index];
-  const slow = calculateEma(closes, 200)[index];
-  if (Number.isNaN(fast) || Number.isNaN(slow)) return "neutral";
-  if (fast > slow) return "bullish";
-  if (fast < slow) return "bearish";
-  return "neutral";
-}
-
 /**
  * Evaluates the current closed candle and returns either a Signal or a NoTradeReason --
  * every exit point is accounted for, never silently dropped, so the dashboard can show
- * real "why not" reasoning instead of nothing. SMC remains the PRIMARY entry engine,
- * completely unchanged: a liquidity sweep, structure break in the implied reversal
- * direction, and a first-time retest of the resulting unmitigated FVG/order block
- * during a killzone (crypto pairs exempted — see isCrypto) locate the *candidate* trade
- * (its entry/SL/TP). D1/H4/H1 trend agreement, ADX, and ATR are then hard pre-gates,
- * followed by a news-blackout check (see newsFilter.ts — a hard hold, only when a
- * high-impact release is genuinely detected as imminent, never from missing data). If
- * all of that passes, a weighted confidence score across three independent dimensions
- * is computed: direction (trend/structure), entry (SMC zone quality/volume/MACD/RSI/
- * candlestick), and confirmation (Supertrend + USD strength — external evidence that
- * can only confirm or downgrade the SMC setup above, never independently trigger one;
- * see confidenceScore.ts). A Signal is constructed at 80%+ (watch — informational only,
- * not executable), 90%+ (buy), or 95%+ (strong_buy) on the WEAKEST of the three
- * dimensions; below 80% on any of them is `below_threshold`, no signal. Only
- * buy/strong_buy can ever be manually executed (see executionEngine.ts's watch-tier
- * guard) — watch exists purely so a near-miss setup is visible on the dashboard. Call
- * this once per closed candle — never on the still-forming one,
- * or signals will repaint. See `assembleSignals` below for the Signal[]-only view.
+ * real "why not" reasoning instead of nothing.
+ *
+ * Two independent signers. SIGNER A is SMC, the PRIMARY entry engine, completely
+ * unchanged: a liquidity sweep, structure break in the implied reversal direction, and
+ * a first-time retest of the resulting unmitigated FVG/order block during a killzone
+ * (crypto pairs exempted — see isCrypto) locate the *candidate* trade (its entry/SL/TP).
+ * D1/H4/H1 trend agreement, ADX, and ATR are hard pre-gates, followed by a news-blackout
+ * check (see newsFilter.ts — a hard hold, only when a high-impact release is genuinely
+ * detected as imminent, never from missing data). If all of that passes, Signer A's own
+ * confidence is scored across two dimensions — direction (trend/structure) and entry
+ * (SMC zone quality/volume/MACD/RSI/candlestick) — bottlenecked at the weaker of the two
+ * (see confidenceScore.ts). Below 80% on either is `below_threshold`, no signal.
+ *
+ * SIGNER B (see signerB.ts) is independent confirmation — Trend + Momentum (RSI, incl.
+ * divergence) + Volatility + Currency Strength + Session — computed WITHOUT reference to
+ * Signer A's own direction. decisionMatrix.ts then combines the two: they must agree in
+ * direction (a Signer B tie/"neutral" or outright conflict holds the trade — see
+ * `signer_b_neutral`/`signer_conflict` below), but a merely-weaker (still-agreeing)
+ * Signer B only shows up in its own separately-displayed confidence number, never
+ * downgrades Signer A's. This is the hard/soft filter split: only a genuine tie or
+ * opposite-direction read from Signer B ever blocks a trade.
+ *
+ * A Signal is constructed at 80%+ (watch — informational only, not executable), 90%+
+ * (buy), or 95%+ (strong_buy) on Signer A's own tier, optionally upgraded to strong_buy
+ * when Signer B also strongly agrees. Only buy/strong_buy can ever be manually executed
+ * (see executionEngine.ts's watch-tier guard) — watch exists purely so a near-miss setup
+ * is visible on the dashboard. Call this once per closed candle — never on the still-
+ * forming one, or signals will repaint. See `assembleSignals` below for the Signal[]-only
+ * view.
  */
 export function evaluateSignal(
   candles: Candle[],
@@ -135,9 +134,9 @@ export function evaluateSignal(
   const direction: "long" | "short" = wantsBullish ? "long" : "short";
 
   // --- Hard pre-gates: D1/H4/H1 agreement, ADX floor, ATR health ---
-  const d1Trend = trendDirection(higherTimeframes.d1);
-  const h4Trend = trendDirection(higherTimeframes.h4);
-  const h1Trend = trendDirection(higherTimeframes.h1);
+  const d1Trend = emaTrendDirection(higherTimeframes.d1);
+  const h4Trend = emaTrendDirection(higherTimeframes.h4);
+  const h1Trend = emaTrendDirection(higherTimeframes.h1);
   if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== h1Trend || d1Trend !== zoneDirection) {
     return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: d1Trend, h4: h4Trend, h1: h1Trend });
   }
@@ -238,7 +237,8 @@ export function evaluateSignal(
   // --- Weighted confidence score over the remaining categories ---
   const emaStackAligned = isEmaStackAligned(candles, direction);
 
-  const rsi = calculateRsi(candles)[lastIndex];
+  const rsiSeries = calculateRsi(candles);
+  const rsi = rsiSeries[lastIndex];
   const rsiAgrees = !Number.isNaN(rsi) && (wantsBullish ? rsi > 50 : rsi < 50);
 
   const { macdLine, signalLine } = calculateMacd(candles);
@@ -252,16 +252,6 @@ export function evaluateSignal(
   const pattern = detectCandlestickPattern(candles, lastIndex);
   const candlestickMatches = pattern !== null && (wantsBullish ? BULLISH_PATTERNS : BEARISH_PATTERNS).has(pattern);
 
-  // --- Confirmation layer: independent external evidence, never itself a trigger ---
-  // (see confidenceScore.ts's own scoreConfirmation for how "unavailable" is handled
-  // without silently sinking the score).
-  const supertrendPoint = calculateSupertrend(candles)[lastIndex];
-  const supertrendAgrees: boolean | "unavailable" =
-    supertrendPoint.trend === null ? "unavailable" : supertrendPoint.trend === (wantsBullish ? "up" : "down");
-
-  const usdStrength = computeUsdStrength();
-  const usdSupport = computeUsdStrengthSupport(usdStrength, pair, direction);
-
   const score = scoreSignal({
     emaStackAligned,
     adx,
@@ -271,13 +261,39 @@ export function evaluateSignal(
     macdAgrees,
     rsiAgrees,
     candlestickMatches,
-    supertrendAgrees,
-    usdStrengthSupports: usdSupport,
   });
 
   if (score.tier === "no_trade") {
-    return noTrade({ code: "below_threshold", direction: score.direction, entry: score.entry, confirmation: score.confirmation });
+    return noTrade({ code: "below_threshold", direction: score.direction, entry: score.entry });
   }
+
+  // --- Signer B: independent confirmation, computed without reference to `direction`
+  // above -- see signerB.ts. Combined via decisionMatrix.ts's hard/soft filter split:
+  // only a genuine tie or opposite-direction read from Signer B ever blocks.
+  const supertrendPoint = calculateSupertrend(candles)[lastIndex];
+  const usdStrength = computeUsdStrength();
+  const session = getActiveSession(lastCandle.time);
+
+  const signerB = evaluateSignerB({ candles, pair, swings, rsiSeries, supertrendPoint, usdStrength, session });
+  const decision = combineSigners({ tier: score.tier, direction }, signerB);
+
+  if (decision.blocked) {
+    return noTrade(
+      decision.blocked.code === "signer_b_neutral"
+        ? { code: "signer_b_neutral", impliedDirection: direction }
+        : {
+            code: "signer_conflict",
+            impliedDirection: direction,
+            signerBDirection: decision.blocked.signerBDirection,
+            signerBConfidence: decision.blocked.signerBConfidence,
+          }
+    );
+  }
+
+  // usdStrengthStatus is still computed relative to THIS signal's own direction (not
+  // Signer B's independent vote above) -- "does currency strength support this trade"
+  // stays a meaningful, honest, backward-compatible display field either way.
+  const usdSupport = computeUsdStrengthSupport(usdStrength, pair, direction);
 
   const structureConfluence: Confluence = structureEvent.type.startsWith("CHOCH") ? "choch" : "bos";
 
@@ -289,8 +305,11 @@ export function evaluateSignal(
     "multi_timeframe",
     ...score.direction.reasons,
     ...score.entry.reasons,
-    ...score.confirmation.reasons,
   ];
+  if (signerB.factors.emaTrend === (wantsBullish ? "bullish" : "bearish")) confluences.push("ema_trend");
+  if (supertrendPoint.trend === (wantsBullish ? "up" : "down")) confluences.push("supertrend");
+  if (usdSupport === true) confluences.push("currency_strength");
+  if (signerB.factors.rsiDivergence === (wantsBullish ? "bullish" : "bearish")) confluences.push("rsi_divergence");
 
   const signal: Signal = {
     id: randomUUID(),
@@ -305,14 +324,17 @@ export function evaluateSignal(
     confidence: score.total,
     directionScore: score.direction.total,
     entryScore: score.entry.total,
-    confirmationScore: score.confirmation.total,
-    tier: score.tier,
+    tier: decision.tier === "no_trade" ? score.tier : decision.tier,
     confluences,
-    session: getActiveSession(lastCandle.time),
+    session,
     timeframe,
     createdAt: Date.now(),
     zoneTop: taggedNow.top,
     zoneBottom: taggedNow.bottom,
+    signerBDirection: signerB.direction,
+    signerBConfidence: signerB.confidence,
+    signerBEmaTrend: signerB.factors.emaTrend,
+    rsiDivergence: signerB.factors.rsiDivergence ?? "none",
     supertrendTrend: supertrendPoint.trend ?? "unavailable",
     usdStrengthStatus: usdSupport === "unavailable" ? "unavailable" : usdSupport ? "supports" : "conflicts",
     newsStatus: newsCheck.status,

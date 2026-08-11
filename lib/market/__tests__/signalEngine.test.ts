@@ -271,18 +271,19 @@ describe("evaluateSignal", () => {
     });
   });
 
-  // The confirmation-layer additions (Supertrend + currency strength). buildCandles()
-  // is a strong, verified uptrend on its own, so Supertrend (derived from the same
-  // `candles` array) naturally agrees with the "long" direction here -- these two
-  // tests target the *other* confirmation input (currency strength, read independently
-  // from the currencylayer poll cache) and the separate news-blackout hard gate,
-  // without needing to touch the delicate hand-tuned SMC price fixture at all.
-  it("holds an otherwise-qualifying signal to WAIT when currency strength actively conflicts", () => {
+  // Signer B (EMA trend + Supertrend + RSI + currency strength, see signerB.ts).
+  // buildCandles() is a strong, verified uptrend, so EMA trend/Supertrend (both derived
+  // from the same `candles` array) naturally agree with the "long" direction here --
+  // these tests target currency strength (read independently from the currencylayer
+  // poll cache) and the separate news-blackout hard gate, without needing to touch the
+  // delicate hand-tuned SMC price fixture at all.
+  it("does NOT hold a signal to WAIT just because currency strength alone disagrees -- the over-blocking fix", () => {
     // A EUR/USD BUY wants USD weak. Seed two currencylayer snapshots where every
-    // tracked USDxxx rate rises (USD strengthening against all 5 majors) -- currency
-    // strength alone (40 of confirmation's 100 points) disagreeing, while Supertrend
-    // (60 points) still agrees, lands confirmation at 60%, below the 80% watch floor --
-    // WAIT, even though SMC, trend, and Supertrend all say buy.
+    // tracked USDxxx rate rises (USD strengthening) -- currency strength (one of four
+    // Signer B factors) disagrees, but EMA trend and Supertrend still agree with the
+    // long direction, so Signer B's own net vote still favors long. This must proceed
+    // as a real signal, not WAIT: a single soft factor can no longer solo-block a
+    // strong SMC setup (see decisionMatrix.ts).
     try {
       setCurrencyStrengthStateForTests(
         [
@@ -293,17 +294,26 @@ describe("evaluateSignal", () => {
       );
 
       const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
-      expect(evaluation.status).toBe("no_trade");
-      if (evaluation.status !== "no_trade" || evaluation.reason.code !== "below_threshold") {
-        throw new Error(`expected below_threshold, got ${JSON.stringify(evaluation)}`);
-      }
-      expect(evaluation.reason.confirmation.total).toBeLessThan(80);
-      expect(evaluation.reason.confirmation.reasons).toEqual(["supertrend"]); // supertrend still agreed; currency strength didn't
+      expect(evaluation.status).toBe("signal");
+      if (evaluation.status !== "signal") return;
+      expect(evaluation.signal.direction).toBe("long");
+      expect(evaluation.signal.tier).toBe("buy");
+      expect(evaluation.signal.confidence).toBe(90); // SMC's own score, untouched by Signer B
+      expect(evaluation.signal.signerBDirection).toBe("long"); // net vote still long despite currency strength
+      expect(evaluation.signal.usdStrengthStatus).toBe("conflicts"); // shown honestly, just doesn't block
     } finally {
       // Leave the currencyStrength cache clean for every other test/file sharing this singleton.
       resetCurrencyStrengthForTests();
     }
   });
+
+  // The signer_conflict/signer_b_neutral WAIT branches themselves (decisionMatrix.ts)
+  // are exhaustively covered in decisionMatrix.test.ts and signerB.test.ts, where every
+  // input is directly controllable. Reaching a genuine Signer B conflict/neutral
+  // end-to-end through this file's hand-tuned uptrend price fixture isn't meaningful:
+  // EMA trend and Supertrend are both derived from the same `candles` array that makes
+  // SMC's own setup valid, so they'd always agree with it here regardless of what this
+  // test seeded -- an artificial "pass" wouldn't actually exercise the conflict path.
 
   it("holds an otherwise-qualifying signal to WAIT when a high-impact news event is imminent", () => {
     const events: EconomicEvent[] = [

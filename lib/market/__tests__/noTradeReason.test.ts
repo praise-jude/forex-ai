@@ -38,11 +38,9 @@ describe("describeNoTradeReason", () => {
       code: "below_threshold",
       direction: { total: 85, tier: "watch", reasons: ["trend_ema_stack", "market_structure"] }, // missing adx
       entry: { total: 60, tier: "no_trade", reasons: ["candlestick"] }, // missing macd/rsi/volume
-      confirmation: { total: 100, tier: "strong_buy", reasons: ["supertrend", "currency_strength"] },
     });
     expect(text).toContain("Direction confidence 85%");
     expect(text).toContain("entry confidence 60%");
-    expect(text).toContain("confirmation confidence 100%");
     expect(text).toMatch(/missing a strong adx reading/i);
     expect(text).toMatch(/MACD confirmation/);
     expect(text).toMatch(/RSI momentum/);
@@ -55,22 +53,28 @@ describe("describeNoTradeReason", () => {
       code: "below_threshold",
       direction: { total: 100, tier: "strong_buy", reasons: ["trend_ema_stack", "market_structure", "adx"] },
       entry: { total: 60, tier: "no_trade", reasons: ["candlestick"] },
-      confirmation: { total: 100, tier: "strong_buy", reasons: ["supertrend", "currency_strength"] },
     });
-    // Only one "missing ..." clause (for entry) -- direction and confirmation have nothing missing.
+    // Only one "missing ..." clause (for entry) -- direction has nothing missing.
     expect(text.match(/missing/gi)).toHaveLength(1);
   });
 
-  it("describes below_threshold when confirmation itself is what's weak", () => {
+  it("describes signer_b_neutral, naming SMC's implied direction", () => {
+    const text = describeNoTradeReason({ code: "signer_b_neutral", impliedDirection: "long" });
+    expect(text).toMatch(/bullish setup/i);
+    expect(text).toMatch(/confirmation signer/i);
+    expect(text).toMatch(/clear lean/i);
+  });
+
+  it("describes signer_conflict with both signers' real directions and Signer B's confidence", () => {
     const text = describeNoTradeReason({
-      code: "below_threshold",
-      direction: { total: 100, tier: "strong_buy", reasons: ["trend_ema_stack", "market_structure", "adx"] },
-      entry: { total: 100, tier: "strong_buy", reasons: ["candlestick", "macd_crossover", "rsi_momentum", "volume"] },
-      confirmation: { total: 0, tier: "no_trade", reasons: [] },
+      code: "signer_conflict",
+      impliedDirection: "long",
+      signerBDirection: "short",
+      signerBConfidence: 72,
     });
-    expect(text).toContain("confirmation confidence 0%");
-    expect(text).toMatch(/missing Supertrend agreement/i);
-    expect(text).toMatch(/supporting currency strength/i);
+    expect(text).toMatch(/bullish setup/i);
+    expect(text).toMatch(/bearish/i);
+    expect(text).toContain("72%");
   });
 
   it("describes news_blackout with the real event, currency, and time until it", () => {

@@ -106,7 +106,8 @@ export type Confluence =
   | "candlestick"
   | "multi_timeframe"
   | "supertrend"
-  | "currency_strength";
+  | "currency_strength"
+  | "rsi_divergence";
 
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
@@ -125,10 +126,6 @@ export interface Signal {
   confidence: number;
   directionScore: number;
   entryScore: number;
-  /** How strongly Supertrend + USD strength (see confidenceScore.ts's `confirmation`
-   * dimension) agree with this signal -- confirms or downgrades the SMC setup above,
-   * never independently produces one. */
-  confirmationScore: number;
   tier: ConfidenceTier;
   confluences: Confluence[];
   session: Session;
@@ -140,6 +137,14 @@ export interface Signal {
    * fabricate one (see tradingViewWebhook.ts). */
   zoneTop?: number;
   zoneBottom?: number;
+  /** Signer B's own independent directional read (Trend + Momentum + Volatility +
+   * Currency Strength + Session, see signerB.ts) -- computed WITHOUT reference to this
+   * signal's own `direction`, then combined via decisionMatrix.ts. "unavailable" only
+   * for TradingView-sourced signals, which have no candle history to derive it from. */
+  signerBDirection: "long" | "short" | "neutral" | "unavailable";
+  signerBConfidence: number;
+  signerBEmaTrend: "bullish" | "bearish" | "neutral" | "unavailable";
+  rsiDivergence: "bullish" | "bearish" | "none" | "unavailable";
   /** Transparent confirmation-layer status, always present and honest about missing
    * data ("unavailable" is a real, distinct value -- never silently omitted or
    * fabricated as agreeing). TradingView-sourced signals don't compute these (no
@@ -160,13 +165,26 @@ export type NoTradeReason =
   | { code: "trend_disagreement"; impliedDirection: "long" | "short"; d1: string; h4: string; h1: string }
   | { code: "weak_trend_adx"; adx: number }
   | { code: "low_volatility"; atr: number; atrAverage: number }
-  | { code: "below_threshold"; direction: DimensionScore; entry: DimensionScore; confirmation: DimensionScore }
+  | { code: "below_threshold"; direction: DimensionScore; entry: DimensionScore }
   // A decisive hold, not a weighted score -- an SMC setup was found and would otherwise
   // have qualified, but a high-impact release for one of the pair's currencies is
   // imminent (see lib/market/newsFilter.ts). Distinct from below_threshold: this never
   // fires from missing/unavailable news data (see checkNews's own "unavailable" vs
   // "clear" distinction) -- only from a genuinely detected upcoming event.
-  | { code: "news_blackout"; impliedDirection: "long" | "short"; event: string; currency: string; minutesUntil: number };
+  | { code: "news_blackout"; impliedDirection: "long" | "short"; event: string; currency: string; minutesUntil: number }
+  // SMC found a qualifying setup, but Signer B's independent read (see signerB.ts) had
+  // no real lean either way -- a genuine tie/insufficient-data read, not a fabricated
+  // agreement. See decisionMatrix.ts.
+  | { code: "signer_b_neutral"; impliedDirection: "long" | "short" }
+  // SMC found a qualifying setup, but Signer B's independent read points the opposite
+  // direction -- a genuine conflict between the two independent signers, held rather
+  // than forced. See decisionMatrix.ts.
+  | {
+      code: "signer_conflict";
+      impliedDirection: "long" | "short";
+      signerBDirection: "long" | "short";
+      signerBConfidence: number;
+    };
 
 export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 

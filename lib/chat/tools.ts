@@ -87,7 +87,7 @@ export function buildTools(ctx: ToolContext) {
   const get_signals = betaZodTool({
     name: "get_signals",
     description:
-      "List recent executable trade signals (buy/strong_buy tier, not watch-tier) with their id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (direction/entry/confirmation sub-scores, confluence tags, Supertrend, currency strength, news status), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X'.",
+      "List recent executable trade signals (buy/strong_buy tier, not watch-tier) with their id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (SMC's own direction/entry sub-scores and confluence tags, plus Signer B's independent direction/confidence and its own EMA trend/Supertrend/RSI divergence/currency strength/news reads), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X'.",
     inputSchema: z.object({}),
     run: async () => {
       return JSON.stringify(
@@ -106,9 +106,12 @@ export function buildTools(ctx: ToolContext) {
             riskReward: signal.riskReward,
             directionScore: signal.directionScore,
             entryScore: signal.entryScore,
-            confirmationScore: signal.confirmationScore,
+            signerBDirection: signal.signerBDirection,
+            signerBConfidence: signal.signerBConfidence,
             confluences: signal.confluences,
+            signerBEmaTrend: signal.signerBEmaTrend,
             supertrendTrend: signal.supertrendTrend,
+            rsiDivergence: signal.rsiDivergence,
             usdStrengthStatus: signal.usdStrengthStatus,
             newsStatus: signal.newsStatus,
             confirmPhraseRequiredToExecute: buildConfirmPhrase(signal),

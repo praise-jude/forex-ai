@@ -44,20 +44,32 @@ export function buildConfirmPhrase(signal: Signal): string {
   return `CONFIRM ${directionWord} ${tickerWord(signal.pair)}`;
 }
 
-/** Short spoken summary of which confirmation-layer factors actively support this
- * signal's direction -- e.g. "Supertrend and currency strength are confirming the
- * move." Omits factors that are unavailable or conflicting rather than mentioning
- * them negatively here (a conflicting factor would already have kept the signal below
- * threshold and never reached this announcement at all -- see confidenceScore.ts). */
+/** Short spoken summary of which Signer B (independent confirmation) factors actively
+ * support this signal's direction -- e.g. "the EMA trend and Supertrend are confirming
+ * the move." Omits factors that are unavailable, neutral, or conflicting rather than
+ * mentioning them negatively here -- Signer B's own direction must already agree with
+ * SMC's for a signal to have been produced at all (a real conflict holds the trade,
+ * see decisionMatrix.ts), so nothing here is ever a disagreement, just factors that
+ * weren't decisive. */
 function confirmationSummary(signal: Signal): string {
   const supporting: string[] = [];
+  if (signal.signerBEmaTrend !== "unavailable" && signal.signerBEmaTrend === (signal.direction === "long" ? "bullish" : "bearish")) {
+    supporting.push("the EMA trend");
+  }
   if (signal.supertrendTrend !== "unavailable" && signal.supertrendTrend === (signal.direction === "long" ? "up" : "down")) {
     supporting.push("Supertrend");
   }
   if (signal.usdStrengthStatus === "supports") supporting.push("currency strength");
+  if (
+    signal.rsiDivergence !== "unavailable" &&
+    signal.rsiDivergence !== "none" &&
+    signal.rsiDivergence === (signal.direction === "long" ? "bullish" : "bearish")
+  ) {
+    supporting.push("RSI divergence");
+  }
 
   if (supporting.length === 0) return "";
-  const list = supporting.length === 1 ? supporting[0] : `${supporting[0]} and ${supporting[1]}`;
+  const list = supporting.length === 1 ? supporting[0] : `${supporting.slice(0, -1).join(", ")} and ${supporting[supporting.length - 1]}`;
   return `${list} ${supporting.length === 1 ? "is" : "are"} confirming the move.`;
 }
 
