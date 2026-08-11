@@ -118,6 +118,15 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("don't place it", expected)).toEqual({ kind: "decline" });
   });
 
+  it("matches phrases on word boundaries, not raw substrings -- 'know'/'eyeshadow'/'snowball' must not misfire on 'no'/'yes'", () => {
+    expect(parseVoiceCommand("I know the risk, go ahead", expected).kind).not.toBe("decline");
+    expect(parseVoiceCommand("eyeshadow looks nice", expected).kind).not.toBe("soft_confirm");
+    expect(parseVoiceCommand("snowball effect", expected).kind).not.toBe("decline");
+    // The real words must still match on their own.
+    expect(parseVoiceCommand("no", expected)).toEqual({ kind: "decline" });
+    expect(parseVoiceCommand("yes", expected)).toEqual({ kind: "soft_confirm" });
+  });
+
   it("recognizes the emergency stop phrases ahead of decline/soft matches", () => {
     expect(parseVoiceCommand("emergency stop", expected)).toEqual({ kind: "emergency_stop" });
     expect(parseVoiceCommand("please stop trading now", expected)).toEqual({ kind: "emergency_stop" });

@@ -8,8 +8,14 @@ const LOOKAHEAD_HOURS = 168; // 7 days -- TickAtlas's documented max for next_ho
 // "if in doubt, don't trade into a headline" spirit of the user's original request.
 const NEWS_WINDOW_MINUTES = 30;
 
-const KNOWN_CURRENCIES = new Set(["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]);
+// The currencies this app actually trades (see PAIRS in ./types.ts -- this app doesn't
+// track any CHF/NZD pairs, see currencyStrength.ts's own comment on the same limit).
+// checkNews()'s pair-leg matching (KNOWN_CURRENCIES, below) is derived from this same
+// list rather than hand-duplicated, so the two can never silently drift apart again --
+// a currency requested from TickAtlas but not recognized as a pair leg (or vice versa)
+// would otherwise be a quiet "always reports clear" gap for that currency.
 const TRACKED_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD"] as const;
+const KNOWN_CURRENCIES = new Set<string>(TRACKED_CURRENCIES);
 
 export interface EconomicEvent {
   currency: string;

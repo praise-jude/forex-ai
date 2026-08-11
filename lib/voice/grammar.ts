@@ -205,10 +205,19 @@ const PROFIT_PHRASES = ["whats my current profit", "what is my profit", "show my
 const POSITIONS_PHRASES = ["show my open trades", "what trades are open", "show open trades", "open positions", "open trades"];
 const AUTOPILOT_PHRASES = ["is autopilot active", "is auto pilot active", "autopilot status"];
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Word-boundary match, not raw substring -- a bare `.includes()` here would classify
+ * "I know the risk, go ahead" as a decline (because "KNOW" contains "NO") or "eyeshadow
+ * looks nice" as a soft-confirm (because "EYESHADOW" contains "YES"). This drives real
+ * trade confirm/decline classification, so a false match isn't just a UX annoyance. */
 function matchesAny(normalized: string, phrases: string[]): boolean {
   return phrases.some((phrase) => {
     const normalizedPhrase = normalize(phrase);
-    return normalized === normalizedPhrase || normalized.includes(normalizedPhrase);
+    if (normalized === normalizedPhrase) return true;
+    return new RegExp(`\\b${escapeRegExp(normalizedPhrase)}\\b`).test(normalized);
   });
 }
 

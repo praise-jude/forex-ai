@@ -89,9 +89,19 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
           <div className="mt-2 border-t border-white/10 pt-2">
             <div className="flex items-center justify-between text-[11px] text-zinc-500">
               <span>Signer B (independent confirmation)</span>
-              <span className={STATUS_COLOR[update.evaluation.signal.signerBDirection === "unavailable" ? "neutral" : "positive"]}>
-                {update.evaluation.signal.signerBDirection === "unavailable"
-                  ? "Unavailable"
+              <span
+                className={
+                  STATUS_COLOR[
+                    update.evaluation.signal.signerBDirection === "unavailable" || update.evaluation.signal.signerBDirection === "neutral"
+                      ? "neutral"
+                      : "positive"
+                  ]
+                }
+              >
+                {update.evaluation.signal.signerBDirection === "unavailable" || update.evaluation.signal.signerBDirection === "neutral"
+                  ? update.evaluation.signal.signerBDirection === "unavailable"
+                    ? "Unavailable"
+                    : "Neutral"
                   : `${update.evaluation.signal.signerBDirection.toUpperCase()} · ${update.evaluation.signal.signerBConfidence.toFixed(0)}%`}
               </span>
             </div>

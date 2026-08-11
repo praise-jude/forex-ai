@@ -111,6 +111,13 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
               ? "Source: TradingView"
               : `Direction ${signal.directionScore.toFixed(0)}% · Entry ${signal.entryScore.toFixed(0)}%`}
           </div>
+          {signal.source !== "tradingview" && (
+            <div className="mt-0.5 text-[11px] text-zinc-500">
+              {signal.signerBDirection === "unavailable" || signal.signerBDirection === "neutral"
+                ? `Signer B: ${signal.signerBDirection === "unavailable" ? "Unavailable" : "Neutral"}`
+                : `Signer B ${signal.signerBDirection.toUpperCase()} · ${signal.signerBConfidence.toFixed(0)}%`}
+            </div>
+          )}
         </div>
       </div>
       <dl className="mt-2 grid grid-cols-4 gap-2 text-xs tabular-nums">

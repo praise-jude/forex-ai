@@ -34,8 +34,9 @@ export interface SignerBFactors {
 
 export interface SignerBResult {
   direction: SignerBDirection;
-  /** 0-100. Only meaningful when direction !== "neutral" -- see evaluateSignerB's own
-   * comment for why a tie is scored 0 confidence rather than a fabricated number. */
+  /** 0-100. Only meaningful when direction !== "neutral" -- a "neutral" tie can still
+   * carry nonzero confidence (see evaluateSignerB's own comment); decisionMatrix.ts
+   * gates purely on `direction`, never on this number, when direction is neutral. */
   confidence: number;
   tier: DimensionTier;
   factors: SignerBFactors;
@@ -111,9 +112,12 @@ function evaluateCurrencyStrengthFactor(usdStrength: UsdStrength, pair: Pair): {
  * vote across 4 directional factors, reusing the "unavailable excluded, rescaled to
  * what's knowable" pattern proven in confidenceScore.ts's old scoreConfirmation (moved
  * here) -- a data source that hasn't warmed up yet narrows what's being asked rather
- * than silently sinking the result. A genuine tie (including "nothing available",
- * 0 vs 0) is `"neutral"`, confidence 0 -- Signer B has no real opinion, which
- * decisionMatrix.ts treats as a reason to WAIT, not as "50/50 buy".
+ * than silently sinking the result. A genuine tie is always `"neutral"` -- Signer B
+ * has no real opinion, which decisionMatrix.ts treats as a reason to WAIT, not as
+ * "50/50 buy". Confidence is 0 only for the "nothing available" tie (0 vs 0, `possible
+ * === 0`); a tie between two real nonzero-weight factors (e.g. RSI vs currency
+ * strength, both 20) is confidence 50 -- still `"neutral"` direction, so it's still a
+ * WAIT, just not reported as a fabricated 0% when real (conflicting) evidence exists.
  */
 export function evaluateSignerB(input: {
   candles: Candle[];
