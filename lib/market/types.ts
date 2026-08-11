@@ -152,11 +152,7 @@ export interface Signal {
    * to "unavailable" for that source. */
   supertrendTrend: "up" | "down" | "unavailable";
   usdStrengthStatus: "supports" | "conflicts" | "unavailable";
-  /** Sourced from FRED (St. Louis Fed) -- US-only and day-level granularity, not a
-   * countdown. "high_impact_today" means a curated major USD release is scheduled
-   * for the same UTC calendar day, never a specific time. Never fires for a pair's
-   * non-USD leg (EUR/GBP/JPY/AUD/CAD releases aren't covered by this data source). */
-  newsStatus: "clear" | "high_impact_today" | "unavailable";
+  newsStatus: "clear" | "high_impact_soon" | "unavailable";
 }
 
 /** Why a given M15 candle close did *not* produce a Signal -- computed by
@@ -171,12 +167,11 @@ export type NoTradeReason =
   | { code: "low_volatility"; atr: number; atrAverage: number }
   | { code: "below_threshold"; direction: DimensionScore; entry: DimensionScore }
   // A decisive hold, not a weighted score -- an SMC setup was found and would otherwise
-  // have qualified, but a curated major USD release is scheduled for the same UTC
-  // calendar day (see lib/market/newsFilter.ts -- FRED-sourced, day-level only, no
-  // specific time knowable). Distinct from below_threshold: this never fires from
-  // missing/unavailable news data (see checkNews's own "unavailable" vs "clear"
-  // distinction) -- only from a genuinely detected same-day event.
-  | { code: "news_blackout"; impliedDirection: "long" | "short"; event: string; currency: string }
+  // have qualified, but a high-impact release for one of the pair's currencies is
+  // imminent (see lib/market/newsFilter.ts). Distinct from below_threshold: this never
+  // fires from missing/unavailable news data (see checkNews's own "unavailable" vs
+  // "clear" distinction) -- only from a genuinely detected upcoming event.
+  | { code: "news_blackout"; impliedDirection: "long" | "short"; event: string; currency: string; minutesUntil: number }
   // SMC found a qualifying setup, but Signer B's independent read (see signerB.ts) had
   // no real lean either way -- a genuine tie/insufficient-data read, not a fabricated
   // agreement. See decisionMatrix.ts.
