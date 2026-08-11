@@ -4,6 +4,8 @@ import type { Confluence, Signal } from "@/lib/market/types";
 import type { CardStatus } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
 import { TradingRobot } from "./TradingRobot";
+import { DirectionBadge, directionTone } from "./DirectionBadge";
+import { SignerBBreakdown } from "./SignerBBreakdown";
 
 // Exported for reuse by PredictionCard.tsx -- one place a confluence tag's display
 // name is defined, not duplicated between the two components that show them.
@@ -32,12 +34,6 @@ const TIER_LABEL: Record<Signal["tier"], string> = {
   strong_buy: "Strong buy",
   buy: "Buy",
   watch: "Watch",
-};
-
-const TIER_BADGE_CLASSES: Record<Signal["tier"], string> = {
-  strong_buy: "bg-sky-500/15 text-sky-400",
-  buy: "bg-sky-500/15 text-sky-400",
-  watch: "bg-amber-500/15 text-amber-400",
 };
 
 function relativeTime(fromMs: number): string {
@@ -103,21 +99,18 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
         <TradingRobot direction={signal.direction} />
         <div className="text-right">
           <div className="font-semibold text-zinc-100">{signal.pair}</div>
-          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${TIER_BADGE_CLASSES[signal.tier]}`}>
-            {TIER_LABEL[signal.tier]} &middot; {signal.confidence.toFixed(0)}% &middot; {signal.timeframe}
-          </span>
+          <div className="mt-1">
+            <DirectionBadge
+              tone={directionTone(signal.direction)}
+              label={`${TIER_LABEL[signal.tier]} · ${signal.confidence.toFixed(0)}% · ${signal.timeframe}`}
+              className="text-xs"
+            />
+          </div>
           <div className="mt-1 text-[11px] text-zinc-500">
             {signal.source === "tradingview"
               ? "Source: TradingView"
               : `Direction ${signal.directionScore.toFixed(0)}% · Entry ${signal.entryScore.toFixed(0)}%`}
           </div>
-          {signal.source !== "tradingview" && (
-            <div className="mt-0.5 text-[11px] text-zinc-500">
-              {signal.signerBDirection === "unavailable" || signal.signerBDirection === "neutral"
-                ? `Signer B: ${signal.signerBDirection === "unavailable" ? "Unavailable" : "Neutral"}`
-                : `Signer B ${signal.signerBDirection.toUpperCase()} · ${signal.signerBConfidence.toFixed(0)}%`}
-            </div>
-          )}
         </div>
       </div>
       <dl className="mt-2 grid grid-cols-4 gap-2 text-xs tabular-nums">
@@ -145,6 +138,11 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
               {CONFLUENCE_LABEL[c]}
             </span>
           ))}
+        </div>
+      )}
+      {signal.source !== "tradingview" && (
+        <div className="mt-2 border-t border-white/10 pt-2">
+          <SignerBBreakdown signal={signal} />
         </div>
       )}
       <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">

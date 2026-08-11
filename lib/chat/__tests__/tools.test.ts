@@ -3,6 +3,7 @@ import { buildTools, type ToolContext } from "../tools";
 import { signalStore } from "../../market/signalStore";
 import { resetEngineModeForTests } from "../../market/engineMode";
 import { buildSignal } from "../../market/__tests__/fixtures";
+import { buildSignalAnnouncement } from "../../voice/grammar";
 
 // Loosely typed on purpose: buildTools() returns a heterogeneous array of tools each
 // with their own input schema, and these tests deliberately call `run()` directly
@@ -135,6 +136,44 @@ describe("chat tools -- confirm-phrase safety gates", () => {
       await set_engine_mode.run({ mode: "analysis" });
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Proves there's exactly one computation behind what chat, voice, and the dashboard
+  // each show for the same signal -- not three independently-derived readings that
+  // could quietly drift apart. get_signals and buildSignalAnnouncement both read
+  // straight off the same stored Signal object; this asserts they agree.
+  describe("get_signals -- single source of truth with voice", () => {
+    it("exposes the same adx/rsi/direction/confidence/Signer B fields the Signal itself carries, and voice speaks the identical confidence number", async () => {
+      const signal = buildSignal({
+        id: "consistency-test-1",
+        pair: "EUR/USD",
+        direction: "long",
+        confidence: 91,
+        adx: 27.4,
+        rsi: 58.3,
+        signerBDirection: "long",
+        signerBConfidence: 88,
+      });
+      signalStore.add(signal);
+
+      const tools = buildTools(ctxWith("just checking"));
+      const get_signals = findTool(tools, "get_signals");
+      const raw = await get_signals.run({});
+      const entries = JSON.parse(raw as string) as Array<Record<string, unknown>>;
+      const entry = entries.find((s) => s.id === signal.id);
+
+      expect(entry).toMatchObject({
+        direction: signal.direction,
+        confidence: signal.confidence,
+        adx: signal.adx,
+        rsi: signal.rsi,
+        signerBDirection: signal.signerBDirection,
+        signerBConfidence: signal.signerBConfidence,
+      });
+
+      const spoken = buildSignalAnnouncement(signal, 1);
+      expect(spoken).toContain(`${Math.round(signal.confidence)} percent`);
     });
   });
 });

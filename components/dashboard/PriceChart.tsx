@@ -4,15 +4,19 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   CandlestickSeries,
   createChart,
+  createSeriesMarkers,
   LineSeries,
   LineStyle,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { Candle, Pair, PredictionUpdate, StreamEvent, Timeframe } from "@/lib/market/types";
 import { decimals } from "@/lib/market/symbols";
+import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 
 interface PriceChartProps {
   pair: Pair;
@@ -32,15 +36,6 @@ const DOWN_COLOR = "#f87171";
 // "projected ahead" rather than overlapping the candles. Same spirit as
 // signalEngine.ts's ATR_BUFFER_FRACTION-style tunable constants.
 const FORECAST_BAR_SPACING = 8;
-
-const TIMEFRAME_MS: Record<Timeframe, number> = {
-  "5m": 5 * 60 * 1000,
-  "15m": 15 * 60 * 1000,
-  "30m": 30 * 60 * 1000,
-  "1h": 60 * 60 * 1000,
-  "4h": 4 * 60 * 60 * 1000,
-  "1d": 24 * 60 * 60 * 1000,
-};
 
 function toTime(ms: number): UTCTimestamp {
   return Math.floor(ms / 1000) as UTCTimestamp;
@@ -75,6 +70,10 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const forecastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // v5's markers are a primitive returned by createSeriesMarkers, not a method on the
+  // series itself (series.setMarkers() was removed in v5) -- created once alongside the
+  // candle series below, updated in place via .setMarkers() from redrawAnnotations.
+  const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const forecastLabelRef = useRef<HTMLDivElement>(null);
@@ -95,6 +94,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     for (const line of priceLinesRef.current) series.removePriceLine(line);
     priceLinesRef.current = [];
     forecastSeries.setData([]);
+    seriesMarkersRef.current?.setMarkers([]);
     if (forecastLabelRef.current) forecastLabelRef.current.style.display = "none";
 
     if (!prediction || prediction.pair !== pair || prediction.timeframe !== timeframe) return;
@@ -115,6 +115,18 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
 
     const lastCandle = candlesRef.current[candlesRef.current.length - 1];
     if (!lastCandle) return; // candles not loaded yet -- the history-reseed effect calls this again once they are
+
+    // A single directional marker at the signal's own candle -- distinct from the
+    // dotted forecast curve (which projects a path, not a fixed marker) and the price
+    // lines (which show levels, not the specific candle the setup fired on).
+    seriesMarkersRef.current?.setMarkers([
+      {
+        time: toTime(lastCandle.time),
+        position: signal.direction === "long" ? "belowBar" : "aboveBar",
+        color: signal.direction === "long" ? UP_COLOR : DOWN_COLOR,
+        shape: signal.direction === "long" ? "arrowUp" : "arrowDown",
+      },
+    ]);
 
     const barMs = TIMEFRAME_MS[timeframe];
     forecastSeries.applyOptions({ color: signal.direction === "long" ? UP_COLOR : DOWN_COLOR });
@@ -159,12 +171,14 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     chartRef.current = chart;
     seriesRef.current = candle;
     forecastSeriesRef.current = forecast;
+    seriesMarkersRef.current = createSeriesMarkers(candle, []);
 
     return () => {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
       forecastSeriesRef.current = null;
+      seriesMarkersRef.current = null;
       priceLinesRef.current = [];
     };
   }, []);

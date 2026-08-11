@@ -226,6 +226,12 @@ describe("evaluateSignal", () => {
     expect(evaluation.signal.zoneTop).toBeGreaterThanOrEqual(evaluation.signal.zoneBottom!);
     expect(evaluation.signal.entry).toBeGreaterThanOrEqual(evaluation.signal.zoneBottom!);
     expect(evaluation.signal.entry).toBeLessThanOrEqual(evaluation.signal.zoneTop!);
+    // Real ADX/RSI readings, not fabricated -- both hard-gated/scored elsewhere in this
+    // same evaluation, so a qualifying signal can only ever carry real values: ADX must
+    // have cleared the ADX_HARD_MIN=20 pre-gate, and RSI must be >50 for rsiAgrees to
+    // have contributed to this long signal's entry score.
+    expect(evaluation.signal.adx).toBeGreaterThanOrEqual(20);
+    expect(evaluation.signal.rsi).toBeGreaterThan(50);
   });
 
   it("reports below_threshold with the real DimensionScores when the weighted score misses", () => {

@@ -14,6 +14,8 @@ export function buildSignal(overrides: Partial<Signal> = {}): Signal {
     confidence: 90,
     directionScore: 90,
     entryScore: 90,
+    adx: 27.4,
+    rsi: 58,
     tier: "buy",
     confluences: ["liquidity_sweep", "bos", "fvg", "killzone"],
     session: "london",

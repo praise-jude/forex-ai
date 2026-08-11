@@ -1,49 +1,41 @@
 "use client";
 
-import type { PredictionUpdate } from "@/lib/market/types";
+import type { NoTradeReason, PredictionUpdate } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline, type PredictionHeadline } from "@/lib/market/predictionLabel";
 import { describeNoTradeReason } from "@/lib/market/noTradeReason";
+import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 import { CONFLUENCE_LABEL } from "./SignalsPanel";
+import { DirectionBadge, type BadgeTone } from "./DirectionBadge";
+import { SignerBBreakdown } from "./SignerBBreakdown";
 
-const HEADLINE_CLASSES: Record<PredictionHeadline, string> = {
-  "STRONG BUY": "bg-emerald-500/15 text-emerald-400",
-  BUY: "bg-emerald-500/15 text-emerald-400",
-  NEUTRAL: "bg-zinc-700/60 text-zinc-300",
-  SELL: "bg-rose-500/15 text-rose-400",
-  "STRONG SELL": "bg-rose-500/15 text-rose-400",
-  "NO TRADE": "bg-zinc-800 text-zinc-500",
+const HEADLINE_TONE: Record<PredictionHeadline, BadgeTone> = {
+  "STRONG BUY": "positive",
+  BUY: "positive",
+  NEUTRAL: "neutral",
+  SELL: "negative",
+  "STRONG SELL": "negative",
+  "NO TRADE": "neutral",
 };
 
-const STATUS_COLOR = {
-  positive: "text-emerald-400",
-  negative: "text-rose-400",
-  neutral: "text-zinc-500",
-} as const;
+// A signal that's more than this many of its own timeframe bars old is shown as
+// outdated -- predictions refresh every closed candle, so anything holding this long
+// past its own creation is more likely a stalled poll/stream than a fresh read.
+const STALE_BAR_MULTIPLE = 3;
 
-/** Maps one Signer B factor's raw reading to a tone against this signal's own
- * direction -- "unavailable"/"neutral" readings are real, honest non-answers (never
- * fabricated as agreeing or disagreeing), so they stay neutral rather than reading as
- * a disagreement. */
-function agreeTone<T extends string>(
-  value: T | "neutral" | "unavailable",
-  direction: "long" | "short",
-  bullishValue: T,
-  bearishValue: T
-): keyof typeof STATUS_COLOR {
-  if (value === "unavailable" || value === "neutral") return "neutral";
-  const wanted = direction === "long" ? bullishValue : bearishValue;
-  return value === wanted ? "positive" : "negative";
+function isStale(createdAt: number, timeframe: keyof typeof TIMEFRAME_MS): boolean {
+  return Date.now() - createdAt > TIMEFRAME_MS[timeframe] * STALE_BAR_MULTIPLE;
 }
 
-/** One row of the confirmation-layer breakdown -- always shows the real status,
- * including "unavailable", never a fabricated agree/disagree. */
-function ConfirmationRow({ label, value, tone }: { label: string; value: string; tone: keyof typeof STATUS_COLOR }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-zinc-500">{label}</span>
-      <span className={STATUS_COLOR[tone]}>{value}</span>
-    </div>
-  );
+/** Reason-specific status badge for the no_trade branch -- CONFLICTING/NEUTRAL only
+ * ever come from a genuine Signer B read (never fabricated); every other gate reads as
+ * a plain WAIT. This is the one place those two Signer B-specific reasons get their
+ * own visual treatment -- "Active Signals" (SignalsPanel.tsx) can never show them at
+ * all, since a conflicting/neutral Signer B read never becomes a stored Signal in the
+ * first place (see decisionMatrix.ts). */
+function noTradeStatus(reason: NoTradeReason): { tone: BadgeTone; label: string } {
+  if (reason.code === "signer_conflict") return { tone: "negative", label: "CONFLICTING" };
+  if (reason.code === "signer_b_neutral") return { tone: "neutral", label: "NEUTRAL" };
+  return { tone: "neutral", label: "WAIT" };
 }
 
 /**
@@ -63,7 +55,7 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
   return (
     <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <div className="flex items-center justify-between">
-        <span className={`inline-block rounded-full px-2.5 py-1 text-sm font-semibold ${HEADLINE_CLASSES[headline]}`}>{headline}</span>
+        <DirectionBadge tone={HEADLINE_TONE[headline]} label={headline} />
         {update.evaluation.status === "signal" && (
           <span className="text-sm font-semibold text-zinc-200">{update.evaluation.signal.confidence.toFixed(0)}% confidence</span>
         )}
@@ -73,6 +65,9 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
 
       {update.evaluation.status === "signal" ? (
         <>
+          {isStale(update.evaluation.signal.createdAt, update.evaluation.signal.timeframe) && (
+            <p className="mt-1.5 text-xs font-semibold text-amber-400">⚠️ Analysis outdated -- waiting on a fresh candle close.</p>
+          )}
           {update.evaluation.signal.confluences.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1">
               {update.evaluation.signal.confluences.map((c) => (
@@ -87,94 +82,22 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
             {update.evaluation.signal.entryScore.toFixed(0)}%
           </div>
           <div className="mt-2 border-t border-white/10 pt-2">
-            <div className="flex items-center justify-between text-[11px] text-zinc-500">
-              <span>Signer B (independent confirmation)</span>
-              <span
-                className={
-                  STATUS_COLOR[
-                    update.evaluation.signal.signerBDirection === "unavailable" || update.evaluation.signal.signerBDirection === "neutral"
-                      ? "neutral"
-                      : "positive"
-                  ]
-                }
-              >
-                {update.evaluation.signal.signerBDirection === "unavailable" || update.evaluation.signal.signerBDirection === "neutral"
-                  ? update.evaluation.signal.signerBDirection === "unavailable"
-                    ? "Unavailable"
-                    : "Neutral"
-                  : `${update.evaluation.signal.signerBDirection.toUpperCase()} · ${update.evaluation.signal.signerBConfidence.toFixed(0)}%`}
-              </span>
-            </div>
-            <div className="mt-1 space-y-1 text-[11px]">
-              <ConfirmationRow
-                label="EMA trend"
-                value={
-                  update.evaluation.signal.signerBEmaTrend === "unavailable"
-                    ? "Unavailable"
-                    : update.evaluation.signal.signerBEmaTrend.charAt(0).toUpperCase() + update.evaluation.signal.signerBEmaTrend.slice(1)
-                }
-                tone={agreeTone(update.evaluation.signal.signerBEmaTrend, update.evaluation.signal.direction, "bullish", "bearish")}
-              />
-              <ConfirmationRow
-                label="Supertrend"
-                value={update.evaluation.signal.supertrendTrend === "unavailable" ? "Unavailable" : update.evaluation.signal.supertrendTrend.toUpperCase()}
-                tone={agreeTone(update.evaluation.signal.supertrendTrend, update.evaluation.signal.direction, "up", "down")}
-              />
-              <ConfirmationRow
-                label="RSI divergence"
-                value={
-                  update.evaluation.signal.rsiDivergence === "unavailable"
-                    ? "Unavailable"
-                    : update.evaluation.signal.rsiDivergence === "none"
-                      ? "None"
-                      : update.evaluation.signal.rsiDivergence.charAt(0).toUpperCase() + update.evaluation.signal.rsiDivergence.slice(1)
-                }
-                tone={
-                  update.evaluation.signal.rsiDivergence === "unavailable" || update.evaluation.signal.rsiDivergence === "none"
-                    ? "neutral"
-                    : agreeTone(update.evaluation.signal.rsiDivergence, update.evaluation.signal.direction, "bullish", "bearish")
-                }
-              />
-              <ConfirmationRow
-                label="Currency strength"
-                value={
-                  update.evaluation.signal.usdStrengthStatus === "unavailable"
-                    ? "Unavailable"
-                    : update.evaluation.signal.usdStrengthStatus === "supports"
-                      ? "Supports"
-                      : "Conflicts"
-                }
-                tone={
-                  update.evaluation.signal.usdStrengthStatus === "unavailable"
-                    ? "neutral"
-                    : update.evaluation.signal.usdStrengthStatus === "supports"
-                      ? "positive"
-                      : "negative"
-                }
-              />
-              <ConfirmationRow label="Session" value={update.evaluation.signal.session} tone="neutral" />
-              <ConfirmationRow
-                label="News"
-                value={
-                  update.evaluation.signal.newsStatus === "unavailable"
-                    ? "Unavailable"
-                    : update.evaluation.signal.newsStatus === "clear"
-                      ? "Clear"
-                      : "High-impact soon"
-                }
-                tone={
-                  update.evaluation.signal.newsStatus === "unavailable"
-                    ? "neutral"
-                    : update.evaluation.signal.newsStatus === "clear"
-                      ? "positive"
-                      : "negative"
-                }
-              />
-            </div>
+            <SignerBBreakdown signal={update.evaluation.signal} />
           </div>
         </>
       ) : (
-        <p className="mt-1.5 text-xs text-zinc-400">{describeNoTradeReason(update.evaluation.reason)}</p>
+        <>
+          <div className="mt-2 flex items-center gap-2">
+            <DirectionBadge tone={noTradeStatus(update.evaluation.reason).tone} label={noTradeStatus(update.evaluation.reason).label} className="text-xs" />
+            {update.evaluation.reason.code === "signer_conflict" && (
+              <span className="text-[11px] text-zinc-500">
+                SMC {update.evaluation.reason.impliedDirection === "long" ? "BUY" : "SELL"} · Signer B{" "}
+                {update.evaluation.reason.signerBDirection === "long" ? "BUY" : "SELL"} ({update.evaluation.reason.signerBConfidence.toFixed(0)}%)
+              </span>
+            )}
+          </div>
+          <p className="mt-1.5 text-xs text-zinc-400">{describeNoTradeReason(update.evaluation.reason)}</p>
+        </>
       )}
     </div>
   );

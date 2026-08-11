@@ -106,6 +106,8 @@ export function buildTools(ctx: ToolContext) {
             riskReward: signal.riskReward,
             directionScore: signal.directionScore,
             entryScore: signal.entryScore,
+            adx: signal.adx,
+            rsi: signal.rsi,
             signerBDirection: signal.signerBDirection,
             signerBConfidence: signal.signerBConfidence,
             confluences: signal.confluences,

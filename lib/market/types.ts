@@ -126,6 +126,13 @@ export interface Signal {
   confidence: number;
   directionScore: number;
   entryScore: number;
+  /** Raw ADX/RSI readings at the signal candle -- already computed in signalEngine.ts
+   * for the direction/entry scoring gates, just exposed here directly rather than only
+   * as a pass/fail confluence tag, so the UI can show the real number (e.g. "ADX 27.4"),
+   * not just a checkmark. NaN for TradingView-sourced signals (no candle history to
+   * derive them from -- never fabricated). */
+  adx: number;
+  rsi: number;
   tier: ConfidenceTier;
   confluences: Confluence[];
   session: Session;

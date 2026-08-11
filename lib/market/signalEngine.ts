@@ -324,6 +324,8 @@ export function evaluateSignal(
     confidence: score.total,
     directionScore: score.direction.total,
     entryScore: score.entry.total,
+    adx,
+    rsi,
     tier: decision.tier === "no_trade" ? score.tier : decision.tier,
     confluences,
     session,

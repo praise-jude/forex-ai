@@ -112,6 +112,10 @@ export function parseTradingViewAlert(body: unknown, options: ParseOptions = {})
     confidence: 100,
     directionScore: 100,
     entryScore: 100,
+    // No candle history to derive these from for an externally-sourced signal --
+    // honestly NaN, never fabricated as a real reading.
+    adx: NaN,
+    rsi: NaN,
     tier: "buy",
     confluences: [],
     session: getActiveSession(now),
