@@ -1,7 +1,10 @@
 import { getConnectionStatus, type ConnectionStatus } from "./metaApiConnection";
 import { sendNotification } from "./pushNotifier";
 
-const POLL_INTERVAL_MS = 30_000;
+// getConnectionStatus() is a synchronous in-memory read -- no external I/O -- so this
+// can poll tightly without real backend cost. Was 30s; a real MT5 drop now triggers a
+// push notification within ~8s instead of up to 30s.
+const POLL_INTERVAL_MS = 8_000;
 const globalKey = Symbol.for("forex-ai.connectionWatcher");
 type GlobalWithWatcher = typeof globalThis & { [globalKey]?: { lastStatus: ConnectionStatus | null; started: boolean } };
 const g = globalThis as GlobalWithWatcher;

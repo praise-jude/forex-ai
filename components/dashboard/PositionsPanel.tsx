@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { AccountKey, OpenPosition } from "@/lib/market/types";
 import { formatPrice } from "@/lib/market/format";
+import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
 interface PositionsResponse {
   account: AccountKey;
@@ -38,31 +38,13 @@ function PositionRow({ position }: { position: OpenPosition }) {
   );
 }
 
+async function fetchPositions(): Promise<PositionsResponse> {
+  const res = await fetch("/api/positions");
+  return res.json();
+}
+
 export function PositionsPanel() {
-  const [data, setData] = useState<PositionsResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    function poll() {
-      fetch("/api/positions")
-        .then((res) => res.json())
-        .then((json: PositionsResponse) => {
-          if (!cancelled) setData(json);
-        })
-        .catch(() => {
-          // Best-effort; keep showing the last known snapshot rather than flashing an error.
-        });
-    }
-
-    poll();
-    const pollId = setInterval(poll, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(pollId);
-    };
-  }, []);
+  const { data } = usePolledResource("positions", fetchPositions, POLL_INTERVAL_MS);
 
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
