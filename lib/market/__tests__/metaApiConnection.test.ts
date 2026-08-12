@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isAccountConfigured } from "../metaApiConnection";
 
 const ENV_VARS = ["METAAPI_TOKEN", "METAAPI_ACCOUNT_ID", "METAAPI_DEMO_TOKEN", "METAAPI_DEMO_ACCOUNT_ID"];
@@ -8,6 +8,14 @@ const ENV_VARS = ["METAAPI_TOKEN", "METAAPI_ACCOUNT_ID", "METAAPI_DEMO_TOKEN", "
 // accounts instead, per the project's existing convention (see README's "Manual
 // execution" section).
 describe("isAccountConfigured", () => {
+  // Cleared both before AND after each test -- vitest.setup.ts loads the real
+  // .env.local globally now (needed for lib/account/__tests__/sessions.test.ts's own
+  // real-database tests), which would otherwise leak this repo's real MetaApi
+  // credentials into the "nothing set" case below.
+  beforeEach(() => {
+    for (const name of ENV_VARS) delete process.env[name];
+  });
+
   afterEach(() => {
     for (const name of ENV_VARS) delete process.env[name];
   });

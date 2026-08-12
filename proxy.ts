@@ -17,21 +17,38 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 /**
- * Single-operator app, no login system -- this is the whole access control story. Before
- * this, every trading-control route (kill switch, engine mode incl. enabling LIVE,
- * signal execution) had zero authentication, and the LIVE confirmation phrase is
- * hardcoded in this (public) repo, so it was never real protection against anyone who
- * could just reach the deployed URL. HTTP Basic Auth (rather than a custom header/token)
- * is deliberate: the browser caches the credential per-origin and auto-attaches it to
- * every subsequent request -- including EventSource, which can't set custom headers at
- * all -- so nothing in the dashboard's existing fetch/EventSource calls needed to change.
+ * Gates the OPERATOR's own private trading surface (/dashboard, /chat, /journal, and
+ * every existing /api/* trading-control route) behind a single shared HTTP Basic Auth
+ * password -- this app has no per-user login system for that surface, by design. Before
+ * this gate existed, every trading-control route (kill switch, engine mode incl.
+ * enabling LIVE, signal execution) had zero authentication, and the LIVE confirmation
+ * phrase is hardcoded in this (public) repo, so it was never real protection against
+ * anyone who could just reach the deployed URL. HTTP Basic Auth (rather than a custom
+ * header/token) is deliberate: the browser caches the credential per-origin and
+ * auto-attaches it to every subsequent request -- including EventSource, which can't set
+ * custom headers at all -- so nothing in the dashboard's existing fetch/EventSource calls
+ * needed to change.
+ *
+ * `/account` and `/api/account/*` are a SEPARATE, genuinely public surface -- the Stage 1
+ * customer-accounts system (see lib/account/), with its own real per-user login (email/
+ * password + Google, DB-backed sessions). It's exempted from the operator's own Basic
+ * Auth gate below on purpose: a future customer signing up has nothing to do with, and
+ * must never need, the operator's own dashboard password.
  *
  * Named `proxy` (not `middleware`) -- Next.js 16 deprecated and renamed the file
  * convention; the file must be proxy.ts at the project root.
  */
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  if (pathname.startsWith("/_next/") || pathname.startsWith("/api/webhooks/tradingview") || PUBLIC_PATHS.has(pathname)) {
+  if (
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/api/webhooks/tradingview") ||
+    pathname === "/account" ||
+    pathname.startsWith("/account/") ||
+    pathname === "/api/account" ||
+    pathname.startsWith("/api/account/") ||
+    PUBLIC_PATHS.has(pathname)
+  ) {
     return NextResponse.next();
   }
 

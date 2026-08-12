@@ -139,9 +139,44 @@ The companion mobile app (`forex-ai-mobile`, a separate Expo Router project) tal
 | `ANTHROPIC_API_KEY` | unset | Powers `/api/chat`. Without it, that route returns 502; nothing else is affected. |
 | `CHAT_HISTORY_FILE` | `.chat-history.json` | Where the shared conversation persists. Must be on a persistent volume or history resets on redeploy (same caveat as `DEVICE_STORE_FILE`). |
 
+### Customer accounts (Stage 1 of a paid API platform)
+
+`/account` is a genuinely separate, public product surface — real per-user sign-up/sign-in for customers of a future **Forex AI API**, with nothing to do with `/dashboard`'s own operator-only `DASHBOARD_ACCESS_PASSWORD` (see "Dashboard access" above) or the trading engine itself. `proxy.ts` exempts `/account/*` and `/api/account/*` from that Basic Auth gate on purpose — a customer signing up must never need the operator's dashboard password, and vice versa.
+
+This is the first piece of database persistence this app has ever had (`lib/db/`, Postgres via Drizzle — everything else, e.g. signals and the execution ledger, is still in-memory/file-based, see "Not built yet" below). Accounts support email+password (hashed with `bcryptjs`) and "Continue with Google" (`google-auth-library`, OAuth Authorization Code flow), with a DB-backed session table (`lib/account/sessions.ts`) — the raw session token lives only in an `httpOnly`/`secure`/`sameSite=lax` cookie, never a JWT, so a session can be revoked by deleting one row.
+
+- `POST /api/account/signup`, `/signin`, `/signout` — email+password auth. Sign-up auto-signs-in immediately (unverified) and best-effort sends a verification email; a failed send never blocks sign-up.
+- `GET /api/account/verify-email?token=...`, `POST /api/account/request-password-reset`, `/reset-password` — link-based flows, both token tables have real expiries (24h / 1h) and single-use semantics.
+- `GET /api/account/google/start`, `/google/callback` — redirects to Google, verifies the returned ID token server-side (`OAuth2Client.verifyIdToken`), links by Google's `sub` claim first (falling back to matching an existing email) rather than trusting email alone as identity.
+- `/account/signup`, `/account/signin`, `/account/verify-email`, `/account/reset-password`, `/account` — the matching pages; `/account` itself is a placeholder "signed in as" screen today, becomes the real customer portal (API keys, usage, billing) in later stages.
+
+Sign-in returns the same generic error for "no such user," "wrong password," and "Google-only account, no password set" — and the password-reset request endpoint always returns the same generic success message — both deliberately, to avoid leaking which emails have accounts.
+
+**Local dev database**: this app has no other database, so there's no `docker-compose` Postgres to spin up — it points at the same Railway Postgres the deployed app uses, reached locally through Railway's own tunnel (not a public proxy):
+
+```bash
+railway connect Postgres --tunnel-only -P 5432
+```
+
+Leave that running in its own terminal, then set `DATABASE_URL` in `.env.local` to the same connection string Railway uses but with the host swapped to `localhost:5432`. Migrations are explicit, never boot-triggered (same "nothing auto-enables" philosophy as `TRADING_KILL_SWITCH`):
+
+```bash
+npm run db:generate   # after editing lib/db/schema.ts — writes drizzle/*.sql, commit these
+npm run db:migrate    # applies pending migrations to DATABASE_URL
+```
+
+**Config** (`.env.local`):
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `DATABASE_URL` | unset | Postgres connection string. Required for any `/account`/`/api/account` route to work. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URI` | unset | From a Google Cloud OAuth Client (console.cloud.google.com → APIs & Services → Credentials). Without these, email/password auth still works fine — only "Continue with Google" is affected. |
+| `RESEND_API_KEY` / `EMAIL_FROM_ADDRESS` | unset | Sends verification/reset emails via a single Resend `fetch` call. Without these, accounts still work — the email send just fails (logged, never thrown), so verification links have to be pulled from the DB directly. |
+| `APP_BASE_URL` | request origin | Base URL used to build absolute links in those emails. |
+
 ### Not built yet
 
-Auth, subscriptions, a backtesting engine, and full database persistence (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens are file-persisted) are intentionally out of scope for this pass.
+API tokens, rate limiting, usage tracking, Paystack subscriptions/billing, a public marketing site and docs, mobile parity for accounts, a backtesting engine, and full database persistence for the trading engine itself (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens are file-persisted and now customer accounts are DB-persisted, see "Customer accounts" above) are intentionally out of scope for this pass.
 
 ## Getting Started
 
