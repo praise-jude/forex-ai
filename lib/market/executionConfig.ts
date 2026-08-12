@@ -11,6 +11,9 @@ export interface ExecutionConfig {
   maxConsecutiveLosses: number;
   /** How long new execution is paused for once maxConsecutiveLosses is hit. */
   cooldownMinutes: number;
+  /** See riskManager.ts's checkSpread -- a fraction of the signal's own stop distance,
+   * not a flat pip count, so it scales per instrument. */
+  maxSpreadFractionOfStop: number;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -33,6 +36,9 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     maxTradesPerDay: envNumber(`${prefix}MAX_TRADES_PER_DAY`, 5),
     maxConsecutiveLosses: envNumber(`${prefix}MAX_CONSECUTIVE_LOSSES`, 3),
     cooldownMinutes: envNumber(`${prefix}COOLDOWN_MINUTES`, 30),
+    // 15% of stop distance is deliberately generous -- catches a genuinely blown-out
+    // spread (news spike, market open, weekend-gap-adjacent quote), not normal noise.
+    maxSpreadFractionOfStop: envNumber(`${prefix}MAX_SPREAD_FRACTION_OF_STOP`, 0.15),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

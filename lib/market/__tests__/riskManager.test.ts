@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   checkPriceDrift,
   checkRiskLimits,
+  checkSpread,
   isDailyLossBreached,
   isEnvKillSwitchActive,
   isKillSwitchActive,
   STALE_PRICE_FRACTION_OF_STOP,
   type PriceDriftInput,
   type RiskCheckInput,
+  type SpreadInput,
 } from "../riskManager";
 
 function buildInput(overrides: Partial<RiskCheckInput> = {}): RiskCheckInput {
@@ -123,6 +125,48 @@ describe("checkPriceDrift", () => {
     const tolerance = STALE_PRICE_FRACTION_OF_STOP * stopDistance;
     expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance })).allowed).toBe(true);
     expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance + 0.00001 })).allowed).toBe(false);
+  });
+});
+
+function buildSpreadInput(overrides: Partial<SpreadInput> = {}): SpreadInput {
+  return {
+    entry: 1.1,
+    stopLoss: 1.09, // 0.01 stop distance
+    currentBid: 1.0999,
+    currentAsk: 1.1001, // 0.0002 spread
+    maxSpreadFractionOfStop: 0.15,
+    ...overrides,
+  };
+}
+
+describe("checkSpread", () => {
+  it("allows execution when the spread is well within tolerance", () => {
+    expect(checkSpread(buildSpreadInput())).toEqual({ allowed: true });
+  });
+
+  it("allows execution when no live price has been seen yet (fails open)", () => {
+    expect(checkSpread(buildSpreadInput({ currentBid: undefined, currentAsk: undefined }))).toEqual({ allowed: true });
+  });
+
+  it("allows a spread comfortably inside tolerance and blocks one comfortably past it", () => {
+    const bid = 1.1;
+    // stop distance 0.01, 15% tolerance = 0.0015 -- well inside vs well past that.
+    expect(checkSpread(buildSpreadInput({ currentBid: bid, currentAsk: bid + 0.001 })).allowed).toBe(true);
+    const result = checkSpread(buildSpreadInput({ currentBid: bid, currentAsk: bid + 0.002 }));
+    expect(result.allowed).toBe(false);
+    expect((result as { code: string }).code).toBe("wide_spread");
+  });
+
+  it("scales the tolerance with the signal's own stop distance, not a flat pip count", () => {
+    // Same absolute spread (0.005), tight stop blocks it, wide stop allows it.
+    const tightStop = buildSpreadInput({ entry: 1.1, stopLoss: 1.099, currentBid: 1.1, currentAsk: 1.105 }); // 0.001 stop
+    const wideStop = buildSpreadInput({ entry: 1.1, stopLoss: 1.05, currentBid: 1.1, currentAsk: 1.105 }); // 0.05 stop
+    expect(checkSpread(tightStop).allowed).toBe(false);
+    expect(checkSpread(wideStop).allowed).toBe(true);
+  });
+
+  it("allows when entry and stop loss are equal (degenerate case handled elsewhere, not here)", () => {
+    expect(checkSpread(buildSpreadInput({ entry: 1.1, stopLoss: 1.1 })).allowed).toBe(true);
   });
 });
 

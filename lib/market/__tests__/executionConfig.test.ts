@@ -8,6 +8,7 @@ const ENV_VARS = [
   "MAX_TRADES_PER_DAY",
   "MAX_CONSECUTIVE_LOSSES",
   "COOLDOWN_MINUTES",
+  "MAX_SPREAD_FRACTION_OF_STOP",
   "KILL_SWITCH_FILE",
   "DEMO_RISK_PER_TRADE_PCT",
   "DEMO_MAX_CONCURRENT_POSITIONS",
@@ -15,6 +16,7 @@ const ENV_VARS = [
   "DEMO_MAX_TRADES_PER_DAY",
   "DEMO_MAX_CONSECUTIVE_LOSSES",
   "DEMO_COOLDOWN_MINUTES",
+  "DEMO_MAX_SPREAD_FRACTION_OF_STOP",
   "KILL_SWITCH_FILE_DEMO",
 ];
 
@@ -31,6 +33,7 @@ describe("loadExecutionConfig", () => {
       maxTradesPerDay: 5,
       maxConsecutiveLosses: 3,
       cooldownMinutes: 30,
+      maxSpreadFractionOfStop: 0.15,
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
@@ -40,8 +43,15 @@ describe("loadExecutionConfig", () => {
       maxTradesPerDay: 5,
       maxConsecutiveLosses: 3,
       cooldownMinutes: 30,
+      maxSpreadFractionOfStop: 0.15,
       killSwitchFile: ".trading-paused-demo",
     });
+  });
+
+  it("reads the spread tolerance independently per account too", () => {
+    process.env.MAX_SPREAD_FRACTION_OF_STOP = "0.3";
+    expect(loadExecutionConfig("live").maxSpreadFractionOfStop).toBe(0.3);
+    expect(loadExecutionConfig("demo").maxSpreadFractionOfStop).toBe(0.15); // falls back to the shared default
   });
 
   it("reads DEMO_-prefixed vars independently of the live ones", () => {

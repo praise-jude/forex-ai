@@ -15,7 +15,15 @@ export interface RiskCheckInput {
   maxDailyLossPct: number;
 }
 
-export type RiskBlockCode = "kill_switch" | "halted" | "cooldown" | "max_positions" | "max_trades" | "daily_loss" | "stale_price";
+export type RiskBlockCode =
+  | "kill_switch"
+  | "halted"
+  | "cooldown"
+  | "max_positions"
+  | "max_trades"
+  | "daily_loss"
+  | "stale_price"
+  | "wide_spread";
 
 function computeDrawdownPct(startOfDayEquity: number, currentEquity: number): number {
   if (startOfDayEquity <= 0) return 0;
@@ -118,6 +126,43 @@ export function checkPriceDrift(input: PriceDriftInput): RiskCheckResult {
       allowed: false,
       code: "stale_price",
       reason: `price has moved ${drift.toFixed(5)} since the signal was generated (tolerance ${tolerance.toFixed(5)})`,
+    };
+  }
+  return { allowed: true };
+}
+
+export interface SpreadInput {
+  entry: number;
+  stopLoss: number;
+  /** Current bid/ask, if a live price has been seen for this pair yet. */
+  currentBid?: number;
+  currentAsk?: number;
+  maxSpreadFractionOfStop: number;
+}
+
+/**
+ * Blocks execution when the current spread is wide relative to the signal's own stop
+ * distance -- e.g. a news spike, market open, or weekend-gap-adjacent quote. A fraction
+ * of stop-distance, not a flat pip count, for the same reason checkPriceDrift is: a flat
+ * pip threshold doesn't work across pairs with very different pip definitions (0.0001
+ * for EUR/USD vs 1 for USOIL vs 0.01 for a several-thousand-dollar BTC/USD), but "spread
+ * relative to this specific signal's own stop distance" scales naturally per instrument.
+ * Fails open (allows execution) when no live price has been seen yet, matching
+ * checkPriceDrift's own posture -- other checks already guard against acting on no data.
+ */
+export function checkSpread(input: SpreadInput): RiskCheckResult {
+  if (input.currentBid === undefined || input.currentAsk === undefined) return { allowed: true };
+
+  const stopDistance = Math.abs(input.entry - input.stopLoss);
+  if (stopDistance <= 0) return { allowed: true };
+
+  const spread = input.currentAsk - input.currentBid;
+  const tolerance = input.maxSpreadFractionOfStop * stopDistance;
+  if (spread > tolerance) {
+    return {
+      allowed: false,
+      code: "wide_spread",
+      reason: `spread (${spread.toFixed(5)}) exceeds ${(input.maxSpreadFractionOfStop * 100).toFixed(0)}% of the stop distance (${stopDistance.toFixed(5)})`,
     };
   }
   return { allowed: true };

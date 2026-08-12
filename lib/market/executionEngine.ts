@@ -3,7 +3,7 @@ import type { AccountKey, ExecutedTrade, Signal } from "./types";
 import { positionStore } from "./positionStore";
 import { priceStore } from "./priceStore";
 import { riskState } from "./riskState";
-import { checkPriceDrift, checkRiskLimits, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
+import { checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize } from "./positionSizing";
 import {
@@ -99,6 +99,21 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   if (!priceDriftCheck.allowed) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${priceDriftCheck.reason}`);
     return { status: "blocked", code: priceDriftCheck.code, reason: priceDriftCheck.reason };
+  }
+
+  // Same currentPrice already fetched above for the drift check -- a wide spread most
+  // often shows up exactly around the same news-spike/market-open/gap conditions drift
+  // does, but is a genuinely different failure mode (execution cost, not stale data).
+  const spreadCheck = checkSpread({
+    entry: signal.entry,
+    stopLoss: signal.stopLoss,
+    currentBid: currentPrice?.bid,
+    currentAsk: currentPrice?.ask,
+    maxSpreadFractionOfStop: config.maxSpreadFractionOfStop,
+  });
+  if (!spreadCheck.allowed) {
+    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${spreadCheck.reason}`);
+    return { status: "blocked", code: spreadCheck.code, reason: spreadCheck.reason };
   }
 
   const spec = getSymbolSpecification(signal.pair, accountKey);
