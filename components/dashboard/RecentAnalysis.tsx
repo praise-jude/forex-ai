@@ -44,7 +44,7 @@ export function RecentAnalysis({ predictions }: { predictions: PredictionUpdate[
                   <DirectionBadge tone={HEADLINE_TONE[headline]} label={headline} className="text-[11px]" />
                 </div>
                 <div className="mt-1 text-[11px] text-zinc-500">{REGIME_LABEL[update.regime]}</div>
-                {detail && <p className="mt-1 line-clamp-2 text-[11px] text-zinc-400">{detail}</p>}
+                {detail && <p className="mt-1 text-[11px] text-zinc-400">{detail}</p>}
               </li>
             );
           })}

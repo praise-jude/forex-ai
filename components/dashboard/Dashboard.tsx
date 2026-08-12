@@ -32,6 +32,12 @@ function buildPredictionMap(updates: PredictionUpdate[]): Partial<Record<Pair, P
   return map;
 }
 
+const SELECTED_PAIR_STORAGE_KEY = "forex-ai:selected-pair";
+
+function isPair(value: string | null): value is Pair {
+  return PAIRS.includes(value as Pair);
+}
+
 export function Dashboard() {
   const [selectedPair, setSelectedPair] = useState<Pair>(PAIRS[0]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
@@ -82,6 +88,28 @@ export function Dashboard() {
   }, []);
 
   const voice = useVoiceAssistant({ statuses: cardStatuses, executeSignal, selectedPair, selectedTimeframe });
+
+  // Restored after mount, not read during the initial render -- reading localStorage
+  // synchronously in useState's initializer would mismatch the server-rendered HTML
+  // (which always starts at PAIRS[0], since localStorage doesn't exist server-side)
+  // and trigger a hydration error.
+  //
+  // Persisting is deliberately NOT a second effect reacting to every selectedPair
+  // change (see selectPair below) -- under React StrictMode's dev-only double-invoke,
+  // a "persist on change" effect fires with the pre-restore value in the same pass
+  // this restore effect runs, overwriting the just-restored value with the SSR default
+  // before it ever reaches the screen. Writing only from the real user-selection path
+  // (selectPair) has nothing to race against.
+  useEffect(() => {
+    const stored = window.localStorage.getItem(SELECTED_PAIR_STORAGE_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- client-only restore from localStorage, not state derivable from render.
+    if (isPair(stored)) setSelectedPair(stored);
+  }, []);
+
+  const selectPair = useCallback((pair: Pair) => {
+    setSelectedPair(pair);
+    window.localStorage.setItem(SELECTED_PAIR_STORAGE_KEY, pair);
+  }, []);
 
   const selectedPrediction = predictions[selectedPair]?.[selectedTimeframe] ?? null;
 
@@ -153,7 +181,7 @@ export function Dashboard() {
       <AutopilotStatus predictions={flatPredictions} signals={signals} marketsMonitored={PAIRS.length} />
 
       <div className="grid gap-4 lg:grid-cols-[220px_1fr_260px]">
-        <Watchlist entries={watchlist} selectedPair={selectedPair} onSelect={setSelectedPair} />
+        <Watchlist entries={watchlist} selectedPair={selectedPair} onSelect={selectPair} />
 
         <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
           <div className="mb-2 flex items-center justify-between">
