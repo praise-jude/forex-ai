@@ -113,6 +113,19 @@ export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
 export type SignalSource = "smc" | "tradingview";
 
+/** The current candle's classified market condition -- see marketRegime.ts for how
+ * this is derived (existing ADX/ATR/EMA reads only, no new indicator). Explanatory
+ * context only; never gates or alters a trade decision. */
+export type MarketRegime =
+  | "news_driven"
+  | "breakout"
+  | "strong_uptrend"
+  | "strong_downtrend"
+  | "high_volatility"
+  | "low_volatility"
+  | "consolidation"
+  | "range";
+
 export interface Signal {
   id: string;
   source: SignalSource;
@@ -199,7 +212,7 @@ export type StreamEvent =
   | { type: "price"; pair: Pair; bid: number; ask: number; time: number }
   | { type: "candle"; pair: Pair; timeframe: Timeframe; candle: Candle }
   | { type: "signal"; signal: Signal }
-  | { type: "prediction"; pair: Pair; timeframe: Timeframe; evaluation: SignalEvaluation; time: number };
+  | { type: "prediction"; pair: Pair; timeframe: Timeframe; evaluation: SignalEvaluation; time: number; regime: MarketRegime };
 
 /** Latest per-pair evaluation result -- overwritten every closed M15 candle, no
  * history kept (see predictionStore.ts). Distinct from Signal: exists even when no
@@ -209,6 +222,10 @@ export interface PredictionUpdate {
   timeframe: Timeframe;
   evaluation: SignalEvaluation;
   time: number;
+  /** Computed independently of `evaluation` (see marketRegime.ts) -- shown for every
+   * update, not just a qualifying signal, so a NO TRADE reads with real context (e.g.
+   * "SMC found a setup, but the market is ranging") instead of a bare gate reason. */
+  regime: MarketRegime;
 }
 
 // --- Execution ---

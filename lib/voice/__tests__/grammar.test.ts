@@ -3,6 +3,7 @@ import {
   buildConfirmPhrase,
   buildCooldownAnnouncement,
   buildDailyLossAnnouncement,
+  buildPredictionAnnouncement,
   buildResultAnnouncement,
   buildSignalAnnouncement,
   parseVoiceCommand,
@@ -26,6 +27,20 @@ describe("buildSignalAnnouncement", () => {
     expect(text).toContain("Euro against the US Dollar");
     expect(text).toContain("risk is 1 percent");
     expect(text).toContain("Would you like me to place this trade?");
+  });
+});
+
+describe("buildPredictionAnnouncement", () => {
+  it("mentions the market regime when announcing a no_trade update", () => {
+    const text = buildPredictionAnnouncement({
+      pair: "EUR/USD",
+      timeframe: "15m",
+      evaluation: { status: "no_trade", reason: { code: "no_setup" } },
+      time: Date.now(),
+      regime: "range",
+    });
+    expect(text).toMatch(/market regime: range/i);
+    expect(text).toMatch(/no qualifying setup/i);
   });
 });
 

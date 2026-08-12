@@ -103,7 +103,7 @@ export function buildPredictionAnnouncement(update: PredictionUpdate): string {
   const timeframeWord = TIMEFRAME_SPOKEN[update.timeframe];
 
   if (update.evaluation.status === "no_trade") {
-    return `Jude, ${pairName} is now no trade on the ${timeframeWord} timeframe. ${describeNoTradeReason(update.evaluation.reason)}`;
+    return `Jude, ${pairName} is now no trade on the ${timeframeWord} timeframe. ${describeNoTradeReason(update.evaluation.reason, update.regime)}`;
   }
 
   const { signal } = update.evaluation;

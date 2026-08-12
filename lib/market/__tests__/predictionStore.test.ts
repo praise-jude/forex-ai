@@ -9,6 +9,7 @@ function buildUpdate(overrides: Partial<PredictionUpdate> = {}): PredictionUpdat
     timeframe: "15m",
     evaluation: { status: "signal", signal: buildSignal({ pair: "GBP/USD" }) },
     time: Date.now(),
+    regime: "strong_uptrend",
     ...overrides,
   };
 }

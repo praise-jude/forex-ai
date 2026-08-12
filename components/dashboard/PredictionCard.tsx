@@ -2,11 +2,12 @@
 
 import type { NoTradeReason, PredictionUpdate } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline, type PredictionHeadline } from "@/lib/market/predictionLabel";
-import { describeNoTradeReason } from "@/lib/market/noTradeReason";
+import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
 import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 import { CONFLUENCE_LABEL } from "./SignalsPanel";
 import { DirectionBadge, type BadgeTone } from "./DirectionBadge";
 import { SignerBBreakdown } from "./SignerBBreakdown";
+import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
 
 const HEADLINE_TONE: Record<PredictionHeadline, BadgeTone> = {
   "STRONG BUY": "positive",
@@ -55,7 +56,10 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
   return (
     <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <div className="flex items-center justify-between">
-        <DirectionBadge tone={HEADLINE_TONE[headline]} label={headline} />
+        <div className="flex items-center gap-2">
+          <DirectionBadge tone={HEADLINE_TONE[headline]} label={headline} />
+          <span className="rounded-full bg-zinc-700/60 px-2 py-0.5 text-[11px] text-zinc-400">{REGIME_LABEL[update.regime]}</span>
+        </div>
         {update.evaluation.status === "signal" && (
           <span className="text-sm font-semibold text-zinc-200">{update.evaluation.signal.confidence.toFixed(0)}% confidence</span>
         )}
@@ -84,6 +88,9 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
           <div className="mt-2 border-t border-white/10 pt-2">
             <SignerBBreakdown signal={update.evaluation.signal} />
           </div>
+          <div className="mt-2 border-t border-white/10 pt-2">
+            <SetupQualityBreakdown signal={update.evaluation.signal} regime={update.regime} />
+          </div>
         </>
       ) : (
         <>
@@ -96,7 +103,7 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
               </span>
             )}
           </div>
-          <p className="mt-1.5 text-xs text-zinc-400">{describeNoTradeReason(update.evaluation.reason)}</p>
+          <p className="mt-1.5 text-xs text-zinc-400">{describeNoTradeReason(update.evaluation.reason, update.regime)}</p>
         </>
       )}
     </div>

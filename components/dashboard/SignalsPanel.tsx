@@ -1,11 +1,13 @@
 "use client";
 
-import type { Confluence, Signal } from "@/lib/market/types";
+import type { Confluence, MarketRegime, Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
 import type { CardStatus } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
+import { REGIME_LABEL } from "@/lib/market/noTradeReason";
 import { TradingRobot } from "./TradingRobot";
 import { DirectionBadge, directionTone } from "./DirectionBadge";
 import { SignerBBreakdown } from "./SignerBBreakdown";
+import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
 
 // Exported for reuse by PredictionCard.tsx -- one place a confluence tag's display
 // name is defined, not duplicated between the two components that show them.
@@ -92,13 +94,16 @@ function ExecuteControl({ signal, status, onExecute }: { signal: Signal; status:
   );
 }
 
-function SignalCard({ signal, status, onExecute }: { signal: Signal; status: CardStatus; onExecute: () => void }) {
+function SignalCard({ signal, status, onExecute, regime }: { signal: Signal; status: CardStatus; onExecute: () => void; regime: MarketRegime | undefined }) {
   return (
     <li className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <div className="flex items-center justify-between">
         <TradingRobot direction={signal.direction} />
         <div className="text-right">
-          <div className="font-semibold text-zinc-100">{signal.pair}</div>
+          <div className="flex items-center justify-end gap-1.5">
+            <div className="font-semibold text-zinc-100">{signal.pair}</div>
+            {regime && <span className="rounded-full bg-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-400">{REGIME_LABEL[regime]}</span>}
+          </div>
           <div className="mt-1">
             <DirectionBadge
               tone={directionTone(signal.direction)}
@@ -145,6 +150,15 @@ function SignalCard({ signal, status, onExecute }: { signal: Signal; status: Car
           <SignerBBreakdown signal={signal} />
         </div>
       )}
+      {/* TradingView-sourced signals carry hardcoded placeholder scores (see
+          tradingViewWebhook.ts), never real SMC-derived ones -- a quality breakdown off
+          those would fabricate meaning that isn't there, same reasoning as the
+          SignerBBreakdown exclusion above. */}
+      {signal.source !== "tradingview" && regime && (
+        <div className="mt-2 border-t border-white/10 pt-2">
+          <SetupQualityBreakdown signal={signal} regime={regime} />
+        </div>
+      )}
       <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
         <span>
           R:R {signal.riskReward.toFixed(1)} &middot; {signal.session}
@@ -160,10 +174,16 @@ export function SignalsPanel({
   signals,
   statuses,
   onExecute,
+  predictions,
 }: {
   signals: Signal[];
   statuses: Record<string, CardStatus>;
   onExecute: (signal: Signal) => void;
+  /** Current per-pair/timeframe regime read, same map Dashboard.tsx already keeps for
+   * PredictionCard.tsx -- reflects the market's CURRENT regime, not necessarily the
+   * regime at the moment this (possibly older) signal fired. Optional so callers that
+   * don't track predictions (none currently) can still render the panel. */
+  predictions?: Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>>;
 }) {
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
@@ -178,6 +198,7 @@ export function SignalsPanel({
               signal={signal}
               status={statuses[signal.id] ?? { state: "idle" }}
               onExecute={() => onExecute(signal)}
+              regime={predictions?.[signal.pair]?.[signal.timeframe]?.regime}
             />
           ))}
         </ul>

@@ -23,6 +23,13 @@ import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
 import { sendNotification } from "./pushNotifier";
+import { calculateAdx } from "./indicators/adx";
+import { calculateAtr } from "./indicators/atr";
+import { detectMarketRegime } from "./marketRegime";
+import { checkNews } from "./newsFilter";
+import { scoreSetupQuality } from "./setupQualityScore";
+import { tradeJournal, type JournalCloseReason } from "./tradeJournal";
+import { positionStore } from "./positionStore";
 
 // Three independent signal engines run concurrently per pair, one per timeframe --
 // each closed candle on any of these is evaluated on its own, sharing the same
@@ -98,9 +105,37 @@ class MarketSyncListener extends SynchronizationListener {
         };
         const evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
         const time = Date.now();
-        predictionStore.set(pair, timeframe, { pair, timeframe, evaluation, time });
-        eventBus.publish({ type: "prediction", pair, timeframe, evaluation, time });
-        if (evaluation.status === "signal") publishSignal(evaluation.signal);
+        // Computed independently of evaluateSignal (see marketRegime.ts's own doc
+        // comment) -- reuses the exact same closed-candle series and news check, never
+        // gates or alters `evaluation` itself, just explains the backdrop it happened
+        // against.
+        const lastClosed = priorSeries[priorSeries.length - 1];
+        const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
+        predictionStore.set(pair, timeframe, { pair, timeframe, evaluation, time, regime });
+        eventBus.publish({ type: "prediction", pair, timeframe, evaluation, time, regime });
+        if (evaluation.status === "signal") {
+          publishSignal(evaluation.signal);
+          // Snapshot the decision context now, while it's still real -- signalStore
+          // itself prunes after 4 hours (far shorter than a trade can stay open), which
+          // is exactly why the trade journal can't just read it back from there later.
+          const signal = evaluation.signal;
+          tradeJournal.recordSignalContext({
+            signalId: signal.id,
+            pair: signal.pair,
+            timeframe: signal.timeframe,
+            direction: signal.direction,
+            regime,
+            setupQuality: scoreSetupQuality(signal, regime),
+            confidence: signal.confidence,
+            signerBDirection: signal.signerBDirection,
+            signerBConfidence: signal.signerBConfidence,
+            adx: signal.adx,
+            rsi: signal.rsi,
+            newsStatus: signal.newsStatus,
+            session: signal.session,
+            createdAt: signal.createdAt,
+          });
+        }
       }
     }
   }
@@ -132,6 +167,12 @@ class MarketSyncListener extends SynchronizationListener {
 
     const pair = deal.symbol ? pairForBrokerSymbol(deal.symbol) : undefined;
     if (pair) void sendNotification(closedPositionNotification(pair, deal, this.accountKey));
+    // Sibling recording action alongside the notification above -- never alters the
+    // risk-state logic below it. Only ever produces a journal entry for a close this
+    // app itself opened (a matching ExecutedTrade must exist); a manually opened and
+    // closed position has no signal/entry/stop-loss to derive R from, so it's left out
+    // rather than guessed.
+    if (pair) recordJournalOutcome(pair, deal, this.accountKey);
 
     // Captured before recordTradeClosed mutates it in place -- the only way to tell
     // "cooldown just tripped on this deal" from "cooldown was already active" below.
@@ -156,6 +197,41 @@ class MarketSyncListener extends SynchronizationListener {
       });
     }
   }
+}
+
+function journalCloseReasonFor(deal: MetatraderDeal): JournalCloseReason {
+  if (deal.reason === "DEAL_REASON_SL") return "stop_loss";
+  if (deal.reason === "DEAL_REASON_TP") return "take_profit";
+  if (deal.reason === "DEAL_REASON_CLIENT" || deal.reason === "DEAL_REASON_MOBILE" || deal.reason === "DEAL_REASON_WEB" || deal.reason === "DEAL_REASON_EXPERT") {
+    return "manual";
+  }
+  return "other";
+}
+
+/** Joins a closing deal back to the ExecutedTrade this app itself opened (via
+ * positionStore's brokerPositionId <-> signalId link), then hands the real entry/
+ * stop-loss/lots off to tradeJournal.recordOutcome for its own R-multiple math --
+ * never recomputed here, so there's only one place that math lives. */
+function recordJournalOutcome(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey): void {
+  if (deal.positionId === undefined || deal.price === undefined) return;
+  const trade = positionStore.all().find((t) => t.account === accountKey && t.brokerPositionId === deal.positionId);
+  if (!trade) return;
+
+  tradeJournal.recordOutcome({
+    dealId: String(deal.id),
+    signalId: trade.signalId,
+    account: accountKey,
+    pair,
+    direction: trade.direction,
+    entryPrice: trade.filledEntry ?? trade.requestedEntry,
+    stopLoss: trade.stopLoss,
+    lots: trade.requestedLots,
+    contractSize: getSymbolSpecification(pair, accountKey)?.contractSize,
+    exitPrice: deal.price,
+    profit: deal.profit,
+    reason: journalCloseReasonFor(deal),
+    closedAt: deal.time.getTime(),
+  });
 }
 
 function closedPositionNotification(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey) {

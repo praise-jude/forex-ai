@@ -20,6 +20,9 @@ export default function DashboardPage() {
             <Link href="/chat" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
               JUDE Chat
             </Link>
+            <Link href="/journal" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
+              Journal
+            </Link>
             <ConnectionStatus />
             <KillSwitchControl />
           </div>

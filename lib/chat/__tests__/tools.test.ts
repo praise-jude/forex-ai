@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildTools, type ToolContext } from "../tools";
 import { signalStore } from "../../market/signalStore";
+import { predictionStore } from "../../market/predictionStore";
 import { resetEngineModeForTests } from "../../market/engineMode";
 import { buildSignal } from "../../market/__tests__/fixtures";
 import { buildSignalAnnouncement } from "../../voice/grammar";
@@ -174,6 +175,54 @@ describe("chat tools -- confirm-phrase safety gates", () => {
 
       const spoken = buildSignalAnnouncement(signal, 1);
       expect(spoken).toContain(`${Math.round(signal.confidence)} percent`);
+    });
+
+    it("attaches the current regime and a real setup quality breakdown when a matching prediction exists", async () => {
+      const signal = buildSignal({ id: "regime-test-1", pair: "EUR/USD", timeframe: "15m" });
+      signalStore.add(signal);
+      predictionStore.set("EUR/USD", "15m", {
+        pair: "EUR/USD",
+        timeframe: "15m",
+        evaluation: { status: "signal", signal },
+        time: Date.now(),
+        regime: "strong_uptrend",
+      });
+
+      const tools = buildTools(ctxWith("just checking"));
+      const get_signals = findTool(tools, "get_signals");
+      const raw = await get_signals.run({});
+      const entries = JSON.parse(raw as string) as Array<Record<string, unknown>>;
+      const entry = entries.find((s) => s.id === signal.id);
+
+      expect(entry?.regime).toBe("strong_uptrend");
+      expect(entry?.setupQuality).toMatchObject({ total: expect.any(Number) });
+    });
+
+    it("honestly reports regime/setupQuality as unavailable rather than guessing when no matching prediction exists", async () => {
+      const signal = buildSignal({ id: "regime-test-2", pair: "USD/JPY", timeframe: "30m" });
+      signalStore.add(signal);
+
+      const tools = buildTools(ctxWith("just checking"));
+      const get_signals = findTool(tools, "get_signals");
+      const raw = await get_signals.run({});
+      const entries = JSON.parse(raw as string) as Array<Record<string, unknown>>;
+      const entry = entries.find((s) => s.id === signal.id);
+
+      expect(entry?.regime).toBe("unavailable");
+      expect(entry?.setupQuality).toBe("unavailable");
+    });
+  });
+
+  describe("get_trade_journal", () => {
+    it("reports an honest empty-history result rather than a fabricated win rate", async () => {
+      const tools = buildTools(ctxWith("how have my trades been doing"));
+      const get_trade_journal = findTool(tools, "get_trade_journal");
+      const raw = await get_trade_journal.run({});
+      const result = JSON.parse(raw as string) as { stats: { count: number; winRate: number; averageR: number | null } };
+
+      expect(result.stats.count).toBe(0);
+      expect(result.stats.winRate).toBe(0);
+      expect(result.stats.averageR).toBeNull();
     });
   });
 });

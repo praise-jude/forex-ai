@@ -1,4 +1,18 @@
-import type { Confluence, NoTradeReason } from "./types";
+import type { Confluence, MarketRegime, NoTradeReason } from "./types";
+
+// Plain-language labels for MarketRegime -- see marketRegime.ts for how each is
+// derived (existing ADX/ATR/EMA reads only). Exported so the dashboard's own regime
+// badge (PredictionCard.tsx) uses this exact wording, not a second hand-written copy.
+export const REGIME_LABEL: Record<MarketRegime, string> = {
+  news_driven: "News-driven",
+  breakout: "Breakout",
+  strong_uptrend: "Strong uptrend",
+  strong_downtrend: "Strong downtrend",
+  high_volatility: "High volatility",
+  low_volatility: "Low volatility",
+  consolidation: "Consolidation",
+  range: "Range",
+};
 
 // Only the tags scoreDirection()/scoreEntry() in confidenceScore.ts can ever produce --
 // used to describe what's *missing* by set-subtracting from DimensionScore.reasons,
@@ -32,8 +46,19 @@ function joinList(items: string[]): string {
  * real gate/score data the engine already computed -- never a canned "conditions
  * unclear" placeholder. Shared by the web/mobile prediction cards and voice, so the
  * wording is identical everywhere a NoTradeReason is shown.
+ *
+ * `regime` (the independently-computed MarketRegime for the same evaluation, see
+ * marketRegime.ts) is optional and, when given, prefixed onto the explanation so a
+ * NO TRADE reads with real backdrop context (e.g. "Market regime: Range. No qualifying
+ * setup...") instead of a bare gate reason. It never changes which reason fired --
+ * purely explanatory.
  */
-export function describeNoTradeReason(reason: NoTradeReason): string {
+export function describeNoTradeReason(reason: NoTradeReason, regime?: MarketRegime): string {
+  const prefix = regime ? `Market regime: ${REGIME_LABEL[regime]}. ` : "";
+  return prefix + describeReason(reason);
+}
+
+function describeReason(reason: NoTradeReason): string {
   switch (reason.code) {
     case "outside_killzone":
       return "Outside the London/New York killzone -- the SMC engine only evaluates setups during active institutional trading sessions.";

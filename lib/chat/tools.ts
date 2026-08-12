@@ -9,11 +9,41 @@ import { positionStore } from "../market/positionStore";
 import { riskState } from "../market/riskState";
 import { describeNoTradeReason } from "../market/noTradeReason";
 import { predictionHeadline, predictionSubline } from "../market/predictionLabel";
+import { scoreSetupQuality } from "../market/setupQualityScore";
+import { getPerformanceStats, tradeJournal, type PerformanceFilter } from "../market/tradeJournal";
 import { buildConfirmPhrase, buildResultAnnouncement, normalize } from "../voice/grammar";
 import type { ExecuteResponse } from "../market/executionClient";
+import { PAIRS, type MarketRegime, type Pair, type Session, type Timeframe } from "../market/types";
 
 function dayKeyFor(nowMs: number): string {
   return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+const TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
+const SESSIONS: Session[] = ["asia", "london", "newyork", "off-session"];
+const REGIMES: MarketRegime[] = [
+  "news_driven",
+  "breakout",
+  "strong_uptrend",
+  "strong_downtrend",
+  "high_volatility",
+  "low_volatility",
+  "consolidation",
+  "range",
+];
+
+// The model's tool-call arguments are free-text strings, not guaranteed to be one of
+// this app's real enum values -- validated the same way the /api/trade-journal route
+// validates its own query params, rather than an unchecked cast. An unrecognized value
+// is simply dropped from the filter (never guessed into the nearest real one).
+function tradeJournalFilterFrom(input: { pair?: string; timeframe?: string; session?: string; regime?: string; signerBAgreement?: boolean }): PerformanceFilter {
+  const filter: PerformanceFilter = {};
+  if (input.pair && PAIRS.includes(input.pair as Pair)) filter.pair = input.pair as Pair;
+  if (input.timeframe && TIMEFRAMES.includes(input.timeframe as Timeframe)) filter.timeframe = input.timeframe as Timeframe;
+  if (input.session && SESSIONS.includes(input.session as Session)) filter.session = input.session as Session;
+  if (input.regime && REGIMES.includes(input.regime as MarketRegime)) filter.regime = input.regime as MarketRegime;
+  if (input.signerBAgreement !== undefined) filter.signerBAgreement = input.signerBAgreement;
+  return filter;
 }
 
 /**
@@ -74,6 +104,7 @@ export function buildTools(ctx: ToolContext) {
           pair: update.pair,
           timeframe: update.timeframe,
           headline: predictionHeadline(update.evaluation),
+          regime: update.regime,
           detail:
             update.evaluation.status === "no_trade"
               ? describeNoTradeReason(update.evaluation.reason)
@@ -87,38 +118,80 @@ export function buildTools(ctx: ToolContext) {
   const get_signals = betaZodTool({
     name: "get_signals",
     description:
-      "List recent executable trade signals (buy/strong_buy tier, not watch-tier) with their id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (SMC's own direction/entry sub-scores and confluence tags, plus Signer B's independent direction/confidence and its own EMA trend/Supertrend/RSI divergence/currency strength/news reads), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X'.",
+      "List recent executable trade signals (buy/strong_buy tier, not watch-tier) with their id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (SMC's own direction/entry sub-scores and confluence tags, plus Signer B's independent direction/confidence and its own EMA trend/Supertrend/RSI divergence/currency strength/news reads), the current market regime for that pair/timeframe, a transparent 7-category setup quality breakdown (NOT a win probability), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X' or 'why is this setup only scored N'.",
     inputSchema: z.object({}),
     run: async () => {
       return JSON.stringify(
         signalStore
           .all()
           .filter((signal) => signal.tier !== "watch")
-          .map((signal) => ({
-            id: signal.id,
-            pair: signal.pair,
-            direction: signal.direction,
-            entry: signal.entry,
-            stopLoss: signal.stopLoss,
-            takeProfit: signal.takeProfit,
-            confidence: signal.confidence,
-            tier: signal.tier,
-            riskReward: signal.riskReward,
-            directionScore: signal.directionScore,
-            entryScore: signal.entryScore,
-            adx: signal.adx,
-            rsi: signal.rsi,
-            signerBDirection: signal.signerBDirection,
-            signerBConfidence: signal.signerBConfidence,
-            confluences: signal.confluences,
-            signerBEmaTrend: signal.signerBEmaTrend,
-            supertrendTrend: signal.supertrendTrend,
-            rsiDivergence: signal.rsiDivergence,
-            usdStrengthStatus: signal.usdStrengthStatus,
-            newsStatus: signal.newsStatus,
-            confirmPhraseRequiredToExecute: buildConfirmPhrase(signal),
-          }))
+          .map((signal) => {
+            // TradingView-sourced signals carry hardcoded placeholder direction/entry
+            // scores (see tradingViewWebhook.ts), never real SMC-derived ones -- a
+            // regime read and quality breakdown off those would fabricate meaning
+            // that isn't there, so both stay undefined for that source (same
+            // exclusion SignerBBreakdown.tsx/SetupQualityBreakdown.tsx apply).
+            const regime = signal.source === "tradingview" ? undefined : predictionStore.get(signal.pair, signal.timeframe)?.regime;
+            return {
+              id: signal.id,
+              pair: signal.pair,
+              direction: signal.direction,
+              entry: signal.entry,
+              stopLoss: signal.stopLoss,
+              takeProfit: signal.takeProfit,
+              confidence: signal.confidence,
+              tier: signal.tier,
+              riskReward: signal.riskReward,
+              directionScore: signal.directionScore,
+              entryScore: signal.entryScore,
+              adx: signal.adx,
+              rsi: signal.rsi,
+              signerBDirection: signal.signerBDirection,
+              signerBConfidence: signal.signerBConfidence,
+              confluences: signal.confluences,
+              signerBEmaTrend: signal.signerBEmaTrend,
+              supertrendTrend: signal.supertrendTrend,
+              rsiDivergence: signal.rsiDivergence,
+              usdStrengthStatus: signal.usdStrengthStatus,
+              newsStatus: signal.newsStatus,
+              regime: regime ?? "unavailable",
+              setupQuality: regime ? scoreSetupQuality(signal, regime) : "unavailable",
+              confirmPhraseRequiredToExecute: buildConfirmPhrase(signal),
+            };
+          })
       );
+    },
+  });
+
+  const get_trade_journal = betaZodTool({
+    name: "get_trade_journal",
+    description:
+      "Get real, closed-trade performance history for trades THIS app opened and closed -- count, win rate, average R-multiple, and max drawdown (in R), optionally filtered by pair/timeframe/session/regime/whether Signer B agreed with the trade's direction. This is the ONLY source of a real win rate or accuracy figure in this system -- always call this rather than estimating or recalling one from earlier in the conversation. An empty or low-count result is an honest 'not enough closed trades yet', not a sign of a broken system.",
+    inputSchema: z.object({
+      pair: z.string().optional().describe("Filter to one pair, e.g. 'EUR/USD'. Omit for all pairs."),
+      timeframe: z.string().optional().describe("Filter to one timeframe, e.g. '15m'. Omit for all timeframes."),
+      session: z.string().optional().describe("Filter to one session: asia, london, newyork, off-session."),
+      regime: z.string().optional().describe("Filter to trades that fired during one market regime, e.g. 'strong_uptrend'."),
+      signerBAgreement: z
+        .boolean()
+        .optional()
+        .describe("true = only trades where Signer B agreed with the direction at signal time; false = only trades where it didn't."),
+    }),
+    run: async (input) => {
+      const entries = tradeJournal.all();
+      const stats = getPerformanceStats(entries, tradeJournalFilterFrom(input));
+      return JSON.stringify({
+        stats,
+        recentEntries: entries.slice(0, 20).map((entry) => ({
+          pair: entry.pair,
+          direction: entry.direction,
+          profit: entry.profit,
+          rMultiple: entry.rMultiple,
+          reason: entry.reason,
+          closedAt: entry.closedAt,
+          regime: entry.context?.regime ?? "unavailable",
+        })),
+      });
     },
   });
 
@@ -264,6 +337,7 @@ export function buildTools(ctx: ToolContext) {
     get_positions,
     get_risk_status,
     get_engine_mode,
+    get_trade_journal,
     pause_trading,
     resume_trading,
     set_engine_mode,

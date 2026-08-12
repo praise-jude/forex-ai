@@ -77,6 +77,17 @@ describe("describeNoTradeReason", () => {
     expect(text).toContain("72%");
   });
 
+  it("prefixes the market regime onto the explanation when given", () => {
+    const text = describeNoTradeReason({ code: "no_setup" }, "range");
+    expect(text).toMatch(/^Market regime: Range\. /);
+    expect(text).toMatch(/no qualifying setup/i);
+  });
+
+  it("omits the regime prefix entirely when no regime is given", () => {
+    const text = describeNoTradeReason({ code: "no_setup" });
+    expect(text).not.toMatch(/Market regime/i);
+  });
+
   it("describes news_blackout with the real event, currency, and time until it", () => {
     const text = describeNoTradeReason({
       code: "news_blackout",

@@ -126,7 +126,7 @@ export function Dashboard() {
           voice.onSignal(event.signal);
         }
       } else if (event.type === "prediction") {
-        const update = { pair: event.pair, timeframe: event.timeframe, evaluation: event.evaluation, time: event.time };
+        const update = { pair: event.pair, timeframe: event.timeframe, evaluation: event.evaluation, time: event.time, regime: event.regime };
         setPredictions((prev) => ({ ...prev, [event.pair]: { ...prev[event.pair], [event.timeframe]: update } }));
         voice.onPredictionChange(update);
       }
@@ -163,7 +163,7 @@ export function Dashboard() {
         </section>
 
         <div className="flex flex-col gap-4">
-          <SignalsPanel signals={signals} statuses={cardStatuses} onExecute={executeSignal} />
+          <SignalsPanel signals={signals} statuses={cardStatuses} onExecute={executeSignal} predictions={predictions} />
           <PositionsPanel />
         </div>
       </div>
