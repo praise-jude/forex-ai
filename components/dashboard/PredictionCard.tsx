@@ -9,7 +9,9 @@ import { DirectionBadge, type BadgeTone } from "./DirectionBadge";
 import { SignerBBreakdown } from "./SignerBBreakdown";
 import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
 
-const HEADLINE_TONE: Record<PredictionHeadline, BadgeTone> = {
+// Exported for reuse by RecentAnalysis.tsx -- one place a headline's tone is defined,
+// not duplicated between the two components that show it.
+export const HEADLINE_TONE: Record<PredictionHeadline, BadgeTone> = {
   "STRONG BUY": "positive",
   BUY: "positive",
   NEUTRAL: "neutral",

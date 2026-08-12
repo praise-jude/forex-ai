@@ -13,6 +13,8 @@ import { RiskGuardianBanner } from "./RiskGuardianBanner";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
 import { useVoiceAssistant } from "./useVoiceAssistant";
 import { SignalToastStack, type ToastEntry } from "./SignalToast";
+import { AutopilotStatus } from "./AutopilotStatus";
+import { RecentAnalysis } from "./RecentAnalysis";
 
 const PriceChart = dynamic(() => import("./PriceChart").then((mod) => mod.PriceChart), { ssr: false });
 
@@ -83,6 +85,14 @@ export function Dashboard() {
 
   const selectedPrediction = predictions[selectedPair]?.[selectedTimeframe] ?? null;
 
+  // Flattened once here (rather than in each consumer) since both AutopilotStatus and
+  // RecentAnalysis need every pair/timeframe's update, not the single selected one
+  // PredictionCard/PriceChart use.
+  const flatPredictions = useMemo(
+    () => Object.values(predictions).flatMap((byTimeframe) => Object.values(byTimeframe ?? {})),
+    [predictions]
+  );
+
   useEffect(() => {
     fetch("/api/signals")
       .then((res) => res.json())
@@ -140,6 +150,7 @@ export function Dashboard() {
     <div className="flex flex-col gap-4 p-5">
       <RiskGuardianBanner />
       <VoiceAssistantPanel {...voice} />
+      <AutopilotStatus predictions={flatPredictions} signals={signals} marketsMonitored={PAIRS.length} />
 
       <div className="grid gap-4 lg:grid-cols-[220px_1fr_260px]">
         <Watchlist entries={watchlist} selectedPair={selectedPair} onSelect={setSelectedPair} />
@@ -167,6 +178,8 @@ export function Dashboard() {
           <PositionsPanel />
         </div>
       </div>
+
+      <RecentAnalysis predictions={flatPredictions} />
 
       <SignalToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
