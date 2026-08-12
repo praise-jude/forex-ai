@@ -14,6 +14,20 @@ export interface ExecutionConfig {
   /** See riskManager.ts's checkSpread -- a fraction of the signal's own stop distance,
    * not a flat pip count, so it scales per instrument. */
   maxSpreadFractionOfStop: number;
+  /** See positionManager.ts -- the R-multiple (computed off the trade's own original
+   * entry/stop, never a since-moved live SL) at which the live stop loss moves to
+   * breakeven. */
+  breakEvenTriggerR: number;
+  /** The R-multiple at which a broker-side trailing stop is armed (once, via MetaApi's
+   * own server-side trailing -- see positionManager.ts). */
+  trailingArmTriggerR: number;
+  /** Trailing distance as a fraction of the trade's own original stop distance, same
+   * "fraction of stop, not a flat pip count" reasoning as maxSpreadFractionOfStop. */
+  trailingDistanceFractionOfStop: number;
+  /** Master on/off switch for the whole position-management subsystem (break-even,
+   * trailing, invalidation exit) -- independent of engine mode/kill switch, which only
+   * govern opening NEW trades. */
+  positionManagementEnabled: boolean;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -21,6 +35,17 @@ function envNumber(name: string, fallback: number): number {
   if (!raw) return fallback;
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
+}
+
+// Same convention as riskManager.ts's isEnvKillSwitchActive -- "unset" keeps the
+// fallback, and only these exact strings read as explicitly false, so a stray env var
+// set to e.g. "no" doesn't silently disable position management by accident.
+const FALSY_ENV_VALUES = new Set(["", "0", "false"]);
+
+function envBoolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return !FALSY_ENV_VALUES.has(raw.toLowerCase());
 }
 
 /** These are risk-tolerance numbers, not engineering defaults — tune via env vars per
@@ -39,6 +64,10 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     // 15% of stop distance is deliberately generous -- catches a genuinely blown-out
     // spread (news spike, market open, weekend-gap-adjacent quote), not normal noise.
     maxSpreadFractionOfStop: envNumber(`${prefix}MAX_SPREAD_FRACTION_OF_STOP`, 0.15),
+    breakEvenTriggerR: envNumber(`${prefix}BREAK_EVEN_TRIGGER_R`, 1.0),
+    trailingArmTriggerR: envNumber(`${prefix}TRAILING_ARM_TRIGGER_R`, 1.5),
+    trailingDistanceFractionOfStop: envNumber(`${prefix}TRAILING_DISTANCE_FRACTION_OF_STOP`, 1.0),
+    positionManagementEnabled: envBoolean(`${prefix}POSITION_MANAGEMENT_ENABLED`, true),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

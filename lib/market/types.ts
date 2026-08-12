@@ -266,6 +266,10 @@ export interface ExecutedTrade {
   signalId: string;
   account: AccountKey;
   pair: Pair;
+  /** The signal engine's own timeframe (15m/30m/1h) -- needed to match an incoming
+   * invalidation signal (see positionInvalidation.ts) to the right open position;
+   * three signal engines run concurrently per pair, so pair alone isn't enough. */
+  timeframe: Timeframe;
   direction: "long" | "short";
   requestedLots: number;
   requestedEntry: number;

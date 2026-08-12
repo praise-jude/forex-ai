@@ -135,6 +135,7 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     signalId: signal.id,
     account: accountKey,
     pair: signal.pair,
+    timeframe: signal.timeframe,
     direction: signal.direction,
     requestedLots: sizing.lots,
     requestedEntry: signal.entry,

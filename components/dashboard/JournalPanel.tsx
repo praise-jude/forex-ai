@@ -36,6 +36,7 @@ function relativeTime(fromMs: number): string {
 const REASON_LABEL: Record<JournalEntry["reason"], string> = {
   stop_loss: "Stop loss",
   take_profit: "Take profit",
+  invalidation: "Invalidation exit",
   manual: "Manual close",
   other: "Closed",
 };

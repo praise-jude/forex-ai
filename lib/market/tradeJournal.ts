@@ -36,7 +36,11 @@ export interface SignalContext {
   createdAt: number;
 }
 
-export type JournalCloseReason = "stop_loss" | "take_profit" | "manual" | "other";
+// "invalidation" -- positionManager.ts's own early exit (the original SMC+Signer B
+// thesis got contradicted by a fresh opposite-direction signal) -- is only ever set via
+// invalidationMarker.ts's short-lived marker, checked in metaApiConnection.ts's
+// journalCloseReasonFor before it falls back to the broker's own deal.reason mapping.
+export type JournalCloseReason = "stop_loss" | "take_profit" | "invalidation" | "manual" | "other";
 
 export interface JournalEntry {
   id: string; // the closing deal's own id

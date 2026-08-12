@@ -6,6 +6,7 @@ const ATTEMPT = {
   signalId: "signal-1",
   account: "live" as const,
   pair: "EUR/USD" as const,
+  timeframe: "15m" as const,
   direction: "long" as const,
   requestedLots: 0.5,
   requestedEntry: 1.105,

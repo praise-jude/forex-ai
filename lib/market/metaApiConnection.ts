@@ -8,6 +8,7 @@ import type {
   MetatraderSymbolPrice,
   MetatraderTradeResponse,
   StreamingMetaApiConnectionInstance,
+  TrailingStopLoss,
 } from "metaapi.cloud-sdk/node";
 import type { AccountInfo, AccountKey, Candle, OpenPosition, Pair, SymbolSpec, Timeframe } from "./types";
 import { PAIRS } from "./types";
@@ -30,6 +31,7 @@ import { checkNews } from "./newsFilter";
 import { scoreSetupQuality } from "./setupQualityScore";
 import { tradeJournal, type JournalCloseReason } from "./tradeJournal";
 import { positionStore } from "./positionStore";
+import { consume as consumeInvalidationMark } from "./invalidationMarker";
 
 // Three independent signal engines run concurrently per pair, one per timeframe --
 // each closed candle on any of these is evaluated on its own, sharing the same
@@ -199,7 +201,12 @@ class MarketSyncListener extends SynchronizationListener {
   }
 }
 
+/** Checked before the broker's own deal.reason mapping -- an API-initiated invalidation
+ * close (see positionInvalidation.ts) reads to MetaApi as an ordinary client-side close
+ * (DEAL_REASON_CLIENT/EXPERT), indistinguishable from a genuine manual close by reason
+ * alone. invalidationMarker.ts's short-lived mark is what tells them apart. */
 function journalCloseReasonFor(deal: MetatraderDeal): JournalCloseReason {
+  if (deal.positionId !== undefined && consumeInvalidationMark(deal.positionId)) return "invalidation";
   if (deal.reason === "DEAL_REASON_SL") return "stop_loss";
   if (deal.reason === "DEAL_REASON_TP") return "take_profit";
   if (deal.reason === "DEAL_REASON_CLIENT" || deal.reason === "DEAL_REASON_MOBILE" || deal.reason === "DEAL_REASON_WEB" || deal.reason === "DEAL_REASON_EXPERT") {
@@ -441,6 +448,59 @@ export async function placeMarketOrder(
     brokerPositionId: response.positionId,
     brokerOrderId: response.orderId,
   };
+}
+
+export type ModifyPositionResult = { success: true } | { success: false; numericCode?: number; stringCode?: string; message: string };
+
+export interface ModifyPositionInput {
+  stopLoss?: number;
+  takeProfit?: number;
+  trailingStopLoss?: TrailingStopLoss;
+}
+
+/**
+ * Used by positionManager.ts for break-even moves and arming a trailing stop -- never
+ * called anywhere else. Mirrors placeMarketOrder's own shape: never throws on a
+ * broker-level rejection (e.g. a position that already closed a moment earlier), only on
+ * a genuine transport-level exception, so a poller iterating many positions can log one
+ * failure and keep going rather than crash the whole cycle.
+ */
+export async function modifyPosition(positionId: string, input: ModifyPositionInput, accountKey: AccountKey = "live"): Promise<ModifyPositionResult> {
+  const connection = stateFor(accountKey).connection;
+  if (!connection) return { success: false, message: `no active MetaApi connection (${accountKey})` };
+
+  let response: MetatraderTradeResponse;
+  try {
+    response = await connection.modifyPosition(positionId, input.stopLoss, input.takeProfit, input.trailingStopLoss);
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (!TRADE_SUCCESS_CODES.has(response.numericCode)) {
+    return { success: false, numericCode: response.numericCode, stringCode: response.stringCode, message: response.message };
+  }
+  return { success: true };
+}
+
+/**
+ * Used by positionInvalidation.ts's early-exit path -- never called anywhere else. Same
+ * non-throwing-on-broker-rejection posture as modifyPosition/placeMarketOrder above.
+ */
+export async function closePosition(positionId: string, accountKey: AccountKey = "live"): Promise<ModifyPositionResult> {
+  const connection = stateFor(accountKey).connection;
+  if (!connection) return { success: false, message: `no active MetaApi connection (${accountKey})` };
+
+  let response: MetatraderTradeResponse;
+  try {
+    response = await connection.closePosition(positionId, {});
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (!TRADE_SUCCESS_CODES.has(response.numericCode)) {
+    return { success: false, numericCode: response.numericCode, stringCode: response.stringCode, message: response.message };
+  }
+  return { success: true };
 }
 
 const connectPromisesKey = Symbol.for("forex-ai.metaApiConnection.connectPromises");
