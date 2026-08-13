@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Pair } from "@/lib/market/types";
 import { formatPrice } from "@/lib/market/format";
 
@@ -33,7 +33,11 @@ function TickPrice({ pair, bid }: { pair: Pair; bid: number | null }) {
   );
 }
 
-export function Watchlist({ entries, selectedPair, onSelect }: WatchlistProps) {
+// Memoized so a Dashboard re-render triggered by an unrelated SSE event (a "signal" or
+// "prediction" message, which never touches watchlist state) skips re-rendering every
+// pair row -- a genuine "price" event still re-renders this normally, since Dashboard's
+// own setWatchlist always produces a new `entries` array reference for those.
+export const Watchlist = memo(function Watchlist({ entries, selectedPair, onSelect }: WatchlistProps) {
   return (
     <aside className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
       <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Pairs</h2>
@@ -55,4 +59,4 @@ export function Watchlist({ entries, selectedPair, onSelect }: WatchlistProps) {
       </ul>
     </aside>
   );
-}
+});

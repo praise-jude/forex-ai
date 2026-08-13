@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { AccountKey, OpenPosition } from "@/lib/market/types";
 import { formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
@@ -43,7 +44,9 @@ async function fetchPositions(): Promise<PositionsResponse> {
   return res.json();
 }
 
-export function PositionsPanel() {
+// Takes no props and manages its own polling internally -- memoized so it never
+// re-renders from a parent (Dashboard) cascade, only when its own polled data changes.
+export const PositionsPanel = memo(function PositionsPanel() {
   const { data } = usePolledResource("positions", fetchPositions, POLL_INTERVAL_MS);
 
   return (
@@ -65,4 +68,4 @@ export function PositionsPanel() {
       )}
     </section>
   );
-}
+});

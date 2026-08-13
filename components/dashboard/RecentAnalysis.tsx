@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import type { PredictionUpdate, Timeframe } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline } from "@/lib/market/predictionLabel";
 import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
@@ -22,10 +23,14 @@ function detailFor(update: PredictionUpdate): string | null {
  * PredictionUpdate; a pair with no entry yet (still starting up) is simply omitted
  * rather than shown with a fabricated placeholder row.
  */
-export function RecentAnalysis({ predictions }: { predictions: PredictionUpdate[] }) {
-  const rows = predictions
-    .filter((p) => p.timeframe === PRIMARY_TIMEFRAME)
-    .sort((a, b) => b.time - a.time);
+// Memoized so a Dashboard re-render from an unrelated SSE event (price/signal) doesn't
+// redo this filter+sort -- `predictions` (Dashboard's memoized flatPredictions) only
+// changes reference on a genuine "prediction" event.
+export const RecentAnalysis = memo(function RecentAnalysis({ predictions }: { predictions: PredictionUpdate[] }) {
+  const rows = useMemo(
+    () => predictions.filter((p) => p.timeframe === PRIMARY_TIMEFRAME).sort((a, b) => b.time - a.time),
+    [predictions]
+  );
 
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
@@ -52,4 +57,4 @@ export function RecentAnalysis({ predictions }: { predictions: PredictionUpdate[
       )}
     </section>
   );
-}
+});

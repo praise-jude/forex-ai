@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Confluence, HigherTimeframeTrends, MarketRegime, Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
@@ -136,7 +136,13 @@ function ExecuteControl({
   );
 }
 
-function SignalCard({
+// Memoized so a Dashboard-level re-render (e.g. an SSE price tick for an unrelated
+// pair) doesn't re-run every card's own work (SetupQualityBreakdown/SignerBBreakdown
+// scoring) unless this specific signal's own props actually changed. Only effective
+// because every prop passed in from SignalsPanel's map below is now reference-stable
+// across renders (see the IDLE_STATUS/onExecute handling there) -- an inline arrow
+// function or fresh object literal passed as a prop would defeat this immediately.
+const SignalCard = memo(function SignalCard({
   signal,
   status,
   onExecute,
@@ -148,7 +154,7 @@ function SignalCard({
 }: {
   signal: Signal;
   status: CardStatus;
-  onExecute: (riskPctOverride: number) => void;
+  onExecute: (signal: Signal, riskPctOverride: number) => void;
   regime: MarketRegime | undefined;
   trends: HigherTimeframeTrends | undefined;
   manualMode: "signal_only" | "confirm";
@@ -232,11 +238,16 @@ function SignalCard({
         manualMode={manualMode}
         ttlSeconds={ttlSeconds}
         defaultRiskPct={defaultRiskPct}
-        onApprove={onExecute}
+        onApprove={(riskPctOverride) => onExecute(signal, riskPctOverride)}
       />
     </li>
   );
-}
+});
+
+// A fresh `{ state: "idle" }` object literal per signal per render (the old fallback
+// below) would defeat SignalCard's memoization for every signal with no status yet --
+// hoisted so the fallback reference is stable across renders.
+const IDLE_STATUS: CardStatus = { state: "idle" };
 
 export function SignalsPanel({
   signals,
@@ -246,6 +257,7 @@ export function SignalsPanel({
   manualMode,
   ttlSeconds,
   defaultRiskPct,
+  loaded = true,
 }: {
   signals: Signal[];
   statuses: Record<string, CardStatus>;
@@ -261,20 +273,25 @@ export function SignalsPanel({
   manualMode: "signal_only" | "confirm";
   ttlSeconds: number;
   defaultRiskPct: number;
+  /** Whether the initial signals snapshot has resolved yet -- distinguishes "still
+   * loading" from "genuinely zero signals" so the two don't show identical copy.
+   * Defaults true so callers that don't track this (none currently) see today's
+   * behavior unchanged. */
+  loaded?: boolean;
 }) {
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
       <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Active signals</h2>
       {signals.length === 0 ? (
-        <p className="py-6 text-center text-sm text-zinc-500">No signals yet — watching for setups.</p>
+        <p className="py-6 text-center text-sm text-zinc-500">{loaded ? "No signals yet — watching for setups." : "Loading signals…"}</p>
       ) : (
         <ul className="space-y-2">
           {signals.map((signal) => (
             <SignalCard
               key={signal.id}
               signal={signal}
-              status={statuses[signal.id] ?? { state: "idle" }}
-              onExecute={(riskPctOverride) => onExecute(signal, riskPctOverride)}
+              status={statuses[signal.id] ?? IDLE_STATUS}
+              onExecute={onExecute}
               regime={predictions?.[signal.pair]?.[signal.timeframe]?.regime}
               trends={predictions?.[signal.pair]?.[signal.timeframe]?.trends}
               manualMode={manualMode}

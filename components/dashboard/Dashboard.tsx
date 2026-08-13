@@ -18,7 +18,13 @@ import { SignalToastStack, type ToastEntry } from "./SignalToast";
 import { AutopilotStatus } from "./AutopilotStatus";
 import { RecentAnalysis } from "./RecentAnalysis";
 
-const PriceChart = dynamic(() => import("./PriceChart").then((mod) => mod.PriceChart), { ssr: false });
+// A plain animated block instead of a blank box while the chart's own chunk (which
+// bundles lightweight-charts, deliberately kept out of the main bundle) downloads and
+// hydrates client-side.
+const PriceChart = dynamic(() => import("./PriceChart").then((mod) => mod.PriceChart), {
+  ssr: false,
+  loading: () => <div className="h-105 animate-pulse rounded-lg bg-zinc-800/60" />,
+});
 
 const MAX_SIGNALS = 50;
 
@@ -45,6 +51,9 @@ export function Dashboard() {
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>("15m");
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>(emptyWatchlist);
   const [signals, setSignals] = useState<Signal[]>([]);
+  // Distinguishes "still waiting on the first snapshot" from "genuinely zero signals" --
+  // SignalsPanel shows different copy for each rather than an identical empty state.
+  const [signalsLoaded, setSignalsLoaded] = useState(false);
   const [executedTrades, setExecutedTrades] = useState<ExecutedTrade[]>([]);
   // Nested by pair then timeframe -- three signal engines (15m/30m/1h) run concurrently
   // per pair now, so a single PredictionUpdate per pair is no longer enough (mirrors
@@ -156,10 +165,14 @@ export function Dashboard() {
           setExecutedTrades(data.executedTrades);
           setPredictions(buildPredictionMap(data.predictions));
           for (const signal of data.signals) seenSignalIds.current.add(signal.id);
+          setSignalsLoaded(true);
         }
       )
       .catch(() => {
         // Best-effort initial snapshot; the SSE stream will still catch up live data.
+        // Still marks "loaded" -- an empty state after a failed fetch reads as "no
+        // signals", not an indefinite loading spinner.
+        setSignalsLoaded(true);
       });
 
     const source = new EventSource("/api/signals/stream");
@@ -237,6 +250,7 @@ export function Dashboard() {
             manualMode={confirmationMode?.manualMode ?? "confirm"}
             ttlSeconds={confirmationMode?.proposalTtlSeconds ?? 120}
             defaultRiskPct={engineModeData?.riskPerTradePct ?? 1}
+            loaded={signalsLoaded}
           />
           <PositionsPanel />
         </div>

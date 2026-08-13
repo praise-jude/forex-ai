@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { HigherTimeframeTrends, NoTradeReason, PredictionUpdate } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline, type PredictionHeadline } from "@/lib/market/predictionLabel";
 import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
@@ -75,7 +76,10 @@ function TrendsRow({ trends }: { trends: HigherTimeframeTrends }) {
  * real reason it didn't qualify. Every value shown here traces to a real field on
  * PredictionUpdate; nothing is fabricated or estimated client-side.
  */
-export function PredictionCard({ update }: { update: PredictionUpdate | null }) {
+// Memoized so a Dashboard re-render for an unrelated pair's price tick or prediction
+// doesn't redo this card's SignerBBreakdown/SetupQualityBreakdown work -- `update` only
+// changes reference when THIS pair+timeframe's own prediction actually updates.
+export const PredictionCard = memo(function PredictionCard({ update }: { update: PredictionUpdate | null }) {
   if (!update) {
     return <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3 text-sm text-zinc-500">Evaluating…</div>;
   }
@@ -140,4 +144,4 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
       )}
     </div>
   );
-}
+});

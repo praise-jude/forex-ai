@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import type { PredictionUpdate, Signal } from "@/lib/market/types";
 import { computeAutopilotStatus, type PipelineHealth } from "@/lib/market/autopilotStatus";
 
@@ -40,7 +41,9 @@ function StatTile({ label, value }: { label: string; value: string }) {
  * pipelineHealth in particular only reads "stale" when analysis has genuinely stopped
  * updating, so it can't misrepresent a working-but-selective engine as broken.
  */
-export function AutopilotStatus({
+// Memoized so a Dashboard re-render from an unrelated SSE event (e.g. a price tick,
+// which touches neither `predictions` nor `signals`) doesn't redo computeAutopilotStatus.
+export const AutopilotStatus = memo(function AutopilotStatus({
   predictions,
   signals,
   marketsMonitored,
@@ -49,7 +52,10 @@ export function AutopilotStatus({
   signals: Signal[];
   marketsMonitored: number;
 }) {
-  const status = computeAutopilotStatus(predictions, signals, marketsMonitored);
+  const status = useMemo(
+    () => computeAutopilotStatus(predictions, signals, marketsMonitored),
+    [predictions, signals, marketsMonitored]
+  );
 
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
@@ -68,4 +74,4 @@ export function AutopilotStatus({
       </div>
     </section>
   );
-}
+});
