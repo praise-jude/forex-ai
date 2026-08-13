@@ -47,6 +47,9 @@ yarn-error.log*
 # persisted backtest job history (runtime state, not source)
 .backtest-results.json
 
+# trade journal ledger + signal decision funnel (runtime state, not source)
+.trade-journal.json
+
 # MetaApi SDK's local runtime cache (account deal/order history), not source
 .metaapi/
 

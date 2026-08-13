@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { JournalEntry, SignalContext } from "../tradeJournal";
-import { getPerformanceStats } from "../tradeJournal";
+import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
+import { getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
 import { loadTradeJournalModule } from "./tradeJournalTestHelper";
 
@@ -346,5 +346,27 @@ describe("getPerformanceStats", () => {
     ];
     expect(getPerformanceStats(entries, { signerBAgreement: true }).count).toBe(1);
     expect(getPerformanceStats(entries, { signerBAgreement: false }).count).toBe(2);
+  });
+});
+
+function buildOutcome(overrides: Partial<SignalOutcome> = {}): SignalOutcome {
+  return { signalId: "sig-1", pair: "EUR/USD", outcome: "approved", reason: null, timestamp: 1, ...overrides };
+}
+
+describe("getSignalFunnelStats", () => {
+  it("counts each outcome type independently", () => {
+    const outcomes = [
+      buildOutcome({ signalId: "1", outcome: "approved" }),
+      buildOutcome({ signalId: "2", outcome: "approved" }),
+      buildOutcome({ signalId: "3", outcome: "rejected" }),
+      buildOutcome({ signalId: "4", outcome: "expired" }),
+      buildOutcome({ signalId: "5", outcome: "blocked", reason: "signal_only_mode" }),
+      buildOutcome({ signalId: "6", outcome: "blocked", reason: "watch_tier" }),
+    ];
+    expect(getSignalFunnelStats(outcomes)).toEqual({ approved: 2, rejected: 1, expired: 1, blocked: 2 });
+  });
+
+  it("returns all zeros for an empty list", () => {
+    expect(getSignalFunnelStats([])).toEqual({ approved: 0, rejected: 0, expired: 0, blocked: 0 });
   });
 });

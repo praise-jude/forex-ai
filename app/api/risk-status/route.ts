@@ -1,7 +1,7 @@
 import { getEngineMode, manualExecutionAccount } from "@/lib/market/engineMode";
 import { loadExecutionConfig } from "@/lib/market/executionConfig";
 import { getAccountInformation } from "@/lib/market/metaApiConnection";
-import { riskState } from "@/lib/market/riskState";
+import { requiresAcknowledgement, riskState } from "@/lib/market/riskState";
 
 export const runtime = "nodejs";
 
@@ -22,5 +22,10 @@ export async function GET() {
     consecutiveLosses: dayState?.consecutiveLosses ?? 0,
     maxConsecutiveLosses: config.maxConsecutiveLosses,
     maxDailyLossPct: config.maxDailyLossPct,
+    // True once a halt/cooldown has tripped and hasn't been explicitly acknowledged
+    // since -- blocks DEMO/LIVE auto-execution even after the condition itself clears
+    // (see riskState.ts, autoExecutionListener.ts). Drives RiskGuardianBanner's
+    // "Resume trading" button.
+    requiresAcknowledgement: dayState ? requiresAcknowledgement(dayState) : false,
   });
 }

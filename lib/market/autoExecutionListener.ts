@@ -1,6 +1,8 @@
 import { eventBus } from "./eventBus";
 import { attemptExecution } from "./executionEngine";
 import { autoExecutionAccount, getEngineMode } from "./engineMode";
+import { getAccountInformation } from "./metaApiConnection";
+import { requiresAcknowledgement, riskState } from "./riskState";
 
 let started = false;
 
@@ -29,6 +31,13 @@ export function startAutoExecutionListener(): void {
 
     const accountKey = autoExecutionAccount(getEngineMode());
     if (!accountKey) return; // ANALYSIS: no-op
+
+    // A halt/cooldown that has since cleared on its own (day rollover, cooldown timer)
+    // still blocks auto-execution here until a human explicitly acknowledges it (see
+    // riskState.ts's own doc comment) -- manual confirm-mode execution is unaffected,
+    // it already has a human reviewing every trade via the proposal/approve flow.
+    const equity = getAccountInformation(accountKey)?.equity ?? 0;
+    if (requiresAcknowledgement(riskState.current(Date.now(), equity, accountKey))) return;
 
     attemptExecution(event.signal, accountKey).catch((error: unknown) => {
       console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);

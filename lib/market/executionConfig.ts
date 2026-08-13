@@ -55,9 +55,12 @@ function envBoolean(name: string, fallback: boolean): boolean {
 export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConfig {
   const prefix = account === "demo" ? "DEMO_" : "";
   return {
-    riskPerTradePct: envNumber(`${prefix}RISK_PER_TRADE_PCT`, 1),
+    // Tightened from the original 1% / 5% defaults -- more conservative starting point,
+    // still just a starting point (tune via env vars per README), not a claim that
+    // 0.25%/1% is somehow "correct" for every account size or risk tolerance.
+    riskPerTradePct: envNumber(`${prefix}RISK_PER_TRADE_PCT`, 0.25),
     maxConcurrentPositions: envNumber(`${prefix}MAX_CONCURRENT_POSITIONS`, 3),
-    maxDailyLossPct: envNumber(`${prefix}MAX_DAILY_LOSS_PCT`, 5),
+    maxDailyLossPct: envNumber(`${prefix}MAX_DAILY_LOSS_PCT`, 1),
     maxTradesPerDay: envNumber(`${prefix}MAX_TRADES_PER_DAY`, 5),
     maxConsecutiveLosses: envNumber(`${prefix}MAX_CONSECUTIVE_LOSSES`, 3),
     cooldownMinutes: envNumber(`${prefix}COOLDOWN_MINUTES`, 30),

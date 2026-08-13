@@ -35,6 +35,11 @@ interface RiskStatusResponse {
   maxDailyLossPct: number;
 }
 
+interface ConfirmationModeResponse {
+  manualMode: "signal_only" | "confirm";
+  proposalTtlSeconds: number;
+}
+
 const ENGINE_MODE_POLL_MS = 7000;
 const RISK_STATUS_POLL_MS = 7000;
 // How long JUDE keeps listening after asking "would you like me to place this trade?"
@@ -42,6 +47,11 @@ const RISK_STATUS_POLL_MS = 7000;
 // resolves to "not placed", never a fallback confirm.
 const CONFIRM_LISTEN_WINDOW_MS = 30000;
 const PUSH_TO_TALK_WINDOW_MS = 8000;
+// Matches Dashboard.tsx's own "confirmation-mode" poll interval -- usePolledResource
+// dedupes same-key subscribers onto whichever interval the first subscriber set, so
+// keeping this the same value avoids the two callers silently disagreeing about it.
+const CONFIRMATION_MODE_POLL_MS = 15000;
+const DEFAULT_PROPOSAL_TTL_SECONDS = 120;
 
 export type VoiceStatus = "disabled" | "unavailable" | "ready" | "speaking" | "listening";
 
@@ -107,6 +117,12 @@ export function useVoiceAssistant({
     () => fetch("/api/risk-status").then((res) => res.json()),
     RISK_STATUS_POLL_MS
   );
+  // Shared with Dashboard.tsx's own "confirmation-mode" poll (same key, deduped).
+  const { data: confirmationMode } = usePolledResource<ConfirmationModeResponse>(
+    "confirmation-mode",
+    () => fetch("/api/confirmation-mode").then((res) => res.json()),
+    CONFIRMATION_MODE_POLL_MS
+  );
 
   const engineRef = useRef<VoiceEngine | null>(null);
   if (!engineRef.current && typeof window !== "undefined") {
@@ -116,10 +132,19 @@ export function useVoiceAssistant({
   const queueRef = useRef<Signal[]>([]);
   const pendingSignalRef = useRef<Signal | null>(null);
   const listenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Independent of listenTimerRef -- the listen window only ever starts in
+  // trade_assistant mode with confirmationMode !== "button_only" (see announceNext),
+  // so a pendingSignal in button_only mode previously had NO expiration at all. This
+  // timer enforces the same server-side TTL (confirmationMode.ts's proposalTtlSeconds)
+  // regardless of listen-window state, matching what the execute route itself already
+  // enforces.
+  const expirationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const engineModeRef = useRef(engineMode);
   engineModeRef.current = engineMode;
+  const confirmationModeRef = useRef(confirmationMode);
+  confirmationModeRef.current = confirmationMode;
   const selectedPairRef = useRef(selectedPair);
   selectedPairRef.current = selectedPair;
   const selectedTimeframeRef = useRef(selectedTimeframe);
@@ -171,6 +196,13 @@ export function useVoiceAssistant({
     }
   }
 
+  function clearExpirationTimer() {
+    if (expirationTimerRef.current) {
+      clearTimeout(expirationTimerRef.current);
+      expirationTimerRef.current = null;
+    }
+  }
+
   function speak(text: string): Promise<void> {
     setLastMessage(text);
     return engineRef.current?.speak(text) ?? Promise.resolve();
@@ -183,6 +215,13 @@ export function useVoiceAssistant({
 
     pendingSignalRef.current = next;
     setPendingSignal(next);
+
+    const ttlSeconds = confirmationModeRef.current?.proposalTtlSeconds ?? DEFAULT_PROPOSAL_TTL_SECONDS;
+    expirationTimerRef.current = setTimeout(() => {
+      if (pendingSignalRef.current?.id === next.id) {
+        resolvePending("That trade proposal has expired. No trade has been placed.");
+      }
+    }, ttlSeconds * 1000);
 
     const riskPerTradePct = engineModeRef.current?.riskPerTradePct ?? 1;
     speak(buildSignalAnnouncement(next, riskPerTradePct)).then(() => {
@@ -197,6 +236,7 @@ export function useVoiceAssistant({
     pendingSignalRef.current = null;
     setPendingSignal(null);
     clearListenTimer();
+    clearExpirationTimer();
     speak(message).then(announceNext);
   }
 
@@ -386,6 +426,7 @@ export function useVoiceAssistant({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPendingSignal(null);
       clearListenTimer();
+      clearExpirationTimer();
       speak(buildResultAnnouncement(signal, status.result)).then(announceNext);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

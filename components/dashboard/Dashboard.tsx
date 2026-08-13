@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal, type StreamEvent, type Timeframe } from "@/lib/market/types";
 import { executeSignalRequest, statusFromTrade, type CardStatus } from "@/lib/market/executionClient";
+import { buildConfirmPhrase } from "@/lib/voice/grammar";
+import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
 import { SignalsPanel } from "./SignalsPanel";
 import { PredictionCard } from "./PredictionCard";
@@ -77,17 +79,35 @@ export function Dashboard() {
     setToasts((prev) => prev.filter((t) => t.key !== key));
   }, []);
 
-  // The same function both SignalsPanel's Buy/Sell button and the voice assistant's
+  // The same function both SignalsPanel's Approve button and the voice assistant's
   // hard-confirm path call -- voice execution is never a separate code path, so it can
-  // never bypass the backend's risk checks.
-  const executeSignal = useCallback(async (signal: Signal) => {
+  // never bypass the backend's risk checks. Builds the exact same confirmation phrase
+  // the execute route itself requires (buildConfirmPhrase, shared with voice/chat) so
+  // callers here never need to know about it individually.
+  const executeSignal = useCallback(async (signal: Signal, riskPctOverride?: number) => {
     setLocalStatuses((prev) => ({ ...prev, [signal.id]: { state: "loading" } }));
-    const result = await executeSignalRequest(signal.id);
+    const result = await executeSignalRequest(signal.id, buildConfirmPhrase(signal), riskPctOverride);
     setLocalStatuses((prev) => ({ ...prev, [signal.id]: { state: "done", result } }));
     return result;
   }, []);
 
   const voice = useVoiceAssistant({ statuses: cardStatuses, executeSignal, selectedPair, selectedTimeframe });
+
+  // Confirmation Mode's own state -- drives whether SignalsPanel shows an execute
+  // affordance at all ("signal_only") or the propose-then-approve flow ("confirm").
+  const { data: confirmationMode } = usePolledResource<{ manualMode: "signal_only" | "confirm"; proposalTtlSeconds: number }>(
+    "confirmation-mode",
+    () => fetch("/api/confirmation-mode").then((res) => res.json()),
+    15000
+  );
+  // Seeds the proposal card's default "Risk" figure -- the account's actually-configured
+  // riskPerTradePct. Shared key with EngineModeControl.tsx/useVoiceAssistant.ts, which
+  // already poll "engine-mode" -- usePolledResource dedupes them into one request.
+  const { data: engineModeData } = usePolledResource<{ riskPerTradePct: number }>(
+    "engine-mode",
+    () => fetch("/api/engine-mode").then((res) => res.json()),
+    7000
+  );
 
   // Restored after mount, not read during the initial render -- reading localStorage
   // synchronously in useState's initializer would mismatch the server-rendered HTML
@@ -209,7 +229,15 @@ export function Dashboard() {
         </section>
 
         <div className="flex flex-col gap-4">
-          <SignalsPanel signals={signals} statuses={cardStatuses} onExecute={executeSignal} predictions={predictions} />
+          <SignalsPanel
+            signals={signals}
+            statuses={cardStatuses}
+            onExecute={executeSignal}
+            predictions={predictions}
+            manualMode={confirmationMode?.manualMode ?? "confirm"}
+            ttlSeconds={confirmationMode?.proposalTtlSeconds ?? 120}
+            defaultRiskPct={engineModeData?.riskPerTradePct ?? 1}
+          />
           <PositionsPanel />
         </div>
       </div>

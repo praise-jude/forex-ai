@@ -4,7 +4,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Forex AI signal dashboard
 
-`/dashboard` is a live SMC/ICT-style trading system for MT5 majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD). It detects setups (liquidity sweep → structure break → retest of an unmitigated order block/fair value gap, during a London/NY killzone, with D1/H4/H1 trend agreement) and shows entry/SL/TP suggestions on the dashboard as Jude (long) / Omini (short) signal cards, each carrying a weighted confidence score. A score of 90%+ (95%+ for "strong buy") gets a Buy/Sell button; 80-89% is shown as "watch" — informational only, no button, since it didn't clear the bar for a real signal. By default (**ANALYSIS** engine mode) **nothing is sent to the broker automatically** — each executable card has a Buy or Sell button (matching the signal's direction) that a user must click to actually place the trade. Optional **DEMO**/**LIVE** engine modes make confirmed signals auto-execute with no click — see "Engine mode" below. See "Manual execution" below before pointing this at a real account; the dashboard-only signal detection is unaffected by, and independent of, whether a signal ever gets executed.
+`/dashboard` is a live SMC/ICT-style trading system for MT5 majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD). It detects setups (liquidity sweep → structure break → retest of an unmitigated order block/fair value gap, during a London/NY killzone, with D1/H4/H1 trend agreement) and shows entry/SL/TP suggestions on the dashboard as Jude (long) / Omini (short) signal cards, each carrying a weighted confidence score. A score of 90%+ (95%+ for "strong buy") gets a Buy/Sell button; 80-89% is shown as "watch" — informational only, no button, since it didn't clear the bar for a real signal. By default (**Confirmation Mode**, the default manual-execution behavior — see below) **nothing is sent to the broker automatically, and clicking Buy/Sell doesn't place an order either** — it opens a Trade Proposal that must be explicitly approved (and re-clears every risk check fresh) before anything reaches MT5. Optional **DEMO**/**LIVE** engine modes make confirmed signals auto-execute with no click at all — see "Engine mode" below. See "Confirmation Mode" and "Manual execution" below before pointing this at a real account; the dashboard-only signal detection is unaffected by, and independent of, whether a signal ever gets executed.
 
 ### MetaApi setup
 
@@ -17,20 +17,39 @@ Market data comes from your MT5 account via [MetaApi.cloud](https://metaapi.clou
 
 Without these two env vars, the dashboard still runs but the watchlist stays empty (check the server log for `[market] failed to start market engine`).
 
-### Manual execution
+### Confirmation Mode: the AI proposes, you approve
 
-**Every signal requires a manual Buy/Sell click on its dashboard card** — nothing is traded until a user confirms it. Clicking runs the exact same risk-checked path an automatic engine would: position size is computed to risk a fixed % of account equity per trade (never more — sizes are rounded *down* to the broker's lot step, and a trade is skipped entirely rather than force-sized up to the broker minimum if that would exceed the configured risk). Read this whole section before setting `METAAPI_TOKEN`/`METAAPI_ACCOUNT_ID` on anything but a demo account.
+This is the default, and the entire point of it: **the AI can find and fully prepare a trade, but it can never place one on its own.** A qualifying signal becomes a **Trade Proposal** (`components/dashboard/TradeProposalCard.tsx`) — entry/SL/TP/R:R, D1/H4/H1 bias, score, news/session, and an editable risk % — with a countdown to its approval window (`PROPOSAL_TTL_SECONDS`, default 120s). Only an explicit **Approve & Execute** click sends anything to MT5; **Reject** and **Wait** both do nothing (Reject is logged as a real decision, see the signal funnel below; Wait just closes the card so you can reopen it later). If nothing is decided before the window closes, the proposal reads **EXPIRED** and can no longer be approved — you wait for a fresh setup, never an old one.
 
-**Config** (`.env.local`, all optional with the defaults below — these are risk-tolerance numbers you should set deliberately, not engineering defaults to trust blindly):
+This isn't just a UI convention — **the execute route itself (`app/api/signals/[id]/execute/route.ts`) enforces both the expiration and a confirmation-phrase check** (`buildConfirmPhrase`, e.g. `CONFIRM BUY EURUSD` — the same phrase voice and JUDE Chat already required), so no caller (dashboard, voice, chat, or a raw API call) can skip approval; a bare POST with no phrase, or one that's expired, is refused before `attemptExecution` ever runs. Approving re-runs every risk check (price drift, spread, daily loss, cooldown, concurrent positions) fresh at that exact moment — not the moment the signal first fired.
+
+**Signal Only mode** (`MANUAL_EXECUTION_MODE=signal_only`) goes one step further: no execute affordance is shown or accepted at all — the AI only ever surfaces signals. Toggle between modes live from `/dashboard`'s "Auto-execute floor" area, or set the boot default via env var (a redeploy won't silently loosen a deliberate choice either way).
+
+**Unattended auto-execution is a separate, explicitly opt-in thing** — see "Engine mode" below (DEMO/LIVE). Confirmation Mode governs the *manual* Buy/Sell path only.
+
+**Config** (`.env.local`, optional):
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `RISK_PER_TRADE_PCT` | `1` | % of equity risked per trade |
+| `MANUAL_EXECUTION_MODE` | `confirm` | `confirm` (propose-then-approve) or `signal_only` (no execution path at all) |
+| `PROPOSAL_TTL_SECONDS` | `120` | How long a Trade Proposal stays approvable, enforced server-side |
+
+### Manual execution
+
+Approving a Trade Proposal (or, in DEMO/LIVE mode, an auto-fired signal) runs the full risk-checked path: position size is computed to risk a fixed % of account equity per trade (never more — sizes are rounded *down* to the broker's lot step, and a trade is skipped entirely rather than force-sized up to the broker minimum if that would exceed the configured risk). Read this whole section before setting `METAAPI_TOKEN`/`METAAPI_ACCOUNT_ID` on anything but a demo account.
+
+**Config** (`.env.local`, all optional with the defaults below — these are risk-tolerance numbers you should set deliberately, not engineering defaults to trust blindly; the defaults are intentionally conservative — 0.25% per trade, 1% max daily loss — raise them only once you've validated the strategy, e.g. via "Backtesting" below or your own demo track record):
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `RISK_PER_TRADE_PCT` | `0.25` | % of equity risked per trade (the Trade Proposal card's "Edit Risk" field can override this for one specific trade without changing the account default) |
 | `MAX_CONCURRENT_POSITIONS` | `3` | New entries blocked once this many positions are open |
-| `MAX_DAILY_LOSS_PCT` | `5` | New entries halted for the rest of the UTC day once realized+open loss reaches this % of start-of-day equity. Existing positions are left alone — this only blocks new entries. |
+| `MAX_DAILY_LOSS_PCT` | `1` | New entries halted for the rest of the UTC day once realized+open loss reaches this % of start-of-day equity. Existing positions are left alone — this only blocks new entries. Once tripped, DEMO/LIVE auto-execution stays paused even after it clears (day rollover) until you click "Resume trading" on the dashboard — manual approval is unaffected, since a human already reviews every proposal. |
 | `MAX_TRADES_PER_DAY` | `5` | New entries blocked once this many trades have opened today (UTC day) |
 | `KILL_SWITCH_FILE` | `.trading-paused` | See below |
 | `TRADING_KILL_SWITCH` | unset | See below |
+
+**Close All Positions**: a destructive, separately-confirmed action (next to the kill switch on `/dashboard`) that closes every currently open position on whichever account a manual click targets — pairs with the kill switch (which only stops *new* entries) for a genuine "get me out of everything right now" escape hatch.
 
 **Kill switch — two of them, either one blocks trading**:
 - **File** (`KILL_SWITCH_FILE`): create the file (e.g. `touch .trading-paused` in the project root) to immediately stop new trade entries — checked fresh on every Buy/Sell click, no restart needed. Delete the file to resume. Works on hosts with a persistent filesystem (a VPS, Docker with a volume). Doesn't help on platforms that rebuild the filesystem on every deploy — a file touched via a one-off shell command won't survive the next redeploy.
@@ -61,7 +80,7 @@ An invalid value (out of 0-23 range, or a start hour not before the end hour) is
 
 The dashboard has a mode selector, next to the connection status and kill switch:
 
-- **ANALYSIS** (default, and the *only* mode on every fresh boot/restart — this is never persisted anywhere): signals are detected and shown, nothing executes automatically. A manual Buy/Sell click still fires against your **live** account, same as always.
+- **ANALYSIS** (default, and the *only* mode on every fresh boot/restart — this is never persisted anywhere): signals are detected and shown, nothing executes automatically. A manual Buy/Sell click still targets your **live** account, same as always — subject to Confirmation Mode above (a Trade Proposal requiring explicit approval by default, or no execute path at all in Signal Only mode).
 - **DEMO**: confirmed SMC signals auto-execute with no click, against a **separate** MetaApi demo account (`METAAPI_DEMO_TOKEN`/`METAAPI_DEMO_ACCOUNT_ID`) — never your live account. While DEMO mode is selected, a manual Buy/Sell click *also* targets the demo account instead of live, so testing can't accidentally place a real order. Requires the demo env vars to be set — otherwise the DEMO button is disabled and switching to it via the API returns 400.
 - **LIVE**: confirmed SMC signals auto-execute with no click against your **real** Exness account. This can only be turned on from the dashboard control by typing the exact confirmation phrase shown there (`ENABLE LIVE TRADING`) — re-validated server-side, not just client-side. There is no env var that enables LIVE mode; it is never enabled automatically by the app itself, on boot or otherwise.
 

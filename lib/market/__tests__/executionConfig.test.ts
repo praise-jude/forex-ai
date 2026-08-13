@@ -35,9 +35,9 @@ describe("loadExecutionConfig", () => {
 
   it("defaults to the same values for live and demo when nothing is set", () => {
     expect(loadExecutionConfig("live")).toEqual({
-      riskPerTradePct: 1,
+      riskPerTradePct: 0.25,
       maxConcurrentPositions: 3,
-      maxDailyLossPct: 5,
+      maxDailyLossPct: 1,
       maxTradesPerDay: 5,
       maxConsecutiveLosses: 3,
       cooldownMinutes: 30,
@@ -49,9 +49,9 @@ describe("loadExecutionConfig", () => {
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
-      riskPerTradePct: 1,
+      riskPerTradePct: 0.25,
       maxConcurrentPositions: 3,
-      maxDailyLossPct: 5,
+      maxDailyLossPct: 1,
       maxTradesPerDay: 5,
       maxConsecutiveLosses: 3,
       cooldownMinutes: 30,

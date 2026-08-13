@@ -82,6 +82,9 @@ describe("chat tools -- confirm-phrase safety gates", () => {
       const [url, init] = fetchSpy.mock.calls[0];
       expect(url).toBe(`http://localhost:3000/api/signals/${signal.id}/execute`);
       expect((init as RequestInit).headers).toMatchObject({ authorization: "Basic dGVzdDpwYXNz" });
+      // Forwards the exact phrase it already verified above -- the execute route's own
+      // confirmationMode.ts gate requires this now, not just this tool's own check.
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({ confirmationPhrase: "CONFIRM BUY EURUSD" });
     });
 
     it("never fabricates a fill -- an unknown signal id is refused before any network call", async () => {

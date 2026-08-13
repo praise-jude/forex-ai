@@ -75,9 +75,14 @@ function confirmationSummary(signal: Signal): string {
 
 export function buildSignalAnnouncement(signal: Signal, riskPerTradePct: number): string {
   const directionWord = signal.direction === "long" ? "buy" : "sell";
+  const biasWord = signal.direction === "long" ? "bullish" : "bearish";
   return [
     `Hello Jude. I have a potential ${directionWord} opportunity.`,
     `The market is ${PAIR_SPOKEN_NAMES[signal.pair]}, on the ${TIMEFRAME_SPOKEN[signal.timeframe]} timeframe.`,
+    // Every fired signal already required D1, H4, and H1 to unanimously agree with this
+    // exact direction (signalEngine.ts's own hard trend-agreement gate) -- so this is a
+    // real statement of fact about this signal, not a fabricated summary.
+    `Daily, 4 hour, and 1 hour bias all agree: ${biasWord}.`,
     `The proposed entry is ${formatPrice(signal.pair, signal.entry)}.`,
     `The stop loss is ${formatPrice(signal.pair, signal.stopLoss)}.`,
     `The take profit is ${formatPrice(signal.pair, signal.takeProfit)}.`,
@@ -159,6 +164,10 @@ export function buildResultAnnouncement(signal: Signal, result: ExecuteResponse)
       return "That trade has already been submitted -- no second order was placed.";
     case "not_found":
       return "That signal has expired. No trade has been placed.";
+    case "expired":
+      return "That trade proposal expired before it was approved. No trade has been placed.";
+    case "confirmation_required":
+      return "I couldn't confirm that trade. No trade has been placed.";
     case "network_error":
       return "I couldn't reach the server to place that trade. No trade has been placed.";
   }

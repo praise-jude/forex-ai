@@ -10,6 +10,22 @@ export interface DailyRiskState {
   consecutiveLosses: number;
   /** Epoch ms the revenge-trading cooldown lifts, or null when no cooldown is active. */
   cooldownUntil: number | null;
+  /** Epoch ms a halt or cooldown most recently tripped, or null if neither has ever
+   * tripped today. Set once, on the trip itself -- NOT cleared when the halt/cooldown's
+   * own condition later clears (day rollover, cooldown timer), only by an explicit
+   * acknowledge() call. This is what forces a human to actually look at what happened
+   * before DEMO/LIVE auto-execution can resume, instead of it silently resuming the
+   * moment a timer/day rolls over with nobody having reviewed anything -- manual
+   * confirm-mode execution is unaffected by this, since a human already reviews every
+   * trade there. See requiresAcknowledgement below and autoExecutionListener.ts. */
+  pausedAt: number | null;
+  acknowledgedAt: number | null;
+}
+
+/** True once a halt/cooldown has tripped and hasn't yet been acknowledged since that
+ * trip (a fresh trip after an earlier acknowledgement re-requires one). */
+export function requiresAcknowledgement(state: DailyRiskState): boolean {
+  return state.pausedAt !== null && (state.acknowledgedAt === null || state.acknowledgedAt < state.pausedAt);
 }
 
 function dayKeyFor(nowMs: number): string {
@@ -33,6 +49,8 @@ class RiskStateStore {
         haltedForToday: false,
         consecutiveLosses: 0,
         cooldownUntil: null,
+        pausedAt: null,
+        acknowledgedAt: null,
       };
       this.states.set(account, fresh);
       return fresh;
@@ -45,7 +63,15 @@ class RiskStateStore {
   }
 
   setHaltedForToday(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
-    this.current(nowMs, currentEquity, account).haltedForToday = true;
+    const state = this.current(nowMs, currentEquity, account);
+    state.haltedForToday = true;
+    state.pausedAt = nowMs;
+  }
+
+  /** Explicit human action -- the only thing that lets DEMO/LIVE auto-execution resume
+   * after a halt/cooldown, see requiresAcknowledgement's own doc comment. */
+  acknowledge(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
+    this.current(nowMs, currentEquity, account).acknowledgedAt = nowMs;
   }
 
   /**
@@ -68,6 +94,7 @@ class RiskStateStore {
       state.consecutiveLosses += 1;
       if (state.consecutiveLosses >= maxConsecutiveLosses) {
         state.cooldownUntil = nowMs + cooldownMinutes * 60_000;
+        state.pausedAt = nowMs;
         state.consecutiveLosses = 0;
       }
     } else if (profit > 0) {

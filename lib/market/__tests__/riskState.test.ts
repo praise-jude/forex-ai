@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { riskState } from "../riskState";
+import { requiresAcknowledgement, riskState } from "../riskState";
 
 const DAY_1 = Date.UTC(2024, 1, 1, 10, 0, 0);
 const DAY_1_LATER = Date.UTC(2024, 1, 1, 23, 0, 0);
@@ -39,6 +39,8 @@ describe("riskState", () => {
       haltedForToday: false,
       consecutiveLosses: 0,
       cooldownUntil: null,
+      pausedAt: null,
+      acknowledgedAt: null,
     });
   });
 
@@ -89,5 +91,42 @@ describe("riskState.recordTradeClosed", () => {
     riskState.recordTradeClosed(day, 10000, -50, 5, 30, "live");
     riskState.recordTradeClosed(day, 9950, 0, 5, 30, "live");
     expect(riskState.current(day, 9950, "live").consecutiveLosses).toBe(1);
+  });
+});
+
+describe("requiresAcknowledgement / riskState.acknowledge", () => {
+  it("does not require acknowledgement before anything has ever paused", () => {
+    const day = Date.UTC(2024, 4, 1, 10, 0, 0);
+    const state = riskState.current(day, 10000, "live");
+    expect(requiresAcknowledgement(state)).toBe(false);
+  });
+
+  it("requires acknowledgement once a halt trips, even after acknowledging would be expected to clear it automatically", () => {
+    const day = Date.UTC(2024, 4, 2, 10, 0, 0);
+    riskState.setHaltedForToday(day, 10000, "live");
+    expect(requiresAcknowledgement(riskState.current(day, 10000, "live"))).toBe(true);
+  });
+
+  it("clears once acknowledged, and re-requires it after a fresh trip", () => {
+    const account = "demo";
+    const tripTime = Date.UTC(2024, 4, 3, 10, 0, 0);
+    riskState.setHaltedForToday(tripTime, 5000, account);
+    expect(requiresAcknowledgement(riskState.current(tripTime, 5000, account))).toBe(true);
+
+    const ackTime = tripTime + 60_000;
+    riskState.acknowledge(ackTime, 5000, account);
+    expect(requiresAcknowledgement(riskState.current(ackTime, 5000, account))).toBe(false);
+
+    const secondTripTime = ackTime + 60_000;
+    riskState.setHaltedForToday(secondTripTime, 5000, account);
+    expect(requiresAcknowledgement(riskState.current(secondTripTime, 5000, account))).toBe(true);
+  });
+
+  it("requires acknowledgement once a cooldown trips via recordTradeClosed", () => {
+    const account = "live";
+    const day = Date.UTC(2024, 4, 4, 10, 0, 0);
+    riskState.recordTradeClosed(day, 10000, -50, 2, 30, account);
+    riskState.recordTradeClosed(day, 9950, -50, 2, 30, account);
+    expect(requiresAcknowledgement(riskState.current(day, 9950, account))).toBe(true);
   });
 });

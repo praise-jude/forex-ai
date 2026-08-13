@@ -1,6 +1,6 @@
 "use client";
 
-import type { JournalEntry, PerformanceStats } from "@/lib/market/tradeJournal";
+import type { JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
 import { formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
@@ -11,6 +11,10 @@ interface JournalResponse {
    * itself (which only ever scores closed trades, see getPerformanceStats), just added
    * on top for the "Trades" tile below so it counts every trade ever taken. */
   openCount: number;
+  /** "AI signal performance" -- approved/rejected/expired/blocked counts, distinct from
+   * `stats` above ("actual executed trade performance"). See SignalOutcome's own doc
+   * comment in tradeJournal.ts. */
+  signalFunnel: SignalFunnelStats;
 }
 
 // Trades close on the order of minutes to hours, not seconds -- a slow poll is
@@ -83,6 +87,28 @@ function StatsSummary({ stats, openCount }: { stats: PerformanceStats; openCount
   );
 }
 
+/** "AI signal performance" -- was the AI's signal-to-decision pipeline healthy (did
+ * proposals get a real decision, or mostly expire/get blocked) -- kept visually
+ * distinct from the executed-trade StatsSummary above, which is "actual executed trade
+ * performance" and only ever reflects real closed trades, never a signal that was
+ * proposed but never filled. */
+function SignalFunnelSummary({ funnel }: { funnel: SignalFunnelStats }) {
+  const total = funnel.approved + funnel.rejected + funnel.expired + funnel.blocked;
+  if (total === 0) return null;
+
+  return (
+    <div>
+      <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">AI signal performance (proposals, not trades)</h2>
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        <StatTile label="Approved" value={String(funnel.approved)} tone="positive" />
+        <StatTile label="Rejected" value={String(funnel.rejected)} />
+        <StatTile label="Expired" value={String(funnel.expired)} tone="negative" />
+        <StatTile label="Blocked" value={String(funnel.blocked)} />
+      </div>
+    </div>
+  );
+}
+
 function EntryRow({ entry }: { entry: JournalEntry }) {
   const isLong = entry.direction === "long";
   const inProfit = entry.profit >= 0;
@@ -121,6 +147,7 @@ export function JournalPanel() {
   return (
     <div className="flex flex-col gap-4">
       {data && <StatsSummary stats={data.stats} openCount={data.openCount} />}
+      {data && <SignalFunnelSummary funnel={data.signalFunnel} />}
 
       <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
         <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Closed trades</h2>

@@ -1,5 +1,5 @@
 import { PAIRS, type AccountKey, type MarketRegime, type Pair, type Session, type Timeframe } from "@/lib/market/types";
-import { getPerformanceStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
+import { getPerformanceStats, getSignalFunnelStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
 import { getOpenPositions, isAccountConfigured } from "@/lib/market/metaApiConnection";
 
 export const runtime = "nodejs";
@@ -67,5 +67,14 @@ export async function GET(request: Request) {
   const filter = filterFromParams(searchParams);
   const entries = tradeJournal.all();
 
-  return Response.json({ entries, stats: getPerformanceStats(entries, filter), openCount: openPositionCount() });
+  return Response.json({
+    entries,
+    stats: getPerformanceStats(entries, filter),
+    openCount: openPositionCount(),
+    // Signal-decision funnel (approved/rejected/expired/blocked) -- distinct from
+    // `stats` above, which only ever scores real closed trades. See getSignalFunnelStats
+    // and SignalOutcome's own doc comment in tradeJournal.ts for why these are kept
+    // separate ("AI signal performance" vs "actual executed trade performance").
+    signalFunnel: getSignalFunnelStats(tradeJournal.allSignalOutcomes()),
+  });
 }

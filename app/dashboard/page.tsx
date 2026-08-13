@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Dashboard } from "@/components/dashboard/Dashboard";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
+import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
 import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
+import { DisclaimerFooter } from "@/components/dashboard/DisclaimerFooter";
 
 export default function DashboardPage() {
   return (
@@ -13,8 +15,9 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-lg font-semibold">Forex AI &mdash; SMC Signals</h1>
             <p className="text-sm text-zinc-500">
-              ANALYSIS mode: signal-only, no trades placed automatically &middot; DEMO/LIVE modes auto-execute confirmed
-              signals &middot; manual Buy/Sell always targets the account matching the current mode
+              Confirmation Mode (default): every trade is proposed, never placed, until you explicitly approve it &middot;
+              DEMO/LIVE modes auto-execute confirmed signals with no click &middot; manual approval always targets the account
+              matching the current mode
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-4">
@@ -34,9 +37,11 @@ export default function DashboardPage() {
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <EngineModeControl />
           <ExecutionPolicyControl />
+          <EmergencyStopControl />
         </div>
       </header>
       <Dashboard />
+      <DisclaimerFooter />
     </main>
   );
 }

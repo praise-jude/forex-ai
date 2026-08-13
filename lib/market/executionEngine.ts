@@ -38,8 +38,13 @@ export type ExecutionResult =
  * idempotency guard below, without re-hitting the broker. Called from the manual Buy/Sell
  * confirmation route, the TradingView webhook (always "live"), and the auto-execution
  * listener for DEMO/LIVE engine mode.
+ *
+ * `riskPctOverride` is the dashboard proposal card's one-off "Edit Risk" control --
+ * computeLotSize already takes risk% as a plain argument, so this is the entire feature:
+ * fall back to the account's configured riskPerTradePct when omitted (every caller
+ * except the manual-execute route's own "Edit Risk" field omits it).
  */
-export async function attemptExecution(signal: Signal, accountKey: AccountKey = "live"): Promise<ExecutionResult> {
+export async function attemptExecution(signal: Signal, accountKey: AccountKey = "live", riskPctOverride?: number): Promise<ExecutionResult> {
   // Primary idempotency guard. Must run synchronously, before the first `await` in
   // this function, so it's race-free against a duplicate click (or two browser tabs)
   // arriving while an earlier attempt for the same signal is still in flight.
@@ -131,7 +136,9 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     return { status: "blocked", code: "no_symbol_spec", reason: "no symbol specification available yet" };
   }
 
-  const sizing = computeLotSize(signal, account.equity, config.riskPerTradePct, spec);
+  const riskPct =
+    riskPctOverride !== undefined && Number.isFinite(riskPctOverride) && riskPctOverride > 0 ? riskPctOverride : config.riskPerTradePct;
+  const sizing = computeLotSize(signal, account.equity, riskPct, spec);
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);
     return { status: "skipped_sizing", reason: sizing.reason };
@@ -150,7 +157,7 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     requestedEntry: signal.entry,
     stopLoss: signal.stopLoss,
     takeProfit: signal.takeProfit,
-    riskPct: config.riskPerTradePct,
+    riskPct,
     attemptedAt: now,
   });
 

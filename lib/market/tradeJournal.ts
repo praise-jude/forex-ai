@@ -66,9 +66,27 @@ export interface JournalEntry {
   context: SignalContext | null;
 }
 
+/** What happened to a proposal from the human/system decision's own point of view --
+ * deliberately separate from JournalEntry (a real closed trade's outcome). "approved"
+ * is recorded the moment the confirmation-phrase gate passes, before attemptExecution
+ * even runs, so it reflects "a human said yes", not "the broker filled it" -- that
+ * distinction is what lets getSignalFunnelStats answer "AI signal performance" (was
+ * the signal-to-decision pipeline healthy) separately from "actual executed trade
+ * performance" (getPerformanceStats, over real fills only). */
+export type SignalOutcomeType = "approved" | "rejected" | "expired" | "blocked";
+
+export interface SignalOutcome {
+  signalId: string;
+  pair: Pair;
+  outcome: SignalOutcomeType;
+  reason: string | null;
+  timestamp: number;
+}
+
 interface OnDisk {
   pendingContexts: SignalContext[];
   entries: JournalEntry[];
+  signalOutcomes: SignalOutcome[];
 }
 
 function readFromDisk(): OnDisk {
@@ -77,11 +95,11 @@ function readFromDisk(): OnDisk {
     // deviceStore.ts's own DEVICE_STORE_FILE -- not something to bundle around.
     const raw = fs.readFileSync(/* turbopackIgnore: true */ STORE_FILE, "utf-8");
     const parsed = JSON.parse(raw) as Partial<OnDisk>;
-    return { pendingContexts: parsed.pendingContexts ?? [], entries: parsed.entries ?? [] };
+    return { pendingContexts: parsed.pendingContexts ?? [], entries: parsed.entries ?? [], signalOutcomes: parsed.signalOutcomes ?? [] };
   } catch {
     // Missing file (first boot) or corrupt content -- start empty rather than crash the
     // whole server over a runtime-state file, same philosophy as deviceStore.ts.
-    return { pendingContexts: [], entries: [] };
+    return { pendingContexts: [], entries: [], signalOutcomes: [] };
   }
 }
 
@@ -179,6 +197,18 @@ class TradeJournalStore {
   all(): JournalEntry[] {
     return this.load().entries.slice().sort((a, b) => b.closedAt - a.closedAt);
   }
+
+  /** Called from the execute route (approved/expired/blocked) and the reject route
+   * (rejected) -- purely a recording step, never gates or alters execution itself. */
+  recordSignalOutcome(outcome: SignalOutcome): void {
+    const state = this.load();
+    state.signalOutcomes.push(outcome);
+    this.persist();
+  }
+
+  allSignalOutcomes(): SignalOutcome[] {
+    return this.load().signalOutcomes.slice().sort((a, b) => b.timestamp - a.timestamp);
+  }
 }
 
 const globalKey = Symbol.for("forex-ai.tradeJournal");
@@ -258,4 +288,23 @@ export function getPerformanceStats(entries: JournalEntry[], filter: Performance
   }
 
   return { count, wins, losses, winRate, averageR, maxDrawdownR };
+}
+
+export interface SignalFunnelStats {
+  approved: number;
+  rejected: number;
+  expired: number;
+  blocked: number;
+}
+
+/** Pure aggregation over signal decisions (not trade outcomes) -- this is the "AI
+ * signal performance" half of the split from getPerformanceStats' "actual executed
+ * trade performance" half (see SignalOutcome's own doc comment). */
+export function getSignalFunnelStats(outcomes: SignalOutcome[]): SignalFunnelStats {
+  return {
+    approved: outcomes.filter((o) => o.outcome === "approved").length,
+    rejected: outcomes.filter((o) => o.outcome === "rejected").length,
+    expired: outcomes.filter((o) => o.outcome === "expired").length,
+    blocked: outcomes.filter((o) => o.outcome === "blocked").length,
+  };
 }

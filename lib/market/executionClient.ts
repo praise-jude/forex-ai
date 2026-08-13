@@ -12,7 +12,13 @@ export type ExecuteResponse =
   | { status: "filled"; trade: ExecutedTrade }
   | { status: "rejected"; trade: ExecutedTrade }
   | { status: "not_found" }
-  | { status: "network_error" };
+  | { status: "network_error" }
+  // The two new gate outcomes from the execute route (confirmationMode.ts) -- "expired"
+  // means the proposal's approval window ran out before Approve was clicked;
+  // "confirmation_required" shouldn't normally happen from the dashboard (it always
+  // sends the right phrase automatically), only a real defensive-typing case.
+  | { status: "expired" }
+  | { status: "confirmation_required"; requiredPhrase: string };
 
 export type CardStatus = { state: "idle" } | { state: "loading" } | { state: "done"; result: ExecuteResponse };
 
@@ -25,9 +31,17 @@ export function statusFromTrade(trade: ExecutedTrade): CardStatus | null {
   return null;
 }
 
-export async function executeSignalRequest(signalId: string): Promise<ExecuteResponse> {
+export async function executeSignalRequest(
+  signalId: string,
+  confirmationPhrase: string,
+  riskPctOverride?: number
+): Promise<ExecuteResponse> {
   try {
-    const res = await fetch(`/api/signals/${signalId}/execute`, { method: "POST" });
+    const res = await fetch(`/api/signals/${signalId}/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmationPhrase, riskPctOverride }),
+    });
     return (await res.json()) as ExecuteResponse;
   } catch {
     return { status: "network_error" };

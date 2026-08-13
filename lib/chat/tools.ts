@@ -325,6 +325,10 @@ export function buildTools(ctx: ToolContext) {
 
       const { json } = await callOwnApi(ctx.origin, ctx.authHeader, `/api/signals/${input.signalId}/execute`, {
         method: "POST",
+        // The execute route now requires this itself (confirmationMode.ts's gate) --
+        // already computed and verified above against the user's own raw message, so
+        // this just forwards the exact same phrase, not a second independent check.
+        body: { confirmationPhrase: requiredPhrase },
       });
       const result = json as ExecuteResponse;
       return JSON.stringify({ ok: true, result, spoken: buildResultAnnouncement(signal, result) });

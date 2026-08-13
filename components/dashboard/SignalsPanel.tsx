@@ -1,13 +1,15 @@
 "use client";
 
-import type { Confluence, MarketRegime, Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
-import type { CardStatus } from "@/lib/market/executionClient";
+import { useState } from "react";
+import type { Confluence, HigherTimeframeTrends, MarketRegime, Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
+import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
 import { REGIME_LABEL } from "@/lib/market/noTradeReason";
 import { TradingRobot } from "./TradingRobot";
 import { DirectionBadge, directionTone } from "./DirectionBadge";
 import { SignerBBreakdown } from "./SignerBBreakdown";
 import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
+import { TradeProposalCard, describeExecuteResponse } from "./TradeProposalCard";
 
 // Exported for reuse by PredictionCard.tsx -- one place a confluence tag's display
 // name is defined, not duplicated between the two components that show them.
@@ -47,54 +49,112 @@ function relativeTime(fromMs: number): string {
   return `${hours}h ago`;
 }
 
-function ExecuteControl({ signal, status, onExecute }: { signal: Signal; status: CardStatus; onExecute: () => void }) {
+function statusMessage(result: ExecuteResponse): { text: string; tone: "positive" | "negative" | "neutral" } {
+  if (result.status === "filled") return { text: describeExecuteResponse(result), tone: "positive" };
+  if (result.status === "blocked" || result.status === "skipped_sizing" || result.status === "expired") {
+    return { text: describeExecuteResponse(result), tone: "negative" };
+  }
+  if (result.status === "rejected" || result.status === "not_found" || result.status === "network_error") {
+    return { text: describeExecuteResponse(result), tone: "negative" };
+  }
+  return { text: describeExecuteResponse(result), tone: "neutral" };
+}
+
+const STATUS_TONE_CLASS: Record<"positive" | "negative" | "neutral", string> = {
+  positive: "text-emerald-400",
+  negative: "text-rose-400",
+  neutral: "text-zinc-500",
+};
+
+/**
+ * The AI never places a trade on its own -- a signal only ever becomes a Trade Proposal
+ * (see TradeProposalCard) once the user deliberately opens it by clicking Buy/Sell, and
+ * even then nothing reaches MT5 without a further explicit Approve. In "signal_only"
+ * mode there's no execute affordance at all, matching Mode 1 of the spec this
+ * implements: the AI analyzes and shows signals, and can never place one.
+ */
+function ExecuteControl({
+  signal,
+  status,
+  trends,
+  manualMode,
+  ttlSeconds,
+  defaultRiskPct,
+  onApprove,
+}: {
+  signal: Signal;
+  status: CardStatus;
+  trends: HigherTimeframeTrends | undefined;
+  manualMode: "signal_only" | "confirm";
+  ttlSeconds: number;
+  defaultRiskPct: number;
+  onApprove: (riskPctOverride: number) => void;
+}) {
+  const [proposalOpen, setProposalOpen] = useState(false);
+
   // Watch-tier never cleared the buy/strong_buy confidence bar — shown for information
   // only, with no button at all (attemptExecution also rejects it server-side).
   if (signal.tier === "watch") {
     return <p className="mt-2 text-xs font-medium text-zinc-500">Below confidence threshold — informational only</p>;
   }
 
+  if (status.state === "done") {
+    const { text, tone } = statusMessage(status.result);
+    return <p className={`mt-2 text-xs font-medium ${STATUS_TONE_CLASS[tone]}`}>{text}</p>;
+  }
+
+  if (manualMode === "signal_only") {
+    return <p className="mt-2 text-xs font-medium text-zinc-500">Signal Only mode — nothing executes automatically</p>;
+  }
+
+  if (proposalOpen) {
+    return (
+      <TradeProposalCard
+        signal={signal}
+        trends={trends}
+        ttlSeconds={ttlSeconds}
+        defaultRiskPct={defaultRiskPct}
+        busy={status.state === "loading"}
+        onApprove={onApprove}
+        onDismiss={() => setProposalOpen(false)}
+      />
+    );
+  }
+
   const isLong = signal.direction === "long";
   const label = isLong ? "Buy" : "Sell";
   const colorClasses = isLong ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500";
 
-  if (status.state === "done") {
-    const { result } = status;
-    switch (result.status) {
-      case "filled":
-        return (
-          <p className="mt-2 text-xs font-medium text-emerald-400">
-            Filled @ {formatPrice(signal.pair, result.trade.filledEntry ?? result.trade.requestedEntry)}
-          </p>
-        );
-      case "rejected":
-        return <p className="mt-2 text-xs font-medium text-rose-400">Rejected: {result.trade.rejectReason ?? "unknown reason"}</p>;
-      case "blocked":
-        return <p className="mt-2 text-xs font-medium text-amber-400">Blocked: {result.reason}</p>;
-      case "skipped_sizing":
-        return <p className="mt-2 text-xs font-medium text-amber-400">Skipped: {result.reason}</p>;
-      case "duplicate":
-        return <p className="mt-2 text-xs font-medium text-zinc-500">Already executed</p>;
-      case "not_found":
-        return <p className="mt-2 text-xs font-medium text-rose-400">Signal expired</p>;
-      case "network_error":
-        return <p className="mt-2 text-xs font-medium text-rose-400">Network error — try again</p>;
-    }
-  }
-
   return (
     <button
       type="button"
-      onClick={onExecute}
-      disabled={status.state === "loading"}
-      className={`mt-2 w-full rounded-md px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${colorClasses}`}
+      onClick={() => setProposalOpen(true)}
+      className={`mt-2 w-full rounded-md px-3 py-1.5 text-xs font-semibold text-white transition ${colorClasses}`}
     >
-      {status.state === "loading" ? "Placing order…" : label}
+      {label}
     </button>
   );
 }
 
-function SignalCard({ signal, status, onExecute, regime }: { signal: Signal; status: CardStatus; onExecute: () => void; regime: MarketRegime | undefined }) {
+function SignalCard({
+  signal,
+  status,
+  onExecute,
+  regime,
+  trends,
+  manualMode,
+  ttlSeconds,
+  defaultRiskPct,
+}: {
+  signal: Signal;
+  status: CardStatus;
+  onExecute: (riskPctOverride: number) => void;
+  regime: MarketRegime | undefined;
+  trends: HigherTimeframeTrends | undefined;
+  manualMode: "signal_only" | "confirm";
+  ttlSeconds: number;
+  defaultRiskPct: number;
+}) {
   return (
     <li className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <div className="flex items-center justify-between">
@@ -165,7 +225,15 @@ function SignalCard({ signal, status, onExecute, regime }: { signal: Signal; sta
         </span>
         <span>{relativeTime(signal.createdAt)}</span>
       </div>
-      <ExecuteControl signal={signal} status={status} onExecute={onExecute} />
+      <ExecuteControl
+        signal={signal}
+        status={status}
+        trends={trends}
+        manualMode={manualMode}
+        ttlSeconds={ttlSeconds}
+        defaultRiskPct={defaultRiskPct}
+        onApprove={onExecute}
+      />
     </li>
   );
 }
@@ -175,15 +243,24 @@ export function SignalsPanel({
   statuses,
   onExecute,
   predictions,
+  manualMode,
+  ttlSeconds,
+  defaultRiskPct,
 }: {
   signals: Signal[];
   statuses: Record<string, CardStatus>;
-  onExecute: (signal: Signal) => void;
+  onExecute: (signal: Signal, riskPctOverride: number) => void;
   /** Current per-pair/timeframe regime read, same map Dashboard.tsx already keeps for
    * PredictionCard.tsx -- reflects the market's CURRENT regime, not necessarily the
    * regime at the moment this (possibly older) signal fired. Optional so callers that
    * don't track predictions (none currently) can still render the panel. */
   predictions?: Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>>;
+  /** Confirmation Mode's current manual-execution mode -- "signal_only" shows no
+   * execute affordance at all, "confirm" is the default propose-then-approve flow.
+   * See confirmationMode.ts. */
+  manualMode: "signal_only" | "confirm";
+  ttlSeconds: number;
+  defaultRiskPct: number;
 }) {
   return (
     <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
@@ -197,8 +274,12 @@ export function SignalsPanel({
               key={signal.id}
               signal={signal}
               status={statuses[signal.id] ?? { state: "idle" }}
-              onExecute={() => onExecute(signal)}
+              onExecute={(riskPctOverride) => onExecute(signal, riskPctOverride)}
               regime={predictions?.[signal.pair]?.[signal.timeframe]?.regime}
+              trends={predictions?.[signal.pair]?.[signal.timeframe]?.trends}
+              manualMode={manualMode}
+              ttlSeconds={ttlSeconds}
+              defaultRiskPct={defaultRiskPct}
             />
           ))}
         </ul>

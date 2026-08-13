@@ -335,7 +335,17 @@ async function connect(accountKey: AccountKey): Promise<void> {
       accountKey === "live"
         ? [
             { type: "quotes" },
-            { type: "candles", timeframe: "5m" },
+            // No "5m" here on purpose -- it's the one Timeframe value that's neither a
+            // SIGNAL_TIMEFRAMES entry (no signal engine ever evaluates it) nor part of
+            // higherTimeframes (h1/h4/d1), nor selectable on the dashboard chart (see
+            // TimeframeSelector.tsx's own comment) -- a live subscription for it was
+            // pure unused cost. Dropping it was the direct fix for MetaApi repeatedly
+            // downgrading (removing candle subscriptions from) XAUUSDm/XAGUSDm/
+            // USOILm/UKOILm due to rate limits, seen continuously in production logs --
+            // those symbols stopped receiving live candle updates at all while
+            // downgraded, which is what "candlesticks not moving" actually was.
+            // /api/candles still answers a "5m" request from seedHistory.ts's one-time
+            // REST-fetched snapshot, it just won't tick live.
             { type: "candles", timeframe: "15m" },
             { type: "candles", timeframe: "30m" },
             { type: "candles", timeframe: "1h" },
@@ -511,6 +521,27 @@ export async function closePosition(positionId: string, accountKey: AccountKey =
     return { success: false, numericCode: response.numericCode, stringCode: response.stringCode, message: response.message };
   }
   return { success: true };
+}
+
+/**
+ * The "Close All Positions" emergency action -- loops the existing single-position
+ * closePosition wrapper above, no new broker logic. Closes are attempted serially (not
+ * Promise.all), matching this file's existing single-account/serial-call posture
+ * elsewhere (seedHistory.ts, historyLoader.ts) -- a broker rejecting one close due to a
+ * transient error shouldn't race against others closing concurrently. A failure on one
+ * position never stops the rest from being attempted.
+ */
+export async function closeAllPositions(accountKey: AccountKey = "live"): Promise<{ closed: string[]; failed: { id: string; reason: string }[] }> {
+  const closed: string[] = [];
+  const failed: { id: string; reason: string }[] = [];
+
+  for (const position of getOpenPositions(accountKey)) {
+    const result = await closePosition(position.id, accountKey);
+    if (result.success) closed.push(position.id);
+    else failed.push({ id: position.id, reason: result.message });
+  }
+
+  return { closed, failed };
 }
 
 const connectPromisesKey = Symbol.for("forex-ai.metaApiConnection.connectPromises");
