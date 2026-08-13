@@ -7,6 +7,10 @@ import { usePolledResource } from "@/lib/hooks/usePolledResource";
 interface JournalResponse {
   entries: JournalEntry[];
   stats: PerformanceStats;
+  /** Currently open positions, across every configured account -- not part of `stats`
+   * itself (which only ever scores closed trades, see getPerformanceStats), just added
+   * on top for the "Trades" tile below so it counts every trade ever taken. */
+  openCount: number;
 }
 
 // Trades close on the order of minutes to hours, not seconds -- a slow poll is
@@ -41,7 +45,7 @@ const REASON_LABEL: Record<JournalEntry["reason"], string> = {
   other: "Closed",
 };
 
-function StatTile({ label, value, tone }: { label: string; value: string; tone?: "positive" | "negative" }) {
+function StatTile({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "positive" | "negative" }) {
   return (
     <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <p className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</p>
@@ -52,16 +56,21 @@ function StatTile({ label, value, tone }: { label: string; value: string; tone?:
       >
         {value}
       </p>
+      {hint && <p className="mt-0.5 text-[10px] text-zinc-500">{hint}</p>}
     </div>
   );
 }
 
-function StatsSummary({ stats }: { stats: PerformanceStats }) {
+function StatsSummary({ stats, openCount }: { stats: PerformanceStats; openCount: number }) {
   const averageRTone = stats.averageR === null ? undefined : stats.averageR >= 0 ? "positive" : "negative";
 
   return (
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-      <StatTile label="Trades" value={String(stats.count)} />
+      <StatTile
+        label="Trades"
+        value={String(stats.count + openCount)}
+        hint={openCount > 0 ? `${openCount} open` : undefined}
+      />
       <StatTile label="Win rate" value={stats.count === 0 ? "—" : `${stats.winRate.toFixed(0)}%`} />
       <StatTile label="Record" value={`${stats.wins}W / ${stats.losses}L`} />
       <StatTile
@@ -111,7 +120,7 @@ export function JournalPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {data && <StatsSummary stats={data.stats} />}
+      {data && <StatsSummary stats={data.stats} openCount={data.openCount} />}
 
       <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
         <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Closed trades</h2>

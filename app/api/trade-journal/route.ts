@@ -1,5 +1,6 @@
-import { PAIRS, type MarketRegime, type Pair, type Session, type Timeframe } from "@/lib/market/types";
+import { PAIRS, type AccountKey, type MarketRegime, type Pair, type Session, type Timeframe } from "@/lib/market/types";
 import { getPerformanceStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
+import { getOpenPositions, isAccountConfigured } from "@/lib/market/metaApiConnection";
 
 export const runtime = "nodejs";
 
@@ -52,10 +53,19 @@ function filterFromParams(searchParams: URLSearchParams): PerformanceFilter {
   return filter;
 }
 
+// Every currently open position, across whichever accounts are configured -- summed
+// into the journal's own "Trades" count so it reflects every trade this app has ever
+// taken, not just the ones that have already closed (win/loss/R stats below still stay
+// closed-trades-only, since an open position has no final outcome yet to score).
+function openPositionCount(): number {
+  const accounts: AccountKey[] = ["live", ...(isAccountConfigured("demo") ? (["demo"] as const) : [])];
+  return accounts.reduce((sum, accountKey) => sum + getOpenPositions(accountKey).length, 0);
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filter = filterFromParams(searchParams);
   const entries = tradeJournal.all();
 
-  return Response.json({ entries, stats: getPerformanceStats(entries, filter) });
+  return Response.json({ entries, stats: getPerformanceStats(entries, filter), openCount: openPositionCount() });
 }
