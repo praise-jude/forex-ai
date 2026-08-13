@@ -9,6 +9,7 @@ import {
   LineStyle,
   type IChartApi,
   type IPriceLine,
+  type IRange,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type Time,
@@ -39,6 +40,24 @@ const FORECAST_BAR_SPACING = 8;
 
 function toTime(ms: number): UTCTimestamp {
   return Math.floor(ms / 1000) as UTCTimestamp;
+}
+
+const VISIBLE_RANGE_STORAGE_PREFIX = "forex-ai:chart-visible-range:";
+
+// Keyed per pair+timeframe (not a single global key) so switching between them doesn't
+// clobber each other's zoom -- restored on refresh AND on switching back to a
+// pair/timeframe already zoomed earlier in the session.
+function visibleRangeStorageKey(pair: Pair, timeframe: Timeframe): string {
+  return `${VISIBLE_RANGE_STORAGE_PREFIX}${pair}:${timeframe}`;
+}
+
+function safeParseRange(raw: string): IRange<Time> | null {
+  try {
+    const parsed = JSON.parse(raw) as IRange<Time>;
+    return typeof parsed.from === "number" && typeof parsed.to === "number" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function toBar(candle: Candle) {
@@ -77,6 +96,15 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const forecastLabelRef = useRef<HTMLDivElement>(null);
+  // Kept current via the effect below so the visible-range-change subscription (wired up
+  // once, in the mount-only effect) always saves under today's pair/timeframe rather than
+  // whatever was selected when the chart was first created.
+  const pairRef = useRef(pair);
+  const timeframeRef = useRef(timeframe);
+  useEffect(() => {
+    pairRef.current = pair;
+    timeframeRef.current = timeframe;
+  }, [pair, timeframe]);
 
   const renderAll = useCallback((candles: Candle[]) => {
     seriesRef.current?.setData(candles.map(toBar));
@@ -173,7 +201,21 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     forecastSeriesRef.current = forecast;
     seriesMarkersRef.current = createSeriesMarkers(candle, []);
 
+    // Persists the user's own zoom/pan so it survives a page refresh (and switching back
+    // to a pair/timeframe they'd already zoomed earlier) instead of always resetting to
+    // fitContent() -- see the reseed effect below, which reads this back. `range` is null
+    // right after the chart is created (no data yet) -- ignored rather than clearing the
+    // just-restored value, or that spurious event would race the reseed effect's own read
+    // of localStorage and wipe out the saved zoom before it's ever used.
+    const handleVisibleRangeChange = (range: IRange<Time> | null) => {
+      if (!range) return;
+      const key = visibleRangeStorageKey(pairRef.current, timeframeRef.current);
+      window.localStorage.setItem(key, JSON.stringify(range));
+    };
+    chart.timeScale().subscribeVisibleTimeRangeChange(handleVisibleRangeChange);
+
     return () => {
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(handleVisibleRangeChange);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -195,9 +237,21 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       .then((res) => res.json())
       .then((data: { candles: Candle[] }) => {
         if (cancelled) return;
+
+        // Read the saved zoom BEFORE setData() below -- series.setData() auto-fits the
+        // time scale itself the first time a series goes from empty to populated, which
+        // fires the same visible-range-change subscription that persists the user's zoom
+        // (see the mount effect above) and would otherwise clobber the very value being
+        // restored here.
+        const saved = window.localStorage.getItem(visibleRangeStorageKey(pair, timeframe));
+        const savedRange = saved ? safeParseRange(saved) : null;
+
         candlesRef.current = data.candles;
         renderAll(data.candles);
-        chartRef.current?.timeScale().fitContent();
+
+        if (savedRange) chartRef.current?.timeScale().setVisibleRange(savedRange);
+        else chartRef.current?.timeScale().fitContent();
+
         redrawAnnotations();
       })
       .catch(() => {
