@@ -40,7 +40,7 @@ Either switch blocks a Buy/Sell click the same way it would have blocked an auto
 
 ### Signal engine: two independent signers
 
-Every setup is found by SMC alone (Signer A — liquidity sweeps, structure breaks, order blocks/FVGs; see `lib/market/signalEngine.ts`), then checked against an independent second signer (Signer B — EMA trend, RSI momentum/divergence, Supertrend, currency strength, session; see `lib/market/signerB.ts`) that's computed without reference to SMC's own direction. A trade only proceeds when the two agree; a genuine tie or opposite-direction read from Signer B holds it (`lib/market/decisionMatrix.ts`) — but a merely-weaker, still-agreeing Signer B never drags SMC's own score down. No backtesting has been run to validate any confidence number as a win-rate — treat it as "how well-confirmed is this setup," not a probability of profit.
+Every setup is found by SMC alone (Signer A — liquidity sweeps, structure breaks, order blocks/FVGs; see `lib/market/signalEngine.ts`), then checked against an independent second signer (Signer B — EMA trend, RSI momentum/divergence, Supertrend, currency strength, session; see `lib/market/signerB.ts`) that's computed without reference to SMC's own direction. A trade only proceeds when the two agree; a genuine tie or opposite-direction read from Signer B holds it (`lib/market/decisionMatrix.ts`) — but a merely-weaker, still-agreeing Signer B never drags SMC's own score down. A confidence number is "how well-confirmed is this setup," not a probability of profit — see "Backtesting" below for how to check any of this against real history, and its own honestly-disclosed limitations.
 
 London/New York killzone hours (`lib/market/sessions.ts`) default to 08:00–11:00 / 13:00–17:00 GMT, optionally overridable per `.env.local`:
 
@@ -70,6 +70,18 @@ DEMO and LIVE go through **exactly the same risk checks** as manual execution �
 **What auto-pilot does not affect**: the TradingView webhook (above) always targets your live account directly, completely unaffected by engine mode — it has its own dedicated, always-on execution path.
 
 **Before enabling DEMO**: create a free MT5 demo account with your broker (or any broker — MetaApi doesn't require it to match your live broker), add it in your MetaApi dashboard the same way you added the live account, and set `METAAPI_DEMO_TOKEN`/`METAAPI_DEMO_ACCOUNT_ID`. **Before ever typing the LIVE confirmation phrase**: validate the engine's behavior thoroughly in DEMO mode first — LIVE places real orders on real money the instant a signal is confirmed, with no further confirmation per trade.
+
+### Multi-timeframe bias & execution policy
+
+Every M15/M30/1H setup the SMC engine finds must already agree with D1, H4, and H1 EMA50/200 trend direction — this is a hard pre-gate in `signalEngine.ts`, not a display-only filter: a bar where all three don't exactly agree with each other and with the setup's own implied direction never even reaches structure/liquidity detection (`trend_disagreement`). The dashboard's per-pair card shows this same D1/H4/H1 read continuously (a small "D1 ▲ · H4 ▲ · H1 ▼" row), not just when a signal happens to get blocked for that specific reason.
+
+On top of that, the **Auto-execute floor** control (next to the engine-mode selector on `/dashboard`) lets you raise *how selective* auto-execution is without a redeploy — require `strong_buy` instead of `buy`, and/or a minimum risk/reward — without changing how signals are scored or how take-profit targets are picked (those stay fixed, tested constants). It can only ever make execution *more* selective than the shipped default (`buy`, no RR minimum), never less, so no confirmation phrase is needed to change it. TradingView-sourced signals are exempt (see `EXEC_MIN_TIER`/`EXEC_MIN_RISK_REWARD` above) — that integration hardcodes tier `buy` by design and has its own dedicated execution path.
+
+### Backtesting
+
+`/backtest` replays the *real* signal engine — same D1/H4/H1 gate, same SMC detectors, same scoring, same Signer B — bar by bar against historical MetaApi candles, for a chosen pair (or all pairs), timeframe, and lookback window (up to 180 days). One run at a time; a running job shows live progress and can be cancelled between pairs.
+
+**Read the disclosure banner on every result before trusting the numbers** — two things are deliberately *not* simulated because no historical archive exists to check against: high-impact news blackout (the live news filter only holds a near-term calendar, so it always reads "clear" for a past date) and currency-strength confirmation (excluded from Signer B's vote entirely rather than silently fed today's real reading into a bar from weeks ago). Position management (break-even, trailing stop, early invalidation exit) also isn't simulated — only a fixed stop-loss vs. take-profit-1 forward scan, with the pessimistic tie-break (stop-loss wins) when a single candle's range crosses both. Sizing uses a fixed hypothetical stake, not real lot sizing/spread/commission/compounding. All of this means results skew more optimistic than live trading — treat this as a filter-quality check (does the multi-timeframe gate actually produce a positive edge over history), not a profit projection.
 
 ### TradingView webhook (optional, auto-executes — read this before enabling)
 
@@ -176,7 +188,7 @@ npm run db:migrate    # applies pending migrations to DATABASE_URL
 
 ### Not built yet
 
-API tokens, rate limiting, usage tracking, Paystack subscriptions/billing, a public marketing site and docs, mobile parity for accounts, a backtesting engine, and full database persistence for the trading engine itself (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens are file-persisted and now customer accounts are DB-persisted, see "Customer accounts" above) are intentionally out of scope for this pass.
+API tokens, rate limiting, usage tracking, Paystack subscriptions/billing, a public marketing site and docs, mobile parity for accounts, and full database persistence for the trading engine itself (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens, backtest job history, and customer accounts are persisted, see "Backtesting" and "Customer accounts" above) are intentionally out of scope for this pass.
 
 ## Getting Started
 

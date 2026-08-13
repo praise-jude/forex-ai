@@ -10,6 +10,7 @@ function buildUpdate(overrides: Partial<PredictionUpdate> = {}): PredictionUpdat
     evaluation: { status: "signal", signal: buildSignal({ pair: "GBP/USD" }) },
     time: Date.now(),
     regime: "strong_uptrend",
+    trends: { d1: "bullish", h4: "bullish", h1: "bullish" },
     ...overrides,
   };
 }

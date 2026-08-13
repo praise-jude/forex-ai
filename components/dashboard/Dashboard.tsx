@@ -164,7 +164,14 @@ export function Dashboard() {
           voice.onSignal(event.signal);
         }
       } else if (event.type === "prediction") {
-        const update = { pair: event.pair, timeframe: event.timeframe, evaluation: event.evaluation, time: event.time, regime: event.regime };
+        const update = {
+          pair: event.pair,
+          timeframe: event.timeframe,
+          evaluation: event.evaluation,
+          time: event.time,
+          regime: event.regime,
+          trends: event.trends,
+        };
         setPredictions((prev) => ({ ...prev, [event.pair]: { ...prev[event.pair], [event.timeframe]: update } }));
         voice.onPredictionChange(update);
       }

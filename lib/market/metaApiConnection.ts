@@ -28,6 +28,7 @@ import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
 import { detectMarketRegime } from "./marketRegime";
 import { checkNews } from "./newsFilter";
+import { emaTrendDirection } from "./indicators/emaTrend";
 import { scoreSetupQuality } from "./setupQualityScore";
 import { tradeJournal, type JournalCloseReason } from "./tradeJournal";
 import { positionStore } from "./positionStore";
@@ -107,14 +108,23 @@ class MarketSyncListener extends SynchronizationListener {
         };
         const evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
         const time = Date.now();
+        // Same emaTrendDirection call signalEngine.ts's own hard trend-agreement gate
+        // already makes on these exact series -- recomputed here (cheap: two EMAs over
+        // <=300 candles) so the dashboard can show D1/H4/H1 bias for every update, not
+        // just the ones a signal happens to fire or get blocked on for that reason.
+        const trends = {
+          d1: emaTrendDirection(higherTimeframes.d1),
+          h4: emaTrendDirection(higherTimeframes.h4),
+          h1: emaTrendDirection(higherTimeframes.h1),
+        };
         // Computed independently of evaluateSignal (see marketRegime.ts's own doc
         // comment) -- reuses the exact same closed-candle series and news check, never
         // gates or alters `evaluation` itself, just explains the backdrop it happened
         // against.
         const lastClosed = priorSeries[priorSeries.length - 1];
         const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
-        predictionStore.set(pair, timeframe, { pair, timeframe, evaluation, time, regime });
-        eventBus.publish({ type: "prediction", pair, timeframe, evaluation, time, regime });
+        predictionStore.set(pair, timeframe, { pair, timeframe, evaluation, time, regime, trends });
+        eventBus.publish({ type: "prediction", pair, timeframe, evaluation, time, regime, trends });
         if (evaluation.status === "signal") {
           publishSignal(evaluation.signal);
           // Snapshot the decision context now, while it's still real -- signalStore

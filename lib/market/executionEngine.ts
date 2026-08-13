@@ -4,6 +4,7 @@ import { positionStore } from "./positionStore";
 import { priceStore } from "./priceStore";
 import { riskState } from "./riskState";
 import { checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
+import { checkExecutionPolicy, getExecutionPolicy, type ExecutionPolicyBlockCode } from "./executionPolicy";
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize } from "./positionSizing";
 import {
@@ -25,7 +26,7 @@ function shortClientId(signalId: string): string {
 
 export type ExecutionResult =
   | { status: "duplicate" }
-  | { status: "blocked"; code: RiskBlockCode | "no_account" | "no_symbol_spec" | "watch_tier"; reason: string }
+  | { status: "blocked"; code: RiskBlockCode | "no_account" | "no_symbol_spec" | "watch_tier" | ExecutionPolicyBlockCode; reason: string }
   | { status: "skipped_sizing"; reason: string }
   | { status: "filled"; trade: ExecutedTrade }
   | { status: "rejected"; trade: ExecutedTrade };
@@ -49,6 +50,14 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   // them client-side. This is the server-side backstop in case that's ever bypassed.
   if (signal.tier === "watch") {
     return { status: "blocked", code: "watch_tier", reason: "watch-tier signals are informational only and cannot be executed" };
+  }
+
+  // Operator-configured selectivity floor, on top of the signal's own already-computed
+  // tier/riskReward -- never changes how a signal was scored or how its TP was picked
+  // (see executionPolicy.ts). Exempts TradingView-sourced signals internally.
+  const policyCheck = checkExecutionPolicy(signal, getExecutionPolicy());
+  if (!policyCheck.allowed) {
+    return { status: "blocked", code: policyCheck.code, reason: policyCheck.reason };
   }
 
   const now = Date.now();

@@ -3,6 +3,7 @@ import { Dashboard } from "@/components/dashboard/Dashboard";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
+import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
 
 export default function DashboardPage() {
   return (
@@ -23,11 +24,17 @@ export default function DashboardPage() {
             <Link href="/journal" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
               Journal
             </Link>
+            <Link href="/backtest" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
+              Backtest
+            </Link>
             <ConnectionStatus />
             <KillSwitchControl />
           </div>
         </div>
-        <EngineModeControl />
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <EngineModeControl />
+          <ExecutionPolicyControl />
+        </div>
       </header>
       <Dashboard />
     </main>

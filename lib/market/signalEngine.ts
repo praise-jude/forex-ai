@@ -17,8 +17,8 @@ import { isAboveAverageVolume } from "./indicators/volume";
 import { isEmaStackAligned } from "./indicators/emaStack";
 import { calculateSupertrend } from "./indicators/supertrend";
 import { emaTrendDirection } from "./indicators/emaTrend";
-import { computeUsdStrength, usdStrengthSupports as computeUsdStrengthSupport } from "./currencyStrength";
-import { checkNews } from "./newsFilter";
+import { computeUsdStrength, usdStrengthSupports as computeUsdStrengthSupport, type UsdStrength } from "./currencyStrength";
+import { checkNews, type NewsStatus } from "./newsFilter";
 import { scoreSignal } from "./confidenceScore";
 import { evaluateSignerB } from "./signerB";
 import { combineSigners } from "./decisionMatrix";
@@ -95,7 +95,15 @@ export function evaluateSignal(
   candles: Candle[],
   pair: Pair,
   timeframe: Timeframe,
-  higherTimeframes: HigherTimeframeCandles
+  higherTimeframes: HigherTimeframeCandles,
+  // Only ever passed by the backtester (see lib/market/backtest/) -- undefined at every
+  // live call site, so live behavior is unchanged. checkNews/computeUsdStrength are both
+  // live-cache reads with no historical archive behind them; the backtester supplies
+  // explicit, deterministic values instead of letting either silently read today's real
+  // data while replaying a candle from weeks or months ago (computeUsdStrength in
+  // particular takes no timestamp at all, so left alone it would feed today's real
+  // currency-strength reading into every single historical bar's Signer B vote).
+  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
 ): SignalEvaluation {
   const noTrade = (reason: NoTradeReason): SignalEvaluation => ({ status: "no_trade", reason });
 
@@ -223,7 +231,7 @@ export function evaluateSignal(
   // but a high-impact release for one of this pair's currencies is imminent. Never
   // fires from missing/unreachable news data (see checkNews's own "unavailable" vs
   // "clear" distinction) -- only from a genuinely detected upcoming event.
-  const newsCheck = checkNews(pair, lastCandle.time);
+  const newsCheck = overrides?.newsStatus ?? checkNews(pair, lastCandle.time);
   if (newsCheck.status === "high_impact_soon") {
     return noTrade({
       code: "news_blackout",
@@ -271,7 +279,7 @@ export function evaluateSignal(
   // above -- see signerB.ts. Combined via decisionMatrix.ts's hard/soft filter split:
   // only a genuine tie or opposite-direction read from Signer B ever blocks.
   const supertrendPoint = calculateSupertrend(candles)[lastIndex];
-  const usdStrength = computeUsdStrength();
+  const usdStrength = overrides?.usdStrength ?? computeUsdStrength();
   const session = getActiveSession(lastCandle.time);
 
   const signerB = evaluateSignerB({ candles, pair, swings, rsiSeries, supertrendPoint, usdStrength, session });

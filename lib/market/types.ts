@@ -208,11 +208,30 @@ export type NoTradeReason =
 
 export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 
+/** D1/H4/H1 EMA50/200 trend read, independent of whether a signal actually fired --
+ * the same three values signalEngine.ts's own hard trend-agreement gate already
+ * computes (see emaTrendDirection), surfaced here so the dashboard can show real
+ * per-timeframe bias continuously instead of only when a signal is blocked for
+ * trend_disagreement specifically. */
+export interface HigherTimeframeTrends {
+  d1: "bullish" | "bearish" | "neutral";
+  h4: "bullish" | "bearish" | "neutral";
+  h1: "bullish" | "bearish" | "neutral";
+}
+
 export type StreamEvent =
   | { type: "price"; pair: Pair; bid: number; ask: number; time: number }
   | { type: "candle"; pair: Pair; timeframe: Timeframe; candle: Candle }
   | { type: "signal"; signal: Signal }
-  | { type: "prediction"; pair: Pair; timeframe: Timeframe; evaluation: SignalEvaluation; time: number; regime: MarketRegime };
+  | {
+      type: "prediction";
+      pair: Pair;
+      timeframe: Timeframe;
+      evaluation: SignalEvaluation;
+      time: number;
+      regime: MarketRegime;
+      trends: HigherTimeframeTrends;
+    };
 
 /** Latest per-pair evaluation result -- overwritten every closed M15 candle, no
  * history kept (see predictionStore.ts). Distinct from Signal: exists even when no
@@ -226,6 +245,7 @@ export interface PredictionUpdate {
    * update, not just a qualifying signal, so a NO TRADE reads with real context (e.g.
    * "SMC found a setup, but the market is ranging") instead of a bare gate reason. */
   regime: MarketRegime;
+  trends: HigherTimeframeTrends;
 }
 
 // --- Execution ---

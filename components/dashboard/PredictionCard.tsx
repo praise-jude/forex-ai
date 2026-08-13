@@ -1,6 +1,6 @@
 "use client";
 
-import type { NoTradeReason, PredictionUpdate } from "@/lib/market/types";
+import type { HigherTimeframeTrends, NoTradeReason, PredictionUpdate } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline, type PredictionHeadline } from "@/lib/market/predictionLabel";
 import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
 import { TIMEFRAME_MS } from "@/lib/market/timeframes";
@@ -41,6 +41,34 @@ function noTradeStatus(reason: NoTradeReason): { tone: BadgeTone; label: string 
   return { tone: "neutral", label: "WAIT" };
 }
 
+const TREND_ARROW: Record<HigherTimeframeTrends["d1"], string> = { bullish: "▲", bearish: "▼", neutral: "▬" };
+const TREND_COLOR: Record<HigherTimeframeTrends["d1"], string> = {
+  bullish: "text-emerald-400",
+  bearish: "text-rose-400",
+  neutral: "text-zinc-500",
+};
+
+// Shown unconditionally (not only when a signal is blocked for trend_disagreement) --
+// this is the same D1/H4/H1 EMA50/200 read signalEngine.ts's own hard agreement gate
+// makes every bar (see metaApiConnection.ts's `trends` computation), so the dashboard
+// always shows real higher-timeframe bias, not just the one rejection reason that used
+// to be the only place it leaked through.
+function TrendsRow({ trends }: { trends: HigherTimeframeTrends }) {
+  return (
+    <div className="mt-1.5 flex items-center gap-2.5 text-[11px] text-zinc-500">
+      <span>
+        D1 <span className={TREND_COLOR[trends.d1]}>{TREND_ARROW[trends.d1]}</span>
+      </span>
+      <span>
+        H4 <span className={TREND_COLOR[trends.h4]}>{TREND_ARROW[trends.h4]}</span>
+      </span>
+      <span>
+        H1 <span className={TREND_COLOR[trends.h1]}>{TREND_ARROW[trends.h1]}</span>
+      </span>
+    </div>
+  );
+}
+
 /**
  * Surfaces the SMC engine's real per-candle evaluation for the selected pair -- either
  * a qualifying Signal (direction/confidence/evidence) or an honest NO TRADE with the
@@ -66,6 +94,8 @@ export function PredictionCard({ update }: { update: PredictionUpdate | null }) 
           <span className="text-sm font-semibold text-zinc-200">{update.evaluation.signal.confidence.toFixed(0)}% confidence</span>
         )}
       </div>
+
+      <TrendsRow trends={update.trends} />
 
       {subline && <p className="mt-1.5 text-xs text-zinc-400">{subline}</p>}
 

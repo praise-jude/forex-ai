@@ -10,6 +10,7 @@ function buildUpdate(overrides: Partial<PredictionUpdate> = {}): PredictionUpdat
     evaluation: { status: "no_trade", reason: { code: "no_setup" } },
     time: Date.now(),
     regime: "range",
+    trends: { d1: "neutral", h4: "neutral", h1: "neutral" },
     ...overrides,
   };
 }

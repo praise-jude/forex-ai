@@ -186,6 +186,7 @@ describe("chat tools -- confirm-phrase safety gates", () => {
         evaluation: { status: "signal", signal },
         time: Date.now(),
         regime: "strong_uptrend",
+        trends: { d1: "bullish", h4: "bullish", h1: "bullish" },
       });
 
       const tools = buildTools(ctxWith("just checking"));

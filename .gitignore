@@ -44,6 +44,9 @@ yarn-error.log*
 # registered mobile push-notification device tokens (runtime state, not source)
 .device-tokens.json
 
+# persisted backtest job history (runtime state, not source)
+.backtest-results.json
+
 # MetaApi SDK's local runtime cache (account deal/order history), not source
 .metaapi/
 
