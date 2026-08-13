@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  checkCorrelatedExposure,
   checkPriceDrift,
   checkRiskLimits,
   checkSpread,
@@ -7,6 +8,7 @@ import {
   isEnvKillSwitchActive,
   isKillSwitchActive,
   STALE_PRICE_FRACTION_OF_STOP,
+  type CorrelatedExposureInput,
   type PriceDriftInput,
   type RiskCheckInput,
   type SpreadInput,
@@ -167,6 +169,51 @@ describe("checkSpread", () => {
 
   it("allows when entry and stop loss are equal (degenerate case handled elsewhere, not here)", () => {
     expect(checkSpread(buildSpreadInput({ entry: 1.1, stopLoss: 1.1 })).allowed).toBe(true);
+  });
+});
+
+function buildCorrelationInput(overrides: Partial<CorrelatedExposureInput> = {}): CorrelatedExposureInput {
+  return {
+    pair: "EUR/USD",
+    direction: "long",
+    openPositions: [],
+    maxCorrelatedPositions: 1,
+    ...overrides,
+  };
+}
+
+describe("checkCorrelatedExposure", () => {
+  it("allows when there are no open positions", () => {
+    expect(checkCorrelatedExposure(buildCorrelationInput())).toEqual({ allowed: true });
+  });
+
+  it("allows an uncorrelated open position", () => {
+    // EUR/USD long is a short-USD bet; BTC/USD has no correlation partner in this model.
+    const input = buildCorrelationInput({ openPositions: [{ pair: "BTC/USD", direction: "long" }] });
+    expect(checkCorrelatedExposure(input).allowed).toBe(true);
+  });
+
+  it("blocks a second correlated position once the cap (default 1) is reached", () => {
+    const input = buildCorrelationInput({ openPositions: [{ pair: "GBP/USD", direction: "long" }] });
+    const result = checkCorrelatedExposure(input);
+    expect(result.allowed).toBe(false);
+    expect((result as { code: string }).code).toBe("correlated_exposure");
+  });
+
+  it("respects a higher configured cap", () => {
+    const input = buildCorrelationInput({ openPositions: [{ pair: "GBP/USD", direction: "long" }], maxCorrelatedPositions: 2 });
+    expect(checkCorrelatedExposure(input).allowed).toBe(true);
+  });
+
+  it("counts multiple correlated positions against the cap", () => {
+    const input = buildCorrelationInput({
+      openPositions: [
+        { pair: "GBP/USD", direction: "long" },
+        { pair: "AUD/USD", direction: "long" },
+      ],
+      maxCorrelatedPositions: 2,
+    });
+    expect(checkCorrelatedExposure(input).allowed).toBe(false);
   });
 });
 

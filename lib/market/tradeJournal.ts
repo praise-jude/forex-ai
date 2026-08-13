@@ -290,6 +290,32 @@ export function getPerformanceStats(entries: JournalEntry[], filter: Performance
   return { count, wins, losses, winRate, averageR, maxDrawdownR };
 }
 
+/**
+ * Groups entries by pair or session and runs getPerformanceStats over each bucket --
+ * the aggregate "stats" figure answers "am I profitable", this answers "which pairs/
+ * sessions is that actually coming from". Entries with no context (aged-out/predates
+ * this feature) are simply excluded from the "session" grouping (there's nothing to
+ * group them by), same null-handling getPerformanceStats itself already does for a
+ * session filter -- they still count toward the aggregate stats, just not this
+ * breakdown.
+ */
+export function getPerformanceBreakdown(entries: JournalEntry[], dimension: "pair" | "session"): Record<string, PerformanceStats> {
+  const buckets = new Map<string, JournalEntry[]>();
+  for (const entry of entries) {
+    const key = dimension === "pair" ? entry.pair : entry.context?.session;
+    if (!key) continue;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(entry);
+    else buckets.set(key, [entry]);
+  }
+
+  const breakdown: Record<string, PerformanceStats> = {};
+  for (const [key, bucketEntries] of buckets) {
+    breakdown[key] = getPerformanceStats(bucketEntries);
+  }
+  return breakdown;
+}
+
 export interface SignalFunnelStats {
   approved: number;
   rejected: number;

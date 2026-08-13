@@ -130,6 +130,8 @@ function blockedReasonSpeech(code: string, reason: string): string {
     case "daily_loss":
     case "halted":
       return "Autopilot is locked for today -- the daily loss limit has already been reached.";
+    case "correlated_exposure":
+      return "That would stack a second position betting the same direction as one you already have open, so I skipped it.";
     default:
       return reason;
   }

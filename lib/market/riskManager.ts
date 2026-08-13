@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import type { Pair } from "./types";
+import { isCorrelated } from "./pairCorrelation";
 
 export interface RiskCheckInput {
   killSwitchActive: boolean;
@@ -23,7 +25,8 @@ export type RiskBlockCode =
   | "max_trades"
   | "daily_loss"
   | "stale_price"
-  | "wide_spread";
+  | "wide_spread"
+  | "correlated_exposure";
 
 function computeDrawdownPct(startOfDayEquity: number, currentEquity: number): number {
   if (startOfDayEquity <= 0) return 0;
@@ -81,6 +84,36 @@ export function checkRiskLimits(input: RiskCheckInput): RiskCheckResult {
       allowed: false,
       code: "daily_loss",
       reason: `daily loss limit reached (${drawdownPct.toFixed(2)}% >= ${input.maxDailyLossPct}%)`,
+    };
+  }
+  return { allowed: true };
+}
+
+export interface CorrelatedExposureInput {
+  pair: Pair;
+  direction: "long" | "short";
+  /** Every other currently-open position on the account (from getOpenPositions) --
+   * never includes the position this check is deciding whether to allow, since that
+   * one doesn't exist yet. */
+  openPositions: { pair: Pair; direction: "long" | "short" }[];
+  maxCorrelatedPositions: number;
+}
+
+/**
+ * Blocks a new position from stacking the same directional bet an already-open one
+ * represents -- e.g. EUR/USD long opened, then a GBP/USD long signal fires: both are a
+ * bet that USD weakens, not two diversified trades. See pairCorrelation.ts for the
+ * (deliberately simple, static) grouping this counts against. A bug here can only make
+ * execution MORE conservative (block a trade it shouldn't), never less -- it has no way
+ * to permit a trade that every other check would have blocked anyway.
+ */
+export function checkCorrelatedExposure(input: CorrelatedExposureInput): RiskCheckResult {
+  const correlatedCount = input.openPositions.filter((p) => isCorrelated(input.pair, input.direction, p.pair, p.direction)).length;
+  if (correlatedCount >= input.maxCorrelatedPositions) {
+    return {
+      allowed: false,
+      code: "correlated_exposure",
+      reason: `${correlatedCount} correlated position(s) already open (max ${input.maxCorrelatedPositions}) -- ${input.pair} ${input.direction} would stack the same directional bet`,
     };
   }
   return { allowed: true };

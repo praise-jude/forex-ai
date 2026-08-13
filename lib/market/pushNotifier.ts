@@ -13,6 +13,7 @@ const PREF_KEY_FOR_CATEGORY: Record<NotificationCategory, keyof PushDevice["noti
   order_rejected: "tradeExecution",
   risk_alert: "riskAlerts",
   connection_alert: "connectionAlerts",
+  weekly_digest: "weeklyDigest",
 };
 
 let cachedClient: Expo | null = null;

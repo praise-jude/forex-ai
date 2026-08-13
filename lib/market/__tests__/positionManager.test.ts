@@ -15,6 +15,7 @@ function buildTrade(overrides: Partial<ExecutedTrade> = {}): ExecutedTrade {
     filledEntry: 1.1,
     stopLoss: 1.09, // 0.01 stop distance
     takeProfit: 1.13,
+    takeProfit2: 1.15,
     status: "filled",
     riskPct: 1,
     attemptedAt: Date.now(),
@@ -27,9 +28,10 @@ const CONFIG: PositionManagementConfig = {
   breakEvenTriggerR: 1.0,
   trailingArmTriggerR: 1.5,
   trailingDistanceFractionOfStop: 1.0,
+  partialCloseEnabled: false,
 };
 
-const FRESH_STATE: PositionManagementState = { breakEvenApplied: false, trailingArmed: false };
+const FRESH_STATE: PositionManagementState = { breakEvenApplied: false, trailingArmed: false, partialCloseApplied: false };
 
 // Boundary comparisons here are inherently floating-point-sensitive (e.g. 1.11 - 1.1
 // isn't exactly 0.01 in IEEE754) -- every case below uses a price comfortably inside or
@@ -61,7 +63,7 @@ describe("evaluatePositionForManagement", () => {
 
     it("is idempotent -- never re-fires once already applied", () => {
       const trade = buildTrade({ requestedEntry: 1.1, stopLoss: 1.09 });
-      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: false };
+      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: false, partialCloseApplied: false };
       expect(evaluatePositionForManagement(trade, 1.111, CONFIG, state)).toEqual({ type: "none" });
     });
   });
@@ -94,7 +96,7 @@ describe("evaluatePositionForManagement", () => {
 
     it("never re-arms once already armed, even as price keeps climbing", () => {
       const trade = buildTrade({ requestedEntry: 1.1, stopLoss: 1.09 });
-      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: true };
+      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: true, partialCloseApplied: false };
       expect(evaluatePositionForManagement(trade, 1.2, CONFIG, state)).toEqual({ type: "none" });
     });
 
@@ -105,10 +107,57 @@ describe("evaluatePositionForManagement", () => {
     });
   });
 
+  describe("partial-close (TP1) trigger", () => {
+    const PARTIAL_CONFIG: PositionManagementConfig = { ...CONFIG, partialCloseEnabled: true };
+
+    it("does nothing while disabled, even once price reaches TP1", () => {
+      const trade = buildTrade({ direction: "long", requestedEntry: 1.1, stopLoss: 1.09, takeProfit: 1.113 }); // TP1 at 1.3R
+      const action = evaluatePositionForManagement(trade, 1.113, CONFIG, FRESH_STATE); // partialCloseEnabled: false
+      expect(action).toEqual({ type: "break_even", newStopLoss: 1.1 });
+    });
+
+    it("fires once price reaches TP1 for a long trade", () => {
+      const trade = buildTrade({ direction: "long", requestedEntry: 1.1, stopLoss: 1.09, takeProfit: 1.113 });
+      expect(evaluatePositionForManagement(trade, 1.113, PARTIAL_CONFIG, FRESH_STATE)).toEqual({ type: "partial_close" });
+      expect(evaluatePositionForManagement(trade, 1.12, PARTIAL_CONFIG, FRESH_STATE)).toEqual({ type: "partial_close" }); // past TP1 too
+    });
+
+    it("fires once price reaches TP1 for a short trade", () => {
+      const trade = buildTrade({ direction: "short", requestedEntry: 1.1, stopLoss: 1.11, takeProfit: 1.087 });
+      expect(evaluatePositionForManagement(trade, 1.087, PARTIAL_CONFIG, FRESH_STATE)).toEqual({ type: "partial_close" });
+    });
+
+    it("does nothing before TP1 is reached", () => {
+      const trade = buildTrade({ direction: "long", requestedEntry: 1.1, stopLoss: 1.09, takeProfit: 1.113 });
+      const action = evaluatePositionForManagement(trade, 1.112, PARTIAL_CONFIG, FRESH_STATE);
+      expect(action).not.toEqual({ type: "partial_close" });
+    });
+
+    it("is idempotent -- never re-fires once already applied", () => {
+      const trade = buildTrade({ direction: "long", requestedEntry: 1.1, stopLoss: 1.09, takeProfit: 1.113 });
+      const state: PositionManagementState = { breakEvenApplied: false, trailingArmed: false, partialCloseApplied: true };
+      const action = evaluatePositionForManagement(trade, 1.12, PARTIAL_CONFIG, state);
+      expect(action).not.toEqual({ type: "partial_close" });
+    });
+
+    it("takes priority over break-even and trailing-arm even when both thresholds are also cleared", () => {
+      const trade = buildTrade({ direction: "long", requestedEntry: 1.1, stopLoss: 1.09, takeProfit: 1.111 }); // TP1 at 1.1R, past break-even trigger
+      const action = evaluatePositionForManagement(trade, 1.2, PARTIAL_CONFIG, FRESH_STATE); // 10R -- also past trailing-arm trigger
+      expect(action).toEqual({ type: "partial_close" });
+    });
+
+    it("still fires even once trailing is already armed -- the two are independent", () => {
+      const trade = buildTrade({ direction: "long", requestedEntry: 1.1, stopLoss: 1.09, takeProfit: 1.113 });
+      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: true, partialCloseApplied: false };
+      const action = evaluatePositionForManagement(trade, 1.12, PARTIAL_CONFIG, state);
+      expect(action).toEqual({ type: "partial_close" });
+    });
+  });
+
   describe("R-multiple baseline stability", () => {
     it("keeps measuring R off the ORIGINAL entry/stop even after breakEvenApplied is true, never a live/moved stop", () => {
       const trade = buildTrade({ requestedEntry: 1.1, stopLoss: 1.09 }); // original 0.01 stop distance
-      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: false };
+      const state: PositionManagementState = { breakEvenApplied: true, trailingArmed: false, partialCloseApplied: false };
       // 1.6R off the ORIGINAL stop should arm trailing -- if R were wrongly computed off
       // a moved stop (e.g. breakeven at 1.10, which would make the "stop distance"
       // collapse toward zero), this would misfire or divide oddly instead.

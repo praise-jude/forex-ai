@@ -10,6 +10,7 @@ const PREF_KEYS: (keyof NotificationPrefs)[] = [
   "tpSl",
   "riskAlerts",
   "connectionAlerts",
+  "weeklyDigest",
   "minConfidence",
 ];
 

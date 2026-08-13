@@ -537,6 +537,31 @@ export async function closePosition(positionId: string, accountKey: AccountKey =
 }
 
 /**
+ * Used by positionManager.ts's partial take-profit action (see evaluatePositionForManagement)
+ * -- never called anywhere else. Same non-throwing-on-broker-rejection posture as
+ * closePosition/modifyPosition above; the position itself stays open at the reduced
+ * volume afterward (this is not a full close), which is exactly why partial closes are
+ * deliberately kept out of the trade journal entirely -- see positionManager.ts's own
+ * doc comment on that decision.
+ */
+export async function closePositionPartially(positionId: string, volume: number, accountKey: AccountKey = "live"): Promise<ModifyPositionResult> {
+  const connection = stateFor(accountKey).connection;
+  if (!connection) return { success: false, message: `no active MetaApi connection (${accountKey})` };
+
+  let response: MetatraderTradeResponse;
+  try {
+    response = await connection.closePositionPartially(positionId, volume, {});
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (!TRADE_SUCCESS_CODES.has(response.numericCode)) {
+    return { success: false, numericCode: response.numericCode, stringCode: response.stringCode, message: response.message };
+  }
+  return { success: true };
+}
+
+/**
  * The "Close All Positions" emergency action -- loops the existing single-position
  * closePosition wrapper above, no new broker logic. Closes are attempted serially (not
  * Promise.all), matching this file's existing single-account/serial-call posture

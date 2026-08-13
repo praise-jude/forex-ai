@@ -4,7 +4,10 @@ import { pipValuePerLot } from "./pipValue";
 
 export type LotSizeResult = { lots: number } | { skipped: true; reason: string };
 
-function roundDownToStep(value: number, step: number): number {
+// Exported for reuse by positionManager.ts's partial take-profit action, which needs
+// the exact same broker-step rounding when computing a fraction of an already-open
+// position's lots (see closePositionPartially's caller).
+export function roundDownToStep(value: number, step: number): number {
   if (step <= 0) return value;
   // Binary floating point means e.g. 1.105 - 1.103 isn't exactly 0.002, which can
   // nudge a value that should land exactly on a step boundary a hair below it

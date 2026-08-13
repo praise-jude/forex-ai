@@ -15,6 +15,10 @@ interface JournalResponse {
    * `stats` above ("actual executed trade performance"). See SignalOutcome's own doc
    * comment in tradeJournal.ts. */
   signalFunnel: SignalFunnelStats;
+  /** "Which pairs/sessions is my performance actually coming from" -- see
+   * getPerformanceBreakdown in tradeJournal.ts. Always over the full ledger. */
+  breakdownByPair: Record<string, PerformanceStats>;
+  breakdownBySession: Record<string, PerformanceStats>;
 }
 
 // Trades close on the order of minutes to hours, not seconds -- a slow poll is
@@ -109,6 +113,54 @@ function SignalFunnelSummary({ funnel }: { funnel: SignalFunnelStats }) {
   );
 }
 
+const SESSION_LABEL: Record<string, string> = {
+  asia: "Asia",
+  london: "London",
+  newyork: "New York",
+  "off-session": "Off-session",
+};
+
+/**
+ * Which pairs/sessions performance is actually coming from -- kept as a compact table
+ * (not tiles like StatsSummary) since there can be up to 10 rows (one per pair) and
+ * tiles don't scale to that. Rows sorted by trade count, most-traded first, so the
+ * buckets with enough sample size to mean anything surface at the top.
+ */
+function BreakdownTable({ title, breakdown, labelFor }: { title: string; breakdown: Record<string, PerformanceStats>; labelFor: (key: string) => string }) {
+  const rows = Object.entries(breakdown).sort((a, b) => b[1].count - a[1].count);
+  if (rows.length === 0) return null;
+
+  return (
+    <div>
+      <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</h2>
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-zinc-900">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-zinc-500">
+              <th className="px-3 py-2 font-medium">Group</th>
+              <th className="px-3 py-2 font-medium">Trades</th>
+              <th className="px-3 py-2 font-medium">Win rate</th>
+              <th className="px-3 py-2 font-medium">Avg R</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([key, stats]) => (
+              <tr key={key} className="border-b border-white/5 last:border-0">
+                <td className="px-3 py-2 font-medium text-zinc-200">{labelFor(key)}</td>
+                <td className="px-3 py-2 tabular-nums text-zinc-300">{stats.count}</td>
+                <td className="px-3 py-2 tabular-nums text-zinc-300">{stats.winRate.toFixed(0)}%</td>
+                <td className={`px-3 py-2 tabular-nums ${stats.averageR === null ? "text-zinc-500" : stats.averageR >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {stats.averageR === null ? "—" : `${stats.averageR >= 0 ? "+" : ""}${stats.averageR.toFixed(2)}R`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function EntryRow({ entry }: { entry: JournalEntry }) {
   const isLong = entry.direction === "long";
   const inProfit = entry.profit >= 0;
@@ -148,6 +200,8 @@ export function JournalPanel() {
     <div className="flex flex-col gap-4">
       {data && <StatsSummary stats={data.stats} openCount={data.openCount} />}
       {data && <SignalFunnelSummary funnel={data.signalFunnel} />}
+      {data && <BreakdownTable title="Performance by pair" breakdown={data.breakdownByPair} labelFor={(key) => key} />}
+      {data && <BreakdownTable title="Performance by session" breakdown={data.breakdownBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
 
       <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
         <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Closed trades</h2>

@@ -12,6 +12,7 @@ const ATTEMPT = {
   requestedEntry: 1.105,
   stopLoss: 1.103,
   takeProfit: 1.109,
+  takeProfit2: 1.113,
   riskPct: 1,
   attemptedAt: Date.UTC(2024, 1, 1, 8, 0, 0),
 };

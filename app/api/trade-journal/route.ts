@@ -1,5 +1,5 @@
 import { PAIRS, type AccountKey, type MarketRegime, type Pair, type Session, type Timeframe } from "@/lib/market/types";
-import { getPerformanceStats, getSignalFunnelStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
+import { getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
 import { getOpenPositions, isAccountConfigured } from "@/lib/market/metaApiConnection";
 
 export const runtime = "nodejs";
@@ -76,5 +76,10 @@ export async function GET(request: Request) {
     // and SignalOutcome's own doc comment in tradeJournal.ts for why these are kept
     // separate ("AI signal performance" vs "actual executed trade performance").
     signalFunnel: getSignalFunnelStats(tradeJournal.allSignalOutcomes()),
+    // "Which pairs/sessions is my performance actually coming from" -- always computed
+    // over the full unfiltered ledger (ignores `filter` above, same as signalFunnel),
+    // since the point is to compare buckets against each other, not view one pre-picked.
+    breakdownByPair: getPerformanceBreakdown(entries, "pair"),
+    breakdownBySession: getPerformanceBreakdown(entries, "session"),
   });
 }

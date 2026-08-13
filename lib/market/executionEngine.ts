@@ -3,13 +3,14 @@ import type { AccountKey, ExecutedTrade, Signal } from "./types";
 import { positionStore } from "./positionStore";
 import { priceStore } from "./priceStore";
 import { riskState } from "./riskState";
-import { checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
+import { checkCorrelatedExposure, checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { checkExecutionPolicy, getExecutionPolicy, type ExecutionPolicyBlockCode } from "./executionPolicy";
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize } from "./positionSizing";
 import {
   getAccountInformation,
   getOpenPositionCount,
+  getOpenPositions,
   getSymbolSpecification,
   isAccountConfigured,
   placeMarketOrder,
@@ -99,6 +100,21 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
   }
 
+  // Same shape checkRiskLimits' own maxConcurrentPositions check has (a raw count vs a
+  // configured cap), just per-correlation-group instead of whole-account -- see
+  // pairCorrelation.ts. Separate from checkRiskLimits since it needs per-position
+  // pair+direction, not just a count.
+  const correlationCheck = checkCorrelatedExposure({
+    pair: signal.pair,
+    direction: signal.direction,
+    openPositions: getOpenPositions(accountKey),
+    maxCorrelatedPositions: config.maxCorrelatedPositions,
+  });
+  if (!correlationCheck.allowed) {
+    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${correlationCheck.reason}`);
+    return { status: "blocked", code: correlationCheck.code, reason: correlationCheck.reason };
+  }
+
   // Applies to every execution path (button and voice alike), not just voice -- but
   // matters most there, since a spoken confirmation round trip leaves more time for the
   // price to drift from the signal's entry than an immediate button click does.
@@ -157,6 +173,7 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     requestedEntry: signal.entry,
     stopLoss: signal.stopLoss,
     takeProfit: signal.takeProfit,
+    takeProfit2: signal.takeProfit2,
     riskPct,
     attemptedAt: now,
   });

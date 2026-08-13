@@ -4,6 +4,7 @@ import { loadExecutionConfig } from "../executionConfig";
 const ENV_VARS = [
   "RISK_PER_TRADE_PCT",
   "MAX_CONCURRENT_POSITIONS",
+  "MAX_CORRELATED_POSITIONS",
   "MAX_DAILY_LOSS_PCT",
   "MAX_TRADES_PER_DAY",
   "MAX_CONSECUTIVE_LOSSES",
@@ -13,9 +14,12 @@ const ENV_VARS = [
   "TRAILING_ARM_TRIGGER_R",
   "TRAILING_DISTANCE_FRACTION_OF_STOP",
   "POSITION_MANAGEMENT_ENABLED",
+  "PARTIAL_CLOSE_ENABLED",
+  "PARTIAL_CLOSE_FRACTION",
   "KILL_SWITCH_FILE",
   "DEMO_RISK_PER_TRADE_PCT",
   "DEMO_MAX_CONCURRENT_POSITIONS",
+  "DEMO_MAX_CORRELATED_POSITIONS",
   "DEMO_MAX_DAILY_LOSS_PCT",
   "DEMO_MAX_TRADES_PER_DAY",
   "DEMO_MAX_CONSECUTIVE_LOSSES",
@@ -25,6 +29,8 @@ const ENV_VARS = [
   "DEMO_TRAILING_ARM_TRIGGER_R",
   "DEMO_TRAILING_DISTANCE_FRACTION_OF_STOP",
   "DEMO_POSITION_MANAGEMENT_ENABLED",
+  "DEMO_PARTIAL_CLOSE_ENABLED",
+  "DEMO_PARTIAL_CLOSE_FRACTION",
   "KILL_SWITCH_FILE_DEMO",
 ];
 
@@ -37,6 +43,7 @@ describe("loadExecutionConfig", () => {
     expect(loadExecutionConfig("live")).toEqual({
       riskPerTradePct: 0.25,
       maxConcurrentPositions: 3,
+      maxCorrelatedPositions: 1,
       maxDailyLossPct: 1,
       maxTradesPerDay: 5,
       maxConsecutiveLosses: 3,
@@ -46,11 +53,14 @@ describe("loadExecutionConfig", () => {
       trailingArmTriggerR: 1.5,
       trailingDistanceFractionOfStop: 1.0,
       positionManagementEnabled: true,
+      partialCloseEnabled: false,
+      partialCloseFraction: 0.5,
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
       riskPerTradePct: 0.25,
       maxConcurrentPositions: 3,
+      maxCorrelatedPositions: 1,
       maxDailyLossPct: 1,
       maxTradesPerDay: 5,
       maxConsecutiveLosses: 3,
@@ -60,6 +70,8 @@ describe("loadExecutionConfig", () => {
       trailingArmTriggerR: 1.5,
       trailingDistanceFractionOfStop: 1.0,
       positionManagementEnabled: true,
+      partialCloseEnabled: false,
+      partialCloseFraction: 0.5,
       killSwitchFile: ".trading-paused-demo",
     });
   });

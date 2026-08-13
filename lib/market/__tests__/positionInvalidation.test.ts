@@ -16,6 +16,7 @@ function buildTrade(overrides: Partial<ExecutedTrade> = {}): ExecutedTrade {
     filledEntry: 1.1,
     stopLoss: 1.09,
     takeProfit: 1.13,
+    takeProfit2: 1.15,
     status: "filled",
     brokerPositionId: "pos-1",
     riskPct: 1,

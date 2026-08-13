@@ -1,21 +1,25 @@
 import type { AccountKey, ExecutedTrade } from "./types";
 import { loadExecutionConfig } from "./executionConfig";
-import { getOpenPositions, isAccountConfigured, modifyPosition } from "./metaApiConnection";
+import { closePositionPartially, getOpenPositions, getSymbolSpecification, isAccountConfigured, modifyPosition } from "./metaApiConnection";
+import { roundDownToStep } from "./positionSizing";
 import { positionStore } from "./positionStore";
 
 export interface PositionManagementConfig {
   breakEvenTriggerR: number;
   trailingArmTriggerR: number;
   trailingDistanceFractionOfStop: number;
+  partialCloseEnabled: boolean;
 }
 
 export interface PositionManagementState {
   breakEvenApplied: boolean;
   trailingArmed: boolean;
+  partialCloseApplied: boolean;
 }
 
 export type PositionManagementAction =
   | { type: "none" }
+  | { type: "partial_close" }
   | { type: "break_even"; newStopLoss: number }
   | { type: "arm_trailing"; distance: number };
 
@@ -25,6 +29,13 @@ export type PositionManagementAction =
  * itself gets managed. Once trailing is armed the broker owns the stop from then on --
  * break-even is never (re-)applied afterward, since doing so could move a broker-ratcheted
  * trailing stop backward to a worse (less protective) level.
+ *
+ * partial_close is checked first, ahead of even the trailingArmed early-return -- hitting
+ * TP1 is a real price level the signal engine picked out, not an R-ratio heuristic, and
+ * remains worth locking in regardless of whether trailing already armed on a fast-moving
+ * position (the two aren't mutually exclusive: partial-close now, the trailed remainder
+ * keeps running). Its own partialCloseApplied flag (not trailingArmed/breakEvenApplied)
+ * guards it from ever re-firing once applied.
  */
 export function evaluatePositionForManagement(
   trade: ExecutedTrade,
@@ -34,6 +45,11 @@ export function evaluatePositionForManagement(
 ): PositionManagementAction {
   const stopDistance = Math.abs(trade.requestedEntry - trade.stopLoss);
   if (stopDistance <= 0) return { type: "none" };
+
+  if (config.partialCloseEnabled && !state.partialCloseApplied) {
+    const reachedTp1 = trade.direction === "long" ? currentPrice >= trade.takeProfit : currentPrice <= trade.takeProfit;
+    if (reachedTp1) return { type: "partial_close" };
+  }
 
   const favorableMove = trade.direction === "long" ? currentPrice - trade.requestedEntry : trade.requestedEntry - currentPrice;
   const r = favorableMove / stopDistance;
@@ -90,17 +106,49 @@ async function runAccountCycle(accountKey: AccountKey): Promise<void> {
     if (!live) continue; // already closed naturally -- onDealAdded/recordJournalOutcome already handled it
 
     const stateKey = stateKeyFor(accountKey, brokerPositionId);
-    const positionState = globalState.positionStates.get(stateKey) ?? { breakEvenApplied: false, trailingArmed: false };
+    const positionState = globalState.positionStates.get(stateKey) ?? { breakEvenApplied: false, trailingArmed: false, partialCloseApplied: false };
 
     const managementConfig: PositionManagementConfig = {
       breakEvenTriggerR: config.breakEvenTriggerR,
       trailingArmTriggerR: config.trailingArmTriggerR,
       trailingDistanceFractionOfStop: config.trailingDistanceFractionOfStop,
+      partialCloseEnabled: config.partialCloseEnabled,
     };
     const action = evaluatePositionForManagement(trade, live.currentPrice, managementConfig, positionState);
     if (action.type === "none") continue;
 
-    if (action.type === "break_even") {
+    if (action.type === "partial_close") {
+      const spec = getSymbolSpecification(trade.pair, accountKey);
+      if (!spec) {
+        console.error(`[position-manager] partial close skipped for ${trade.pair} (${brokerPositionId}, ${accountKey}): no symbol specification available yet`);
+        continue;
+      }
+
+      const volume = roundDownToStep(live.lots * config.partialCloseFraction, spec.volumeStep);
+      // Below the broker's minimum, or leaves nothing meaningfully "remaining" -- either
+      // way this isn't a valid partial close. Mark it applied anyway so this doesn't get
+      // re-logged and re-attempted every 30s cycle for the life of the position.
+      if (volume < spec.volumeMin || volume >= live.lots) {
+        globalState.positionStates.set(stateKey, { ...positionState, partialCloseApplied: true });
+        console.log(`[position-manager] skipping partial close for ${trade.pair} (${brokerPositionId}, ${accountKey}): computed volume ${volume} invalid (live lots ${live.lots}, broker min ${spec.volumeMin})`);
+        continue;
+      }
+
+      const closeResult = await closePositionPartially(brokerPositionId, volume, accountKey);
+      if (!closeResult.success) {
+        console.error(`[position-manager] partial close failed for ${trade.pair} (${brokerPositionId}, ${accountKey}): ${closeResult.message}`);
+        continue;
+      }
+
+      // Same break-even move the break_even action below performs -- applied here too
+      // (and breakEvenApplied set alongside partialCloseApplied) so that branch never
+      // redundantly re-fires next cycle.
+      const beResult = await modifyPosition(brokerPositionId, { stopLoss: trade.requestedEntry, takeProfit: live.takeProfit }, accountKey);
+      globalState.positionStates.set(stateKey, { ...positionState, partialCloseApplied: true, breakEvenApplied: true });
+      console.log(
+        `[position-manager] partial-closed ${volume} lots of ${trade.pair} (${brokerPositionId}, ${accountKey}) at TP1${beResult.success ? ", moved remainder to break-even" : ` (break-even move failed: ${beResult.message})`}`
+      );
+    } else if (action.type === "break_even") {
       const result = await modifyPosition(brokerPositionId, { stopLoss: action.newStopLoss, takeProfit: live.takeProfit }, accountKey);
       if (result.success) {
         globalState.positionStates.set(stateKey, { ...positionState, breakEvenApplied: true });
@@ -121,7 +169,7 @@ async function runAccountCycle(accountKey: AccountKey): Promise<void> {
         // Arming trailing supersedes break-even -- the broker now keeps the stop no
         // worse than this level going forward, so break-even is marked applied too
         // (never separately re-applied, which could move the stop backward).
-        globalState.positionStates.set(stateKey, { breakEvenApplied: true, trailingArmed: true });
+        globalState.positionStates.set(stateKey, { ...positionState, breakEvenApplied: true, trailingArmed: true });
         console.log(`[position-manager] armed trailing stop for ${trade.pair} (${brokerPositionId}, ${accountKey}), distance ${action.distance}`);
       } else {
         console.error(`[position-manager] arm trailing failed for ${trade.pair} (${brokerPositionId}, ${accountKey}): ${result.message}`);

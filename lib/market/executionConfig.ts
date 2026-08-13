@@ -3,6 +3,11 @@ import type { AccountKey } from "./types";
 export interface ExecutionConfig {
   riskPerTradePct: number;
   maxConcurrentPositions: number;
+  /** See riskManager.ts's checkCorrelatedExposure / pairCorrelation.ts -- how many
+   * already-open positions may share the same implied directional bet (e.g. EUR/USD
+   * long + GBP/USD long, both a short-USD bet) before a new correlated one is blocked.
+   * Default 1: a second correlated position is blocked, the first is always allowed. */
+  maxCorrelatedPositions: number;
   maxDailyLossPct: number;
   maxTradesPerDay: number;
   killSwitchFile: string;
@@ -28,6 +33,15 @@ export interface ExecutionConfig {
    * trailing, invalidation exit) -- independent of engine mode/kill switch, which only
    * govern opening NEW trades. */
   positionManagementEnabled: boolean;
+  /** See positionManager.ts -- closes a fraction of the position once price reaches the
+   * signal's TP1 and moves the stop to break-even on the remainder. Defaults OFF
+   * (unlike every other position-management feature above): unlike break-even/trailing,
+   * this touches live position VOLUME, not just the stop loss, so it ships opt-in --
+   * same "off until explicitly configured" convention as the dashboard password gate
+   * and the TradingView webhook secret. Exercise on DEMO before enabling on LIVE. */
+  partialCloseEnabled: boolean;
+  /** Fraction of the position closed at TP1, e.g. 0.5 = half. */
+  partialCloseFraction: number;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -60,6 +74,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     // 0.25%/1% is somehow "correct" for every account size or risk tolerance.
     riskPerTradePct: envNumber(`${prefix}RISK_PER_TRADE_PCT`, 0.25),
     maxConcurrentPositions: envNumber(`${prefix}MAX_CONCURRENT_POSITIONS`, 3),
+    maxCorrelatedPositions: envNumber(`${prefix}MAX_CORRELATED_POSITIONS`, 1),
     maxDailyLossPct: envNumber(`${prefix}MAX_DAILY_LOSS_PCT`, 1),
     maxTradesPerDay: envNumber(`${prefix}MAX_TRADES_PER_DAY`, 5),
     maxConsecutiveLosses: envNumber(`${prefix}MAX_CONSECUTIVE_LOSSES`, 3),
@@ -71,6 +86,8 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     trailingArmTriggerR: envNumber(`${prefix}TRAILING_ARM_TRIGGER_R`, 1.5),
     trailingDistanceFractionOfStop: envNumber(`${prefix}TRAILING_DISTANCE_FRACTION_OF_STOP`, 1.0),
     positionManagementEnabled: envBoolean(`${prefix}POSITION_MANAGEMENT_ENABLED`, true),
+    partialCloseEnabled: envBoolean(`${prefix}PARTIAL_CLOSE_ENABLED`, false),
+    partialCloseFraction: envNumber(`${prefix}PARTIAL_CLOSE_FRACTION`, 0.5),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

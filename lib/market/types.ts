@@ -296,6 +296,12 @@ export interface ExecutedTrade {
   filledEntry?: number;
   stopLoss: number;
   takeProfit: number;
+  /** The signal's TP2 zone -- carried through so positionManager.ts's partial
+   * take-profit action can trigger at TP1 (`takeProfit` above) while still knowing
+   * where the remaining runner is headed. Not itself sent to the broker as a second
+   * order; the broker only ever sees one takeProfit at a time (see partialCloseApplied
+   * in positionManager.ts). */
+  takeProfit2: number;
   status: ExecutionStatus;
   brokerPositionId?: string;
   brokerOrderId?: string;
@@ -316,6 +322,7 @@ export interface NotificationPrefs {
   tpSl: boolean;
   riskAlerts: boolean;
   connectionAlerts: boolean;
+  weeklyDigest: boolean;
   minConfidence: number;
 }
 
@@ -326,6 +333,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   tpSl: true,
   riskAlerts: true,
   connectionAlerts: true,
+  weeklyDigest: true,
   minConfidence: 80,
 };
 
@@ -336,7 +344,8 @@ export type NotificationCategory =
   | "trade_closed"
   | "order_rejected"
   | "risk_alert"
-  | "connection_alert";
+  | "connection_alert"
+  | "weekly_digest";
 
 export type DevicePlatform = "ios" | "android" | "web";
 

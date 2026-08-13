@@ -5,6 +5,7 @@ import { startNewsFilter } from "./newsFilter";
 import { startCurrencyStrength } from "./currencyStrength";
 import { startPositionManager } from "./positionManager";
 import { startPositionInvalidation } from "./positionInvalidation";
+import { startWeeklyDigest } from "./weeklyDigest";
 
 let started = false;
 
@@ -45,4 +46,5 @@ export function startMarketEngine(): void {
   // own positionManagementEnabled config.
   startPositionManager();
   startPositionInvalidation();
+  startWeeklyDigest();
 }

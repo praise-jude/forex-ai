@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
-import { getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
+import { getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
 import { loadTradeJournalModule } from "./tradeJournalTestHelper";
 
@@ -346,6 +346,38 @@ describe("getPerformanceStats", () => {
     ];
     expect(getPerformanceStats(entries, { signerBAgreement: true }).count).toBe(1);
     expect(getPerformanceStats(entries, { signerBAgreement: false }).count).toBe(2);
+  });
+});
+
+describe("getPerformanceBreakdown", () => {
+  it("groups by pair and each bucket's stats sum back to the same totals as the aggregate", () => {
+    const entries = [
+      buildEntry({ id: "1", pair: "EUR/USD", profit: 100, rMultiple: 1 }),
+      buildEntry({ id: "2", pair: "EUR/USD", profit: -50, rMultiple: -1 }),
+      buildEntry({ id: "3", pair: "GBP/USD", profit: 200, rMultiple: 2 }),
+    ];
+    const breakdown = getPerformanceBreakdown(entries, "pair");
+    expect(Object.keys(breakdown).sort()).toEqual(["EUR/USD", "GBP/USD"]);
+    expect(breakdown["EUR/USD"].count).toBe(2);
+    expect(breakdown["GBP/USD"].count).toBe(1);
+    const totalCount = Object.values(breakdown).reduce((sum, s) => sum + s.count, 0);
+    expect(totalCount).toBe(getPerformanceStats(entries).count);
+  });
+
+  it("groups by session, skipping entries with no context", () => {
+    const entries = [
+      buildEntry({ id: "1", context: buildContext({ session: "london" }) }),
+      buildEntry({ id: "2", context: buildContext({ session: "newyork" }) }),
+      buildEntry({ id: "3", context: null }),
+    ];
+    const breakdown = getPerformanceBreakdown(entries, "session");
+    expect(Object.keys(breakdown).sort()).toEqual(["london", "newyork"]);
+    expect(breakdown.london.count).toBe(1);
+    expect(breakdown.newyork.count).toBe(1);
+  });
+
+  it("returns an empty object for an empty entry list", () => {
+    expect(getPerformanceBreakdown([], "pair")).toEqual({});
   });
 });
 
