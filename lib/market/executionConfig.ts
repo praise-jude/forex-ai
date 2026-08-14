@@ -49,6 +49,31 @@ export interface ExecutionConfig {
    * that wouldn't have otherwise qualified -- so a bug here can't create risk the way
    * touching live position volume can. */
   m5ConfirmationEnabled: boolean;
+  /** See positionSizing.ts's confidenceAdjustedRiskPct -- scales riskPerTradePct by
+   * riskMultiplierBuy/riskMultiplierStrongBuy based on the signal's own final tier
+   * before sizing. Defaults OFF, same posture as partialCloseEnabled: this changes
+   * actual position size, not just a stop/target, so it ships opt-in. */
+  confidenceSizingEnabled: boolean;
+  /** Multiplier applied to riskPerTradePct for a buy-tier signal. Default 1.0 (no
+   * change) -- buy is the existing baseline; only strong_buy scales up by default. */
+  riskMultiplierBuy: number;
+  /** Multiplier applied to riskPerTradePct for a strong_buy-tier signal (SMC's own
+   * tier, optionally upgraded by Signer B agreement -- see decisionMatrix.ts). Default
+   * 1.5: a documented starting point to observe and tune, not a claimed-optimal figure,
+   * same posture as every other weighted constant in this codebase (e.g.
+   * setupQualityScore.ts's dimension weights). */
+  riskMultiplierStrongBuy: number;
+}
+
+// A non-finite or non-positive multiplier can't reflect a real risk-scaling intent (a
+// fat-fingered "0" or a stray non-numeric env value would zero out or invert sizing) --
+// falls back to 1.0 (no scaling), same "invalid override ignored, safe default used"
+// posture as sessions.ts's envHour/envWindow.
+function envPositiveMultiplier(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 1.0;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -96,6 +121,9 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     partialCloseEnabled: envBoolean(`${prefix}PARTIAL_CLOSE_ENABLED`, false),
     partialCloseFraction: envNumber(`${prefix}PARTIAL_CLOSE_FRACTION`, 0.5),
     m5ConfirmationEnabled: envBoolean(`${prefix}M5_CONFIRMATION_ENABLED`, true),
+    confidenceSizingEnabled: envBoolean(`${prefix}CONFIDENCE_SIZING_ENABLED`, false),
+    riskMultiplierBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_BUY`, 1.0),
+    riskMultiplierStrongBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_STRONG_BUY`, 1.5),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

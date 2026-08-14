@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computeLotSize } from "../positionSizing";
+import { computeLotSize, confidenceAdjustedRiskPct } from "../positionSizing";
 import { buildSignal, buildSpec } from "./fixtures";
+
+const BASE_CONFIG = { confidenceSizingEnabled: true, riskMultiplierBuy: 1.0, riskMultiplierStrongBuy: 1.5 };
 
 describe("computeLotSize", () => {
   it("sizes to risk exactly the requested percentage of equity", () => {
@@ -39,5 +41,27 @@ describe("computeLotSize", () => {
     const result = computeLotSize(signal, 10000, 1, buildSpec());
 
     expect(result).toEqual({ skipped: true, reason: expect.stringContaining("zero pip distance") });
+  });
+});
+
+describe("confidenceAdjustedRiskPct", () => {
+  it("passes the base risk % through unchanged when disabled", () => {
+    expect(confidenceAdjustedRiskPct(1, "strong_buy", { ...BASE_CONFIG, confidenceSizingEnabled: false })).toBe(1);
+  });
+
+  it("applies riskMultiplierBuy for a buy-tier signal", () => {
+    expect(confidenceAdjustedRiskPct(1, "buy", { ...BASE_CONFIG, riskMultiplierBuy: 1.2 })).toBeCloseTo(1.2);
+  });
+
+  it("applies riskMultiplierStrongBuy for a strong_buy-tier signal", () => {
+    expect(confidenceAdjustedRiskPct(1, "strong_buy", { ...BASE_CONFIG, riskMultiplierStrongBuy: 1.5 })).toBeCloseTo(1.5);
+  });
+
+  it("never amplifies a watch-tier signal even when enabled", () => {
+    expect(confidenceAdjustedRiskPct(1, "watch", { ...BASE_CONFIG, riskMultiplierBuy: 2, riskMultiplierStrongBuy: 3 })).toBe(1);
+  });
+
+  it("defaults to no scaling (1.0x) when both multipliers are left at their defaults", () => {
+    expect(confidenceAdjustedRiskPct(0.25, "buy", BASE_CONFIG)).toBeCloseTo(0.25);
   });
 });

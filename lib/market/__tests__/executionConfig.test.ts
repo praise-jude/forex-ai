@@ -17,6 +17,9 @@ const ENV_VARS = [
   "PARTIAL_CLOSE_ENABLED",
   "PARTIAL_CLOSE_FRACTION",
   "M5_CONFIRMATION_ENABLED",
+  "CONFIDENCE_SIZING_ENABLED",
+  "RISK_MULTIPLIER_BUY",
+  "RISK_MULTIPLIER_STRONG_BUY",
   "KILL_SWITCH_FILE",
   "DEMO_RISK_PER_TRADE_PCT",
   "DEMO_MAX_CONCURRENT_POSITIONS",
@@ -33,6 +36,9 @@ const ENV_VARS = [
   "DEMO_PARTIAL_CLOSE_ENABLED",
   "DEMO_PARTIAL_CLOSE_FRACTION",
   "DEMO_M5_CONFIRMATION_ENABLED",
+  "DEMO_CONFIDENCE_SIZING_ENABLED",
+  "DEMO_RISK_MULTIPLIER_BUY",
+  "DEMO_RISK_MULTIPLIER_STRONG_BUY",
   "KILL_SWITCH_FILE_DEMO",
 ];
 
@@ -58,6 +64,9 @@ describe("loadExecutionConfig", () => {
       partialCloseEnabled: false,
       partialCloseFraction: 0.5,
       m5ConfirmationEnabled: true,
+      confidenceSizingEnabled: false,
+      riskMultiplierBuy: 1.0,
+      riskMultiplierStrongBuy: 1.5,
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
@@ -76,6 +85,9 @@ describe("loadExecutionConfig", () => {
       partialCloseEnabled: false,
       partialCloseFraction: 0.5,
       m5ConfirmationEnabled: true,
+      confidenceSizingEnabled: false,
+      riskMultiplierBuy: 1.0,
+      riskMultiplierStrongBuy: 1.5,
       killSwitchFile: ".trading-paused-demo",
     });
   });
@@ -131,5 +143,27 @@ describe("loadExecutionConfig", () => {
   it("respects a custom KILL_SWITCH_FILE_DEMO path", () => {
     process.env.KILL_SWITCH_FILE_DEMO = ".custom-demo-pause";
     expect(loadExecutionConfig("demo").killSwitchFile).toBe(".custom-demo-pause");
+  });
+
+  it("reads the confidence-sizing settings independently per account too", () => {
+    process.env.CONFIDENCE_SIZING_ENABLED = "true";
+    process.env.RISK_MULTIPLIER_BUY = "1.2";
+    process.env.DEMO_RISK_MULTIPLIER_STRONG_BUY = "2";
+
+    expect(loadExecutionConfig("live").confidenceSizingEnabled).toBe(true);
+    expect(loadExecutionConfig("demo").confidenceSizingEnabled).toBe(false); // falls back to the shared default
+    expect(loadExecutionConfig("live").riskMultiplierBuy).toBe(1.2);
+    expect(loadExecutionConfig("demo").riskMultiplierBuy).toBe(1.0); // falls back to the shared default
+    expect(loadExecutionConfig("live").riskMultiplierStrongBuy).toBe(1.5); // falls back to the shared default
+    expect(loadExecutionConfig("demo").riskMultiplierStrongBuy).toBe(2);
+  });
+
+  it("falls back to 1.0 (no scaling) for a non-positive or non-numeric multiplier, never the operator's stray value", () => {
+    process.env.RISK_MULTIPLIER_BUY = "0";
+    expect(loadExecutionConfig("live").riskMultiplierBuy).toBe(1.0);
+    process.env.RISK_MULTIPLIER_BUY = "-2";
+    expect(loadExecutionConfig("live").riskMultiplierBuy).toBe(1.0);
+    process.env.RISK_MULTIPLIER_STRONG_BUY = "not-a-number";
+    expect(loadExecutionConfig("live").riskMultiplierStrongBuy).toBe(1.0);
   });
 });

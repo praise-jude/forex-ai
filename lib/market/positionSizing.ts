@@ -1,4 +1,5 @@
-import type { Signal, SymbolSpec } from "./types";
+import type { ConfidenceTier, Signal, SymbolSpec } from "./types";
+import type { ExecutionConfig } from "./executionConfig";
 import { pipSize } from "./symbols";
 import { pipValuePerLot } from "./pipValue";
 
@@ -18,6 +19,26 @@ export function roundDownToStep(value: number, step: number): number {
   const steps = Math.floor(safeValue / step);
   const decimals = Math.max(0, -Math.floor(Math.log10(step)));
   return Number((steps * step).toFixed(decimals));
+}
+
+/**
+ * Scales a base risk % by the signal's own final tier (buy vs strong_buy -- SMC's tier,
+ * optionally upgraded by Signer B agreement, see decisionMatrix.ts) when confidence
+ * sizing is enabled -- so a fully-confirmed strong_buy setup risks more than a
+ * barely-qualifying buy, instead of every executable signal risking the same flat %.
+ * Returns `baseRiskPct` unchanged when disabled, or for "watch" (defensive only --
+ * watch-tier signals never reach execution, see executionEngine.ts's own guard, but this
+ * must never amplify a tier that was never meant to execute).
+ */
+export function confidenceAdjustedRiskPct(
+  baseRiskPct: number,
+  tier: ConfidenceTier,
+  config: Pick<ExecutionConfig, "confidenceSizingEnabled" | "riskMultiplierBuy" | "riskMultiplierStrongBuy">
+): number {
+  if (!config.confidenceSizingEnabled) return baseRiskPct;
+  if (tier === "strong_buy") return baseRiskPct * config.riskMultiplierStrongBuy;
+  if (tier === "buy") return baseRiskPct * config.riskMultiplierBuy;
+  return baseRiskPct;
 }
 
 /**

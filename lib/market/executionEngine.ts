@@ -6,7 +6,7 @@ import { riskState } from "./riskState";
 import { checkCorrelatedExposure, checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { checkExecutionPolicy, getExecutionPolicy, type ExecutionPolicyBlockCode } from "./executionPolicy";
 import { loadExecutionConfig } from "./executionConfig";
-import { computeLotSize } from "./positionSizing";
+import { computeLotSize, confidenceAdjustedRiskPct } from "./positionSizing";
 import {
   getAccountInformation,
   getOpenPositionCount,
@@ -152,8 +152,14 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     return { status: "blocked", code: "no_symbol_spec", reason: "no symbol specification available yet" };
   }
 
+  // An explicit per-trade override (the Trade Proposal card's "Edit Risk" field) is a
+  // human decision for this one trade specifically -- never further scaled by tier, same
+  // way it already bypasses config.riskPerTradePct entirely. Only the configured base %
+  // goes through confidence sizing (see positionSizing.ts's own doc comment).
   const riskPct =
-    riskPctOverride !== undefined && Number.isFinite(riskPctOverride) && riskPctOverride > 0 ? riskPctOverride : config.riskPerTradePct;
+    riskPctOverride !== undefined && Number.isFinite(riskPctOverride) && riskPctOverride > 0
+      ? riskPctOverride
+      : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config);
   const sizing = computeLotSize(signal, account.equity, riskPct, spec);
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);
@@ -218,7 +224,7 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   );
   riskState.recordTradeOpened(now, account.equity, accountKey);
   console.log(
-    `[execution] filled ${signal.direction} ${sizing.lots} lots ${signal.pair} @ ${result.filledEntry} (signal ${signal.id}, ${accountKey})`
+    `[execution] filled ${signal.direction} ${sizing.lots} lots ${signal.pair} @ ${result.filledEntry} (signal ${signal.id}, ${accountKey}, tier ${signal.tier}, risked ${riskPct.toFixed(3)}%)`
   );
   void sendNotification({
     category: "trade_opened",
