@@ -49,6 +49,7 @@ Approving a Trade Proposal (or, in DEMO/LIVE mode, an auto-fired signal) runs th
 | `MAX_TRADES_PER_DAY` | `5` | New entries blocked once this many trades have opened today (UTC day) |
 | `PARTIAL_CLOSE_ENABLED` | `false` | Closes a fraction of a position once price reaches its TP1 and moves the stop to break-even on the remainder. **Off by default** — unlike break-even/trailing, this touches live position volume, not just the stop loss. Exercise on a demo account before enabling on live. |
 | `PARTIAL_CLOSE_FRACTION` | `0.5` | Fraction of the position closed at TP1 (only used when `PARTIAL_CLOSE_ENABLED=true`) |
+| `M5_CONFIRMATION_ENABLED` | `true` | Requires the most recently closed 5-minute candle to close in a would-be signal's own direction before it fires — an on-demand REST check at decision time (see `lib/market/m5Confirmation.ts`), never a live M5 subscription (that was deliberately removed earlier as the fix for a real MetaApi rate-limit incident). On by default: this can only make execution *more* conservative, never less. |
 | `KILL_SWITCH_FILE` | `.trading-paused` | See below |
 | `TRADING_KILL_SWITCH` | unset | See below |
 
@@ -64,14 +65,16 @@ Either switch blocks a Buy/Sell click the same way it would have blocked an auto
 
 Every setup is found by SMC alone (Signer A — liquidity sweeps, structure breaks, order blocks/FVGs; see `lib/market/signalEngine.ts`), then checked against an independent second signer (Signer B — EMA trend, RSI momentum/divergence, Supertrend, currency strength, session; see `lib/market/signerB.ts`) that's computed without reference to SMC's own direction. A trade only proceeds when the two agree; a genuine tie or opposite-direction read from Signer B holds it (`lib/market/decisionMatrix.ts`) — but a merely-weaker, still-agreeing Signer B never drags SMC's own score down. A confidence number is "how well-confirmed is this setup," not a probability of profit — see "Backtesting" below for how to check any of this against real history, and its own honestly-disclosed limitations.
 
-London/New York killzone hours (`lib/market/sessions.ts`) default to 08:00–11:00 / 13:00–17:00 GMT, optionally overridable per `.env.local`:
+London/New York killzone hours (`lib/market/sessions.ts`) default to 08:00–11:00 London local time and 08:00–12:00 New York local time — **each region's own real local clock**, not a fixed UTC offset, so the window stays correct year-round through both the UK's and US's own (differently-timed) DST transitions instead of silently drifting an hour off for half the year. Optionally overridable per `.env.local`:
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `LONDON_START_HOUR` / `LONDON_END_HOUR` | `8` / `11` | London killzone window, UTC hour (0-23) |
-| `NEW_YORK_START_HOUR` / `NEW_YORK_END_HOUR` | `13` / `17` | New York killzone window, UTC hour (0-23) |
+| `LONDON_START_HOUR` / `LONDON_END_HOUR` | `8` / `11` | London killzone window, **London local hour** (0-23), DST-aware |
+| `NEW_YORK_START_HOUR` / `NEW_YORK_END_HOUR` | `8` / `12` | New York killzone window, **New York local hour** (0-23), DST-aware |
 
 An invalid value (out of 0-23 range, or a start hour not before the end hour) is ignored and the default is used instead.
+
+This deployment's `.env.local` sets `NEW_YORK_END_HOUR=13` (extending the NY window by one hour, `8`→`13` NY local) — tuned for a West Africa/Nigeria (WAT, UTC+1, no DST) trader: London 08:00–11:00 local lines up with 08:00–11:00 WAT, and the extended NY window covers ~13:00–18:00 WAT (the London/NY overlap plus a continuation/reversal hour) during Northern-hemisphere summer (BST/EDT). Because this still tracks real London/NY local time, the WAT-observed window shifts about an hour earlier during Northern winter (GMT/EST) — that's the DST-awareness working correctly, not a bug.
 
 **Deploying somewhere new (Railway, Render, a fresh VPS, etc.)**: set `TRADING_KILL_SWITCH=1` in that platform's env vars *before* the first deploy that has `METAAPI_TOKEN`/`METAAPI_ACCOUNT_ID` set, so a stray click during smoke-testing can't place a real order before you've verified the deploy. Only flip it off once you've confirmed the new instance is healthy — and make sure whatever instance you're moving away from is paused too, so you never have two processes trading the same account at once.
 

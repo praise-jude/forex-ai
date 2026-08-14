@@ -204,7 +204,11 @@ export type NoTradeReason =
       impliedDirection: "long" | "short";
       signerBDirection: "long" | "short";
       signerBConfidence: number;
-    };
+    }
+  // Everything else passed (including Signer B agreement) but the most recently closed
+  // 5-minute candle didn't confirm the setup's own direction -- see m5Confirmation.ts.
+  // An on-demand REST check at decision time, never a live subscription.
+  | { code: "m5_not_confirmed"; impliedDirection: "long" | "short" };
 
 export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 

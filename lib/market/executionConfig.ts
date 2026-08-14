@@ -42,6 +42,13 @@ export interface ExecutionConfig {
   partialCloseEnabled: boolean;
   /** Fraction of the position closed at TP1, e.g. 0.5 = half. */
   partialCloseFraction: number;
+  /** See m5Confirmation.ts / metaApiConnection.ts's onCandlesUpdated -- requires the
+   * most recently closed M5 candle to confirm a would-be signal's direction before it
+   * fires. Defaults ON (unlike partialCloseEnabled): this can only make execution MORE
+   * conservative -- it holds a trade that would've otherwise fired, never fires one
+   * that wouldn't have otherwise qualified -- so a bug here can't create risk the way
+   * touching live position volume can. */
+  m5ConfirmationEnabled: boolean;
 }
 
 function envNumber(name: string, fallback: number): number {
@@ -88,6 +95,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     positionManagementEnabled: envBoolean(`${prefix}POSITION_MANAGEMENT_ENABLED`, true),
     partialCloseEnabled: envBoolean(`${prefix}PARTIAL_CLOSE_ENABLED`, false),
     partialCloseFraction: envNumber(`${prefix}PARTIAL_CLOSE_FRACTION`, 0.5),
+    m5ConfirmationEnabled: envBoolean(`${prefix}M5_CONFIRMATION_ENABLED`, true),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

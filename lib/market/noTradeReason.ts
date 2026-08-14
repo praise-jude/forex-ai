@@ -94,5 +94,9 @@ function describeReason(reason: NoTradeReason): string {
       const signerBWord = reason.signerBDirection === "long" ? "bullish" : "bearish";
       return `SMC found a ${smcWord} setup, but the independent confirmation signer is ${signerBWord} (${reason.signerBConfidence.toFixed(0)}% confidence) -- holding off until the two agree.`;
     }
+    case "m5_not_confirmed": {
+      const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";
+      return `A ${directionWord} setup formed on the higher timeframes, but the most recent 5-minute candle hasn't confirmed it yet -- waiting for M5 price action to agree before entering.`;
+    }
   }
 }

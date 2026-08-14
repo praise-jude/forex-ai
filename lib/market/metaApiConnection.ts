@@ -3,6 +3,7 @@
 // explicit Node build instead — see https://github.com/metaapi/metaapi-javascript-sdk.
 import MetaApi, { SynchronizationListener } from "metaapi.cloud-sdk/node";
 import type {
+  MetatraderAccount,
   MetatraderCandle,
   MetatraderDeal,
   MetatraderSymbolPrice,
@@ -16,6 +17,7 @@ import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
 import { eventBus } from "./eventBus";
 import { evaluateSignal } from "./signalEngine";
+import { confirmsDirection, M5_CONFIRMATION_BARS } from "./m5Confirmation";
 import { publishSignal } from "./signalPublisher";
 import { predictionStore } from "./predictionStore";
 import { brokerSymbol, pairForBrokerSymbol } from "./symbols";
@@ -106,7 +108,18 @@ class MarketSyncListener extends SynchronizationListener {
           h4: candleStore.get(pair, "4h"),
           d1: candleStore.get(pair, "1d"),
         };
-        const evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
+        let evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
+        // M5 entry confirmation -- a voluntarily-added quality gate on top of
+        // everything evaluateSignal itself already checks (see m5Confirmation.ts).
+        // Only ever runs on the rare candle that would otherwise become a signal, an
+        // on-demand REST fetch, never a live subscription (see fetchRecentCandles's
+        // own doc comment for why that distinction matters here specifically).
+        if (evaluation.status === "signal" && loadExecutionConfig(this.accountKey).m5ConfirmationEnabled) {
+          const m5Candles = await fetchRecentCandles(pair, "5m", M5_CONFIRMATION_BARS, this.accountKey);
+          if (!confirmsDirection(m5Candles, evaluation.signal.direction)) {
+            evaluation = { status: "no_trade", reason: { code: "m5_not_confirmed", impliedDirection: evaluation.signal.direction } };
+          }
+        }
         const time = Date.now();
         // Same emaTrendDirection call signalEngine.ts's own hard trend-agreement gate
         // already makes on these exact series -- recomputed here (cheap: two EMAs over
@@ -291,6 +304,10 @@ export function isAccountConfigured(accountKey: AccountKey): boolean {
 interface ConnectionState {
   connection: StreamingMetaApiConnectionInstance | null;
   lastUpdateAt: number | null;
+  // The account ENTITY (not the streaming connection) -- kept only so fetchRecentCandles
+  // below can make on-demand getHistoricalCandles REST calls after boot, same object
+  // connect() already creates once for seedHistoricalCandles.
+  account: MetatraderAccount | null;
 }
 const connectionStatesKey = Symbol.for("forex-ai.metaApiConnection.states");
 type GlobalWithConnectionStates = typeof globalThis & { [connectionStatesKey]?: Map<AccountKey, ConnectionState> };
@@ -305,7 +322,7 @@ const connectionStates: Map<AccountKey, ConnectionState> =
 function stateFor(accountKey: AccountKey): ConnectionState {
   let state = connectionStates.get(accountKey);
   if (!state) {
-    state = { connection: null, lastUpdateAt: null };
+    state = { connection: null, lastUpdateAt: null, account: null };
     connectionStates.set(accountKey, state);
   }
   return state;
@@ -358,7 +375,10 @@ async function connect(accountKey: AccountKey): Promise<void> {
             // those symbols stopped receiving live candle updates at all while
             // downgraded, which is what "candlesticks not moving" actually was.
             // /api/candles still answers a "5m" request from seedHistory.ts's one-time
-            // REST-fetched snapshot, it just won't tick live.
+            // REST-fetched snapshot, it just won't tick live. M5 entry confirmation
+            // (see fetchRecentCandles below) deliberately does NOT change this -- it
+            // fetches on demand via REST only at the rare moment a signal is about to
+            // fire, never a live stream, so it can't reintroduce the same problem.
             { type: "candles", timeframe: "15m" },
             { type: "candles", timeframe: "30m" },
             { type: "candles", timeframe: "1h" },
@@ -369,7 +389,9 @@ async function connect(accountKey: AccountKey): Promise<void> {
     );
   }
 
-  stateFor(accountKey).connection = connection;
+  const state = stateFor(accountKey);
+  state.connection = connection;
+  state.account = account;
   console.log(`[market] ${accountKey} account connected and streaming ${PAIRS.join(", ")}`);
 }
 
@@ -391,6 +413,30 @@ export function getConnectionStatus(accountKey: AccountKey = "live"): { status: 
 
   const healthy = connection.synchronized && connection.terminalState.connected && connection.terminalState.connectedToBroker;
   return { status: healthy ? "live" : "reconnecting", lastUpdateAt: state.lastUpdateAt };
+}
+
+/**
+ * On-demand REST fetch, not a live subscription -- used by the M5 entry-confirmation
+ * gate (see onCandlesUpdated below and m5Confirmation.ts). Deliberately NOT a live
+ * candle stream: M5 was dropped from the permanent subscriptions earlier for exactly
+ * this reason (see connect()'s own comment above) after it caused MetaApi to rate-limit
+ * other pairs' candle subscriptions. Calling this only at the rare moment a candidate
+ * signal is about to fire, never on every tick, avoids that entirely. Reuses the same
+ * getHistoricalCandles REST call and candle-mapping shape seedHistory.ts already uses
+ * for the initial history seed, just a small bar count instead of a full backfill.
+ * Never throws -- returns [] on any failure so a fetch hiccup just reads as "not
+ * confirmed" (see confirmsDirection's own fail-closed doc comment), not a crash.
+ */
+export async function fetchRecentCandles(pair: Pair, timeframe: Timeframe, barCount: number, accountKey: AccountKey = "live"): Promise<Candle[]> {
+  const account = stateFor(accountKey).account;
+  if (!account) return [];
+  try {
+    const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), barCount);
+    return raw.map((c) => ({ time: c.time.getTime(), open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume }));
+  } catch (error) {
+    console.error(`[market] on-demand ${timeframe} candle fetch failed for ${pair}:`, error);
+    return [];
+  }
 }
 
 export function getAccountInformation(accountKey: AccountKey = "live"): AccountInfo | undefined {

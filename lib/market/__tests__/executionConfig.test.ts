@@ -16,6 +16,7 @@ const ENV_VARS = [
   "POSITION_MANAGEMENT_ENABLED",
   "PARTIAL_CLOSE_ENABLED",
   "PARTIAL_CLOSE_FRACTION",
+  "M5_CONFIRMATION_ENABLED",
   "KILL_SWITCH_FILE",
   "DEMO_RISK_PER_TRADE_PCT",
   "DEMO_MAX_CONCURRENT_POSITIONS",
@@ -31,6 +32,7 @@ const ENV_VARS = [
   "DEMO_POSITION_MANAGEMENT_ENABLED",
   "DEMO_PARTIAL_CLOSE_ENABLED",
   "DEMO_PARTIAL_CLOSE_FRACTION",
+  "DEMO_M5_CONFIRMATION_ENABLED",
   "KILL_SWITCH_FILE_DEMO",
 ];
 
@@ -55,6 +57,7 @@ describe("loadExecutionConfig", () => {
       positionManagementEnabled: true,
       partialCloseEnabled: false,
       partialCloseFraction: 0.5,
+      m5ConfirmationEnabled: true,
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
@@ -72,6 +75,7 @@ describe("loadExecutionConfig", () => {
       positionManagementEnabled: true,
       partialCloseEnabled: false,
       partialCloseFraction: 0.5,
+      m5ConfirmationEnabled: true,
       killSwitchFile: ".trading-paused-demo",
     });
   });
