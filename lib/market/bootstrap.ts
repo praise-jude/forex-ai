@@ -6,6 +6,8 @@ import { startCurrencyStrength } from "./currencyStrength";
 import { startPositionManager } from "./positionManager";
 import { startPositionInvalidation } from "./positionInvalidation";
 import { startWeeklyDigest } from "./weeklyDigest";
+import { signalStore } from "./signalStore";
+import { positionStore } from "./positionStore";
 
 let started = false;
 
@@ -23,6 +25,16 @@ let started = false;
 export function startMarketEngine(): void {
   if (started) return;
   started = true;
+
+  // Fire-and-forget, same as ensureMetaApiConnection below -- reloads recent
+  // signals/execution history from the DB (see signalStore.ts/positionStore.ts's own
+  // hydrate()) so a restart doesn't blank the dashboard or reopen hasExecuted()'s
+  // idempotency window. No-ops (and logs once) when DATABASE_URL isn't set -- the engine
+  // itself doesn't wait on this, since the first real signal/execution is always much
+  // further off than a DB round trip.
+  Promise.all([signalStore.hydrate(), positionStore.hydrate()]).catch((error: unknown) => {
+    console.error("[market] failed to hydrate signal/execution history from the database:", error);
+  });
 
   ensureMetaApiConnection("live").catch((error: unknown) => {
     console.error("[market] failed to start live engine:", error);

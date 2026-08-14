@@ -10,7 +10,7 @@ config({ path: ".env.local" });
 // boot-triggered, matching this app's "nothing auto-enables" philosophy (e.g.
 // TRADING_KILL_SWITCH must be set explicitly).
 export default defineConfig({
-  schema: "./lib/db/schema.ts",
+  schema: ["./lib/db/schema.ts", "./lib/db/tradingSchema.ts"],
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {

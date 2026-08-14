@@ -212,9 +212,13 @@ npm run db:migrate    # applies pending migrations to DATABASE_URL
 | `RESEND_API_KEY` / `EMAIL_FROM_ADDRESS` | unset | Sends verification/reset emails via a single Resend `fetch` call. Without these, accounts still work — the email send just fails (logged, never thrown), so verification links have to be pulled from the DB directly. |
 | `APP_BASE_URL` | request origin | Base URL used to build absolute links in those emails. |
 
+### Signal/execution history persistence
+
+Fired signals (`lib/market/signalStore.ts`) and the execution ledger (`lib/market/positionStore.ts`, "which signal caused which trade, requested vs filled") are opportunistically persisted to the same Postgres `DATABASE_URL` used by "Customer accounts" above (`signals`/`executed_trades` tables, `lib/db/tradingSchema.ts`), so recent history survives a restart. This is a durability/audit backstop, not a new read path or a hard dependency: both stores keep their own in-memory copy as the real, synchronous source of truth (unchanged from before this existed — `positionStore`'s idempotency guard in particular must stay race-free against a duplicate click, so it's never blocked on a DB round trip), and every DB write/read is best-effort — logged on failure, never thrown. **Without `DATABASE_URL` set, the trading engine behaves exactly as it always has**: fully functional, in-memory-only, history lost on restart (one log line at boot notes this). Uses its own DB accessor (`lib/db/optionalClient.ts`), separate from `lib/db/client.ts`'s `db` — that one is specific to `/account` routes and requires `DATABASE_URL`; this one must not throw just from being imported, since `signalStore.ts`/`positionStore.ts` load on every boot regardless of DB config.
+
 ### Not built yet
 
-API tokens, rate limiting, usage tracking, Paystack subscriptions/billing, a public marketing site and docs, mobile parity for accounts, and full database persistence for the trading engine itself (signals and the execution ledger still live only in memory and reset when the server restarts — only device push tokens, backtest job history, and customer accounts are persisted, see "Backtesting" and "Customer accounts" above) are intentionally out of scope for this pass.
+API tokens, rate limiting, usage tracking, Paystack subscriptions/billing, a public marketing site and docs, and mobile parity for accounts are intentionally out of scope for this pass. `lib/market/tradeJournal.ts` (closed-trade history, signal-decision outcomes) still persists to a local JSON file rather than Postgres — see "Signal/execution history persistence" above for the two stores that do use the DB.
 
 ## Getting Started
 

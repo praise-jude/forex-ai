@@ -1,6 +1,62 @@
+import { desc, eq } from "drizzle-orm";
+import { getOptionalDb } from "../db/optionalClient";
+import { executedTrades as executedTradesTable } from "../db/tradingSchema";
 import type { AccountKey, ExecutedTrade } from "./types";
 
 type AttemptInput = Omit<ExecutedTrade, "status" | "filledEntry" | "brokerPositionId" | "brokerOrderId" | "rejectReason" | "filledAt">;
+
+/** Best-effort inserts/updates, fired without awaiting from recordAttempt/markFilled/
+ * markRejected below -- a DB failure must never affect execution, same "log, don't
+ * throw" philosophy as pushNotifier.ts's sends. The in-memory Map stays the real,
+ * synchronous source of truth (see PositionStore's own class doc on why recordAttempt
+ * must run synchronously) -- these are a durability backstop, not a new read path. */
+async function persistAttempt(record: ExecutedTrade): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  await db
+    .insert(executedTradesTable)
+    .values({
+      id: record.id,
+      signalId: record.signalId,
+      account: record.account,
+      pair: record.pair,
+      timeframe: record.timeframe,
+      direction: record.direction,
+      requestedLots: record.requestedLots,
+      requestedEntry: record.requestedEntry,
+      stopLoss: record.stopLoss,
+      takeProfit: record.takeProfit,
+      takeProfit2: record.takeProfit2,
+      status: record.status,
+      riskPct: record.riskPct,
+      attemptedAt: new Date(record.attemptedAt),
+    })
+    .onConflictDoNothing();
+}
+
+async function persistFilled(record: ExecutedTrade): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  await db
+    .update(executedTradesTable)
+    .set({
+      status: "filled",
+      filledEntry: record.filledEntry,
+      brokerPositionId: record.brokerPositionId,
+      brokerOrderId: record.brokerOrderId,
+      filledAt: record.filledAt !== undefined ? new Date(record.filledAt) : undefined,
+    })
+    .where(eq(executedTradesTable.id, record.id));
+}
+
+async function persistRejected(record: ExecutedTrade): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  await db
+    .update(executedTradesTable)
+    .set({ status: "rejected", rejectReason: record.rejectReason })
+    .where(eq(executedTradesTable.id, record.id));
+}
 
 // Bounds the audit ledger so a long-running process doesn't grow this (and the
 // /api/signals payload that serializes all of it) unbounded -- generous relative to
@@ -40,7 +96,46 @@ class PositionStore {
     const record: ExecutedTrade = { ...input, status: "pending" };
     this.byKey.set(this.key(input.signalId, input.account), record);
     this.prune();
+    void persistAttempt(record).catch((error: unknown) => {
+      console.error(`[positionStore] failed to persist attempt ${record.id}:`, error);
+    });
     return record;
+  }
+
+  /** Reloads the most recent records from the DB into memory -- called once at boot (see
+   * bootstrap.ts) so hasExecuted()'s idempotency guard and the dashboard's execution
+   * ledger both survive a restart. No-ops when DATABASE_URL isn't set. Bypasses
+   * recordAttempt() deliberately -- these rows already exist in the DB, so re-persisting
+   * them on load would just be a wasted round trip. */
+  async hydrate(): Promise<void> {
+    const db = getOptionalDb();
+    if (!db) return;
+    const rows = await db.select().from(executedTradesTable).orderBy(desc(executedTradesTable.attemptedAt)).limit(MAX_RECORDS);
+    for (const row of rows) {
+      const record: ExecutedTrade = {
+        id: row.id,
+        signalId: row.signalId,
+        account: row.account as AccountKey,
+        pair: row.pair as ExecutedTrade["pair"],
+        timeframe: row.timeframe as ExecutedTrade["timeframe"],
+        direction: row.direction as ExecutedTrade["direction"],
+        requestedLots: row.requestedLots,
+        requestedEntry: row.requestedEntry,
+        filledEntry: row.filledEntry ?? undefined,
+        stopLoss: row.stopLoss,
+        takeProfit: row.takeProfit,
+        takeProfit2: row.takeProfit2,
+        status: row.status as ExecutedTrade["status"],
+        brokerPositionId: row.brokerPositionId ?? undefined,
+        brokerOrderId: row.brokerOrderId ?? undefined,
+        rejectReason: row.rejectReason ?? undefined,
+        riskPct: row.riskPct,
+        attemptedAt: row.attemptedAt.getTime(),
+        filledAt: row.filledAt?.getTime(),
+      };
+      const key = this.key(record.signalId, record.account);
+      if (!this.byKey.has(key)) this.byKey.set(key, record);
+    }
   }
 
   /**
@@ -71,6 +166,9 @@ class PositionStore {
     record.brokerPositionId = update.brokerPositionId;
     record.brokerOrderId = update.brokerOrderId;
     record.filledAt = update.filledAt;
+    void persistFilled(record).catch((error: unknown) => {
+      console.error(`[positionStore] failed to persist fill ${record.id}:`, error);
+    });
   }
 
   markRejected(signalId: string, rejectReason: string, account: AccountKey = "live"): void {
@@ -78,6 +176,9 @@ class PositionStore {
     if (!record) return;
     record.status = "rejected";
     record.rejectReason = rejectReason;
+    void persistRejected(record).catch((error: unknown) => {
+      console.error(`[positionStore] failed to persist rejection ${record.id}:`, error);
+    });
   }
 
   all(): ExecutedTrade[] {
