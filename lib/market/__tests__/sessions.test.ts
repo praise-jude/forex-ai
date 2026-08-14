@@ -1,4 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Hoisted above the "../sessions" import below (vitest's documented behavior for
+// vi.hoisted -- the callback runs before any import is evaluated) -- without this, this
+// file's static import bakes in whatever LONDON_*/NEW_YORK_* hours happen to be set in
+// .env.local (loaded globally by vitest.setup.ts for the account-sessions tests' own
+// real-DB needs), since sessions.ts reads them once at module load into a module-level
+// constant. This deployment's own .env.local deliberately sets NEW_YORK_END_HOUR=13 (see
+// README's WAT-timezone tuning) -- fine for the app itself, but it would silently shift
+// every "default window" assertion below onto the tuned window instead. The "env var
+// overrides" describe block further down tests the override mechanism itself, via its
+// own explicit loadSessionsWithEnv -- this only needs to guarantee the *default* is what
+// every other describe block in this file is actually exercising.
+vi.hoisted(() => {
+  for (const name of ["LONDON_START_HOUR", "LONDON_END_HOUR", "NEW_YORK_START_HOUR", "NEW_YORK_END_HOUR"]) {
+    delete process.env[name];
+  }
+});
+
 import { getActiveSession, isKillzone } from "../sessions";
 
 // LONDON/NEW_YORK are read from process.env once at module load (see sessions.ts's own
