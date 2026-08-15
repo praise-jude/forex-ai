@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
-import { getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
+import { getConfidenceCalibration, getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
 import { loadTradeJournalModule } from "./tradeJournalTestHelper";
 
@@ -400,5 +400,58 @@ describe("getSignalFunnelStats", () => {
 
   it("returns all zeros for an empty list", () => {
     expect(getSignalFunnelStats([])).toEqual({ approved: 0, rejected: 0, expired: 0, blocked: 0 });
+  });
+});
+
+describe("getConfidenceCalibration", () => {
+  it("reports insufficient_data below the minimum sample size, with null stats", () => {
+    const entries = [
+      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ confidence: 92 }) }),
+      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ confidence: 91 }) }),
+    ];
+
+    const [buy] = getConfidenceCalibration(entries, 30);
+    expect(buy).toEqual({ tier: "buy", sampleSize: 2, status: "insufficient_data", winRate: null, averageR: null, expectancy: null });
+  });
+
+  it("reports real calibrated stats once the minimum sample size is reached", () => {
+    const entries = [
+      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ confidence: 92 }) }),
+      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ confidence: 91 }) }),
+    ];
+
+    const [buy] = getConfidenceCalibration(entries, 2);
+    expect(buy.status).toBe("calibrated");
+    expect(buy.sampleSize).toBe(2);
+    expect(buy.winRate).toBe(50);
+    expect(buy.averageR).toBeCloseTo(0.5); // (2 + -1) / 2
+    expect(buy.expectancy).toBe(buy.averageR); // same number, not a second computation
+  });
+
+  it("buckets by the signal's tier at fire time -- confidence >= 95 is strong_buy, below is buy", () => {
+    const entries = [
+      buildEntry({ id: "1", context: buildContext({ confidence: 94 }) }), // buy
+      buildEntry({ id: "2", context: buildContext({ confidence: 95 }) }), // strong_buy
+      buildEntry({ id: "3", context: buildContext({ confidence: 100 }) }), // strong_buy
+    ];
+
+    const [buy, strongBuy] = getConfidenceCalibration(entries, 1);
+    expect(buy.sampleSize).toBe(1);
+    expect(strongBuy.sampleSize).toBe(2);
+  });
+
+  it("excludes entries with no captured context -- there's no confidence to bucket them by", () => {
+    const entries = [buildEntry({ id: "1", context: buildContext({ confidence: 92 }) }), buildEntry({ id: "2", context: null })];
+
+    const [buy] = getConfidenceCalibration(entries, 1);
+    expect(buy.sampleSize).toBe(1);
+  });
+
+  it("returns insufficient_data for both tiers on an empty list", () => {
+    const result = getConfidenceCalibration([], 30);
+    expect(result).toEqual([
+      { tier: "buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+      { tier: "strong_buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+    ]);
   });
 });

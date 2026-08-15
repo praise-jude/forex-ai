@@ -334,3 +334,52 @@ export function getSignalFunnelStats(outcomes: SignalOutcome[]): SignalFunnelSta
     blocked: outcomes.filter((o) => o.outcome === "blocked").length,
   };
 }
+
+export type CalibrationStatus = "calibrated" | "insufficient_data";
+
+export interface ConfidenceCalibrationBucket {
+  tier: "buy" | "strong_buy";
+  sampleSize: number;
+  status: CalibrationStatus;
+  /** 0-100. Null when status is "insufficient_data" -- a number here always means it's
+   * backed by at least minSamples real closed trades, never a misleadingly-precise
+   * figure from a handful of them. */
+  winRate: number | null;
+  averageR: number | null;
+  /** Same value as averageR -- the average R multiple across all trades (wins and
+   * losses together) already IS expectancy in R terms, so this isn't a second
+   * computation, just the same number under the name this is normally asked for by. */
+  expectancy: number | null;
+}
+
+/**
+ * Buckets by the signal's own final tier at the moment it fired (context.confidence,
+ * the same 90/95 boundaries confidenceScore.ts's tierOf already uses) rather than finer
+ * numeric ranges -- every real fired signal in this app has confidence in the ~90-100
+ * range only (watch-tier, 80-89, never executes; nothing below 80 ever becomes a Signal
+ * at all, see signalEngine.ts), so finer buckets would only fragment an already-small
+ * sample further. Entries with no context (predates this feature, or aged out past
+ * CONTEXT_RETENTION_MS) are excluded -- there's no confidence to bucket them by, and
+ * guessing one would defeat the entire point of calibrating against real data.
+ *
+ * Read-only measurement -- reuses getPerformanceStats' own win-rate/average-R math over
+ * each bucket rather than reimplementing it. Never wired into position sizing or
+ * execution; that's a deliberately separate, later change once this produces real
+ * numbers to build on.
+ */
+export function getConfidenceCalibration(entries: JournalEntry[], minSamples: number): ConfidenceCalibrationBucket[] {
+  const withContext = entries.filter((e): e is JournalEntry & { context: SignalContext } => e.context !== null);
+
+  return (["buy", "strong_buy"] as const).map((tier) => {
+    const bucketEntries = withContext.filter((e) => (e.context.confidence >= 95 ? "strong_buy" : "buy") === tier);
+    const sampleSize = bucketEntries.length;
+    const status: CalibrationStatus = sampleSize >= minSamples ? "calibrated" : "insufficient_data";
+
+    if (status === "insufficient_data") {
+      return { tier, sampleSize, status, winRate: null, averageR: null, expectancy: null };
+    }
+
+    const stats = getPerformanceStats(bucketEntries);
+    return { tier, sampleSize, status, winRate: stats.winRate, averageR: stats.averageR, expectancy: stats.averageR };
+  });
+}

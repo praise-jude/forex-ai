@@ -6,8 +6,16 @@ import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopContro
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
 import { loadExecutionConfig, type ExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
+import { tradeJournal, getConfidenceCalibration, type ConfidenceCalibrationBucket } from "@/lib/market/tradeJournal";
 
 export const dynamic = "force-dynamic";
+
+// Same "invalid/unset -> safe fallback" posture as executionConfig.ts's own envNumber --
+// a non-positive or non-numeric override can't mean anything sensible here.
+function minCalibrationSamples(): number {
+  const raw = Number(process.env.CONFIDENCE_CALIBRATION_MIN_SAMPLES);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30;
+}
 
 function ConfigRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -59,10 +67,44 @@ function ExecutionConfigTable({ account, config }: { account: string; config: Ex
   );
 }
 
+/** Read-only measurement, per the plan's own top safety principle: confidence must be
+ * calibrated against real outcomes before it's ever allowed to influence position size
+ * -- this section never has, and doesn't yet, feed anything back into sizing/execution. */
+function CalibrationRow({ bucket, minSamples }: { bucket: ConfidenceCalibrationBucket; minSamples: number }) {
+  const tierLabel = bucket.tier === "strong_buy" ? "Strong buy (95-100)" : "Buy (90-94)";
+  return (
+    <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-zinc-200">{tierLabel}</span>
+        <span className="text-[11px] text-zinc-500">{bucket.sampleSize} closed trades</span>
+      </div>
+      {bucket.status === "insufficient_data" ? (
+        <p className="mt-1 text-xs text-amber-400">
+          Insufficient data — needs {minSamples}, have {bucket.sampleSize}. Using base risk only; no calibrated adjustment is possible yet.
+        </p>
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-400">
+          <span>
+            Real win rate: <span className="font-mono text-zinc-200">{bucket.winRate?.toFixed(1)}%</span>
+          </span>
+          <span>
+            Average R: <span className="font-mono text-zinc-200">{bucket.averageR?.toFixed(2)}R</span>
+          </span>
+          <span>
+            Expectancy: <span className="font-mono text-zinc-200">{bucket.expectancy?.toFixed(2)}R</span>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const liveConfig = loadExecutionConfig("live");
   const demoConfigured = isAccountConfigured("demo");
   const demoConfig = demoConfigured ? loadExecutionConfig("demo") : null;
+  const minSamples = minCalibrationSamples();
+  const calibration = getConfidenceCalibration(tradeJournal.all(), minSamples);
 
   return (
     <main className="min-h-dvh bg-zinc-950 text-zinc-100">
@@ -100,6 +142,22 @@ export default function SettingsPage() {
           <div className="grid gap-3 md:grid-cols-2">
             <ExecutionConfigTable account="Live" config={liveConfig} />
             {demoConfig && <ExecutionConfigTable account="Demo" config={demoConfig} />}
+          </div>
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Confidence calibration <span className="normal-case text-zinc-600">(measurement only — not wired into sizing)</span>
+          </h2>
+          <p className="mb-2 text-xs text-zinc-500">
+            Real historical performance per confidence tier, so &quot;95% confidence&quot; can be checked against what actually happened
+            instead of trusted as a probability. Confidence-weighted sizing will only ever use these numbers once a tier has enough
+            samples to trust — never the raw AI score alone.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {calibration.map((bucket) => (
+              <CalibrationRow key={bucket.tier} bucket={bucket} minSamples={minSamples} />
+            ))}
           </div>
         </section>
 
