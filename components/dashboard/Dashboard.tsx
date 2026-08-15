@@ -12,6 +12,7 @@ import { PredictionCard } from "./PredictionCard";
 import { TimeframeSelector } from "./TimeframeSelector";
 import { PositionsPanel } from "./PositionsPanel";
 import { RiskGuardianBanner } from "./RiskGuardianBanner";
+import { MarketClosedBanner } from "./MarketClosedBanner";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
 import { useVoiceAssistant } from "./useVoiceAssistant";
 import { SignalToastStack, type ToastEntry } from "./SignalToast";
@@ -217,6 +218,7 @@ export function Dashboard() {
   return (
     <div className="flex flex-col gap-4 p-5">
       <RiskGuardianBanner />
+      <MarketClosedBanner />
       <VoiceAssistantPanel {...voice} />
       <AutopilotStatus predictions={flatPredictions} signals={signals} marketsMonitored={PAIRS.length} />
 
