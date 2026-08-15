@@ -268,6 +268,14 @@ export interface SymbolSpec {
 export interface AccountInfo {
   balance: number;
   equity: number;
+  /** Same object as balance/equity (terminalState.accountInformation) -- never
+   * independently absent when the other two are present. */
+  freeMargin: number;
+  margin: number;
+  /** Account-level trading permission -- false for e.g. an unfunded/zero-balance
+   * account, independent of market hours or per-symbol trade mode (see
+   * getSymbolTradingInfo for the per-symbol equivalent). */
+  tradeAllowed: boolean;
 }
 
 export interface OpenPosition {

@@ -442,7 +442,17 @@ export async function fetchRecentCandles(pair: Pair, timeframe: Timeframe, barCo
 export function getAccountInformation(accountKey: AccountKey = "live"): AccountInfo | undefined {
   const info = stateFor(accountKey).connection?.terminalState.accountInformation;
   if (!info) return undefined;
-  return { balance: info.balance, equity: info.equity };
+  return { balance: info.balance, equity: info.equity, freeMargin: info.freeMargin, margin: info.margin, tradeAllowed: info.tradeAllowed };
+}
+
+/** Per-symbol trading permission/constraint, separate from getSymbolSpecification
+ * (which feeds computeLotSize's sizing-critical math) so the System Health panel's own
+ * needs never touch that sizing-relevant type. Same cached terminalState.specification()
+ * read -- no new network call. */
+export function getSymbolTradingInfo(pair: Pair, accountKey: AccountKey = "live"): { tradeMode: string | undefined; stopsLevel: number } | undefined {
+  const spec = stateFor(accountKey).connection?.terminalState.specification(brokerSymbol(pair));
+  if (!spec) return undefined;
+  return { tradeMode: spec.tradeMode, stopsLevel: spec.stopsLevel };
 }
 
 /** Total open positions on the account, including any not opened by this app — used for risk limits. */

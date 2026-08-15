@@ -4,6 +4,7 @@ import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyCo
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
+import { SystemHealthPanel } from "@/components/dashboard/SystemHealthPanel";
 import { loadExecutionConfig, type ExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
 import { tradeJournal, getConfidenceCalibration, type ConfidenceCalibrationBucket } from "@/lib/market/tradeJournal";
@@ -122,6 +123,11 @@ export default function SettingsPage() {
       </header>
 
       <div className="flex flex-col gap-5 p-4 sm:p-5">
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">System health</h2>
+          <SystemHealthPanel />
+        </section>
+
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Live controls</h2>
           <div className="flex flex-wrap items-center gap-2">
