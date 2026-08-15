@@ -16,7 +16,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { pairs?: unknown; timeframe?: unknown; lookbackDays?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as
+    | { pairs?: unknown; timeframe?: unknown; lookbackDays?: unknown; realistic?: unknown }
+    | null;
   if (!body) {
     return Response.json({ error: "invalid_body", message: "Expected a JSON body." }, { status: 400 });
   }
@@ -32,8 +34,9 @@ export async function POST(request: Request) {
     );
   }
   const lookbackDays = typeof body.lookbackDays === "number" && Number.isFinite(body.lookbackDays) ? body.lookbackDays : DEFAULT_LOOKBACK_DAYS;
+  const realistic = body.realistic === true;
 
-  const result = backtestRunner.start({ pairs, timeframe: body.timeframe, lookbackDays });
+  const result = backtestRunner.start({ pairs, timeframe: body.timeframe, lookbackDays, realistic });
   // Checked via "status" (present on every real BacktestJob), not "error" -- a
   // BacktestJob itself also has an `error: string | null` field (its own job-level
   // failure reason), so "error" in result would have matched a successful job too.

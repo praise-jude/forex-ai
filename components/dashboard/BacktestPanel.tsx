@@ -40,15 +40,25 @@ function StatTile({ label, value, hint, tone }: { label: string; value: string; 
   );
 }
 
-function DisclosureBanner() {
+function DisclosureBanner({ realistic }: { realistic: boolean }) {
   return (
     <div className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-3.5 py-2.5 text-xs text-amber-200">
       <p className="font-semibold text-amber-300">Backtest limitations — read before trusting these numbers</p>
       <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-200/90">
         <li>Historical news blackout is <strong>not</strong> simulated — the news filter always reads &quot;clear&quot; for past dates (no historical archive exists to check against).</li>
         <li>Currency-strength confirmation is excluded from Signer B&apos;s vote for the same reason.</li>
-        <li>Position management (break-even, trailing stop, early invalidation exit) is <strong>not</strong> simulated — only a fixed stop-loss vs. take-profit-1.</li>
-        <li>Sizing uses a fixed hypothetical stake, not real lot sizing, spread, commission, or compounding.</li>
+        {realistic ? (
+          <>
+            <li>Position management <strong>is</strong> simulated (break-even, trailing stop, using this account&apos;s real configured triggers) — early invalidation exit still isn&apos;t. Partial take-profit isn&apos;t simulated either, even if enabled on the account.</li>
+            <li>Sizing uses real lot-size math against a fixed hypothetical starting equity (not compounding across trades). For USD/JPY and USD/CAD specifically, the pip-value conversion uses <strong>today&apos;s</strong> live exchange rate, not the historical rate at signal time — a bounded imprecision, not a fabrication.</li>
+            <li>Spread cost is simulated as a fixed fraction of each trade&apos;s own stop distance — an approximation, not each pair&apos;s real historical spread.</li>
+          </>
+        ) : (
+          <>
+            <li>Position management (break-even, trailing stop, early invalidation exit) is <strong>not</strong> simulated — only a fixed stop-loss vs. take-profit-1.</li>
+            <li>Sizing uses a fixed hypothetical stake, not real lot sizing, spread, commission, or compounding.</li>
+          </>
+        )}
         <li>A running job lives in memory only — a server restart loses it, with no resume.</li>
       </ul>
       <p className="mt-1.5 font-medium">Results likely skew more optimistic than live trading.</p>
@@ -61,6 +71,7 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
   const [allPairs, setAllPairs] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [lookbackDays, setLookbackDays] = useState(DEFAULT_LOOKBACK_DAYS);
+  const [realistic, setRealistic] = useState(false);
 
   function togglePair(pair: Pair) {
     setSelectedPairs((prev) => (prev.includes(pair) ? prev.filter((p) => p !== pair) : [...prev, pair]));
@@ -75,7 +86,7 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) onStart({ pairs: effectivePairs, timeframe, lookbackDays });
+        if (canSubmit) onStart({ pairs: effectivePairs, timeframe, lookbackDays, realistic });
       }}
       className="flex flex-col gap-3 rounded-xl border border-white/10 bg-zinc-900 p-3.5"
     >
@@ -142,6 +153,14 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
         </button>
       </div>
 
+      <label className="flex items-start gap-1.5 text-xs text-zinc-300">
+        <input type="checkbox" checked={realistic} onChange={(e) => setRealistic(e.target.checked)} className="mt-0.5" />
+        <span>
+          <span className="font-medium">Realistic mode</span>
+          <span className="text-zinc-500"> — simulates break-even/trailing-stop, real lot-size-based sizing, and spread cost, using this account&apos;s actual configured triggers. Slower to start (fetches real symbol specs first).</span>
+        </span>
+      </label>
+
       <p className="text-[11px] text-zinc-500">
         ~{estimatedBars.toLocaleString()} bars to evaluate across {effectivePairs.length || 0} pair{effectivePairs.length === 1 ? "" : "s"}.
         {estimatedBars > LARGE_RUN_BAR_WARNING && (
@@ -185,10 +204,20 @@ function ResultsView({ job }: { job: BacktestJob }) {
   if (!job.result) return null;
   const { stats, profitFactor, sharpeRatio, streaks, scoreRangeBreakdown, openAtWindowEnd, perPair } = job.result;
   const averageRTone = stats.averageR === null ? undefined : stats.averageR >= 0 ? "positive" : "negative";
+  const realistic = job.request.realistic === true;
 
   return (
     <div className="flex flex-col gap-3">
-      <DisclosureBanner />
+      <div className="flex items-center gap-2">
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+            realistic ? "bg-sky-500/15 text-sky-400" : "bg-zinc-700/60 text-zinc-400"
+          }`}
+        >
+          {realistic ? "Realistic mode" : "Idealized mode"}
+        </span>
+      </div>
+      <DisclosureBanner realistic={realistic} />
 
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <StatTile label="Trades" value={String(stats.count)} hint={openAtWindowEnd > 0 ? `${openAtWindowEnd} still open at window end` : undefined} />

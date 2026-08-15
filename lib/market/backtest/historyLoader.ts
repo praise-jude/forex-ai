@@ -1,6 +1,6 @@
 import MetaApi from "metaapi.cloud-sdk/node";
 import type { MetatraderAccount } from "metaapi.cloud-sdk/node";
-import type { Candle, Pair, Timeframe } from "../types";
+import type { Candle, Pair, SymbolSpec, Timeframe } from "../types";
 import { brokerSymbol } from "../symbols";
 
 // MetaApi's documented per-call cap on getHistoricalCandles.
@@ -80,4 +80,35 @@ export async function loadHistoricalRange(
   }
 
   return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+}
+
+/**
+ * Best-effort, fetched via a fresh one-off RPC connection -- deliberately NOT
+ * metaApiConnection.ts's own persistent streaming connection (see getBacktestAccount's
+ * own comment on why: a backtest must stay fully decoupled from live connection state,
+ * so this works even when the live streaming connection happens to be down). Unlike
+ * getHistoricalCandles, symbol specs aren't available as a plain REST call on the
+ * account handle itself -- only through RpcMetaApiConnectionInstance -- so this opens,
+ * synchronizes, and closes its own short-lived connection rather than reusing anything
+ * else. A pair whose spec can't be fetched is simply omitted from the returned map
+ * (logged, never fabricated) -- callers fall back to non-realistic sizing for that pair.
+ */
+export async function loadSymbolSpecs(account: MetatraderAccount, pairs: Pair[]): Promise<Map<Pair, SymbolSpec>> {
+  const specs = new Map<Pair, SymbolSpec>();
+  const connection = account.getRPCConnection();
+  try {
+    await connection.connect();
+    await connection.waitSynchronized();
+    for (const pair of pairs) {
+      try {
+        const spec = await connection.getSymbolSpecification(brokerSymbol(pair));
+        specs.set(pair, { contractSize: spec.contractSize, volumeStep: spec.volumeStep, volumeMin: spec.minVolume, volumeMax: spec.maxVolume });
+      } catch (err) {
+        console.error(`[backtest] failed to fetch symbol spec for ${pair} (realistic sizing will fall back to flat stake for it):`, err);
+      }
+    }
+  } finally {
+    await connection.close();
+  }
+  return specs;
 }

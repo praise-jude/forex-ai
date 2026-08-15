@@ -1,9 +1,10 @@
-import type { Candle, MarketRegime, Pair, Signal, SignalEvaluation, Timeframe } from "../types";
+import type { Candle, ExecutedTrade, MarketRegime, Pair, Signal, SignalEvaluation, Timeframe } from "../types";
 import { evaluateSignal } from "../signalEngine";
 import { TIMEFRAME_MS } from "../timeframes";
 import { detectMarketRegime } from "../marketRegime";
 import { calculateAdx } from "../indicators/adx";
 import { calculateAtr } from "../indicators/atr";
+import { evaluatePositionForManagement, type PositionManagementConfig, type PositionManagementState } from "../positionManager";
 
 export interface OutcomeSim {
   exitPrice: number;
@@ -65,6 +66,112 @@ export function simulateOutcome(signal: Signal, future: Candle[]): OutcomeSim {
   };
 }
 
+export interface RealisticSimConfig {
+  /** Sourced from loadExecutionConfig("live") by the caller, so a realistic run reflects
+   * the account's actual configured break-even/trailing triggers, not invented defaults.
+   * partialCloseEnabled is deliberately never read as true here regardless of the
+   * account's real setting -- see this feature's own scope notes on why partial-close
+   * simulation (a blended two-leg outcome) is a separate, later addition. */
+  positionManagement: PositionManagementConfig;
+  /** Fraction of the signal's own stop distance, same convention as
+   * executionConfig.ts's maxSpreadFractionOfStop -- worsens the effective entry price
+   * (a market buy fills at ask, sell at bid), the one cost simulateOutcome ignores
+   * entirely today. */
+  spreadFractionOfStop: number;
+}
+
+/**
+ * Like simulateOutcome, but simulates break-even and trailing-stop position management
+ * (the two features that default ON in live, see executionConfig.ts) plus spread cost --
+ * kept as a separate function rather than a flag on simulateOutcome so the idealized
+ * path stays byte-identical for callers that don't opt in.
+ *
+ * Live delegates actual tick-by-tick trailing to the broker once armed (MetaApi's own
+ * server-side trailing) -- this has to simulate that manually: once armed, track a
+ * running high/low-water-mark each candle and only ratchet the stop tighter, standard
+ * trailing-stop semantics (a trailing stop never loosens).
+ *
+ * Same pessimistic tie-break philosophy as simulateOutcome: within a single candle, a
+ * stop/target hit is always checked BEFORE that candle's own management action is
+ * applied -- a management action born from this candle's own close price never
+ * retroactively "rescues" a stop this same candle also hit, since OHLC alone can't
+ * reveal real intrabar order.
+ */
+export function simulateRealisticOutcome(signal: Signal, future: Candle[], config: RealisticSimConfig): OutcomeSim {
+  const isLong = signal.direction === "long";
+  const stopDistance = Math.abs(signal.entry - signal.stopLoss);
+
+  const spreadCost = config.spreadFractionOfStop * stopDistance;
+  const effectiveEntry = isLong ? signal.entry + spreadCost : signal.entry - spreadCost;
+
+  const pseudoTrade: ExecutedTrade = {
+    id: signal.id,
+    signalId: signal.id,
+    account: "live",
+    pair: signal.pair,
+    timeframe: signal.timeframe,
+    direction: signal.direction,
+    requestedLots: 0,
+    requestedEntry: effectiveEntry,
+    stopLoss: signal.stopLoss,
+    takeProfit: signal.takeProfit,
+    takeProfit2: signal.takeProfit2,
+    status: "filled",
+    riskPct: 0,
+    attemptedAt: signal.createdAt,
+  };
+
+  const managementState: PositionManagementState = { breakEvenApplied: false, trailingArmed: false, partialCloseApplied: false };
+  let effectiveStop = signal.stopLoss;
+  let trailingDistance = 0;
+  let trailingWaterMark: number | null = null;
+
+  for (const candle of future) {
+    const hitSl = isLong ? candle.low <= effectiveStop : candle.high >= effectiveStop;
+    const hitTp1 = isLong ? candle.high >= signal.takeProfit : candle.low <= signal.takeProfit;
+
+    if (hitSl) {
+      const rMultiple = stopDistance > 0 ? ((isLong ? effectiveStop - effectiveEntry : effectiveEntry - effectiveStop) / stopDistance) : 0;
+      return { exitPrice: effectiveStop, exitTime: candle.time, reason: "stop_loss", rMultiple, tp2Reached: false };
+    }
+    if (hitTp1) {
+      const hitTp2 = isLong ? candle.high >= signal.takeProfit2 : candle.low <= signal.takeProfit2;
+      const rMultiple = stopDistance > 0 ? Math.abs(signal.takeProfit - effectiveEntry) / stopDistance : 0;
+      return { exitPrice: signal.takeProfit, exitTime: candle.time, reason: "take_profit", rMultiple, tp2Reached: hitTp2 };
+    }
+
+    // Neither touched this candle -- ratchet an already-armed trailing stop off this
+    // candle's own high/low extreme (the most favorable price actually reached),
+    // then check for a fresh break-even/arm-trailing action off its close.
+    if (managementState.trailingArmed) {
+      const extreme = isLong ? candle.high : candle.low;
+      trailingWaterMark = isLong ? Math.max(trailingWaterMark ?? extreme, extreme) : Math.min(trailingWaterMark ?? extreme, extreme);
+      const candidate = isLong ? trailingWaterMark - trailingDistance : trailingWaterMark + trailingDistance;
+      effectiveStop = isLong ? Math.max(effectiveStop, candidate) : Math.min(effectiveStop, candidate);
+    } else {
+      const action = evaluatePositionForManagement(pseudoTrade, candle.close, config.positionManagement, managementState);
+      if (action.type === "break_even") {
+        effectiveStop = action.newStopLoss;
+        managementState.breakEvenApplied = true;
+      } else if (action.type === "arm_trailing") {
+        managementState.trailingArmed = true;
+        trailingDistance = action.distance;
+        trailingWaterMark = candle.close;
+        effectiveStop = isLong ? Math.max(effectiveStop, candle.close - trailingDistance) : Math.min(effectiveStop, candle.close + trailingDistance);
+      }
+    }
+  }
+
+  const last = future[future.length - 1];
+  return {
+    exitPrice: last?.close ?? effectiveEntry,
+    exitTime: last?.time ?? signal.createdAt,
+    reason: "still_open_at_end",
+    rMultiple: 0,
+    tp2Reached: false,
+  };
+}
+
 /** A higher-timeframe candle only counts as "closed and knowable" once its own bar
  * duration has elapsed past its open time (`candle.time` is open time, see types.ts) --
  * the explicit no-lookahead guarantee. Live streaming can only ever see HTF candles
@@ -89,6 +196,11 @@ export interface RunBacktestInput {
   d1: Candle[];
   windowStart: number;
   windowEnd: number;
+  /** When set, every fired signal's outcome is simulated via simulateRealisticOutcome
+   * (break-even/trailing/spread) instead of simulateOutcome's idealized fixed SL-vs-TP1.
+   * Omitted entirely (not just a boolean) keeps the idealized path's call site
+   * byte-identical to before this feature existed. */
+  realistic?: RealisticSimConfig;
   onBar?: (done: number, total: number) => void;
 }
 
@@ -130,7 +242,12 @@ export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
     });
     const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), { status: "clear" });
 
-    const outcome = evaluation.status === "signal" ? simulateOutcome(evaluation.signal, primary.slice(i + 1)) : null;
+    const outcome =
+      evaluation.status === "signal"
+        ? input.realistic
+          ? simulateRealisticOutcome(evaluation.signal, primary.slice(i + 1), input.realistic)
+          : simulateOutcome(evaluation.signal, primary.slice(i + 1))
+        : null;
     results.push({ barTime: bar.time, evaluation, outcome, regime });
 
     done++;

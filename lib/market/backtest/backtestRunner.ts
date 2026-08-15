@@ -4,15 +4,18 @@ import type { JournalEntry } from "../tradeJournal";
 import { getPerformanceStats, type PerformanceStats } from "../tradeJournal";
 import type { Pair, Timeframe } from "../types";
 import { PAIRS } from "../types";
-import { getBacktestAccount, loadHistoricalRange } from "./historyLoader";
-import { runBacktest, type BacktestBarResult } from "./backtestEngine";
-import { BACKTEST_TIMEFRAMES, MAX_LOOKBACK_DAYS } from "./constants";
+import { loadExecutionConfig } from "../executionConfig";
+import { getBacktestAccount, loadHistoricalRange, loadSymbolSpecs } from "./historyLoader";
+import { runBacktest, type BacktestBarResult, type RealisticSimConfig } from "./backtestEngine";
+import { BACKTEST_TIMEFRAMES, DEFAULT_REALISTIC_SPREAD_FRACTION, MAX_LOOKBACK_DAYS } from "./constants";
 import {
   computeProfitFactor,
   computeScoreRangeBreakdown,
   computeSharpeRatio,
   computeStreaks,
   toJournalEntries,
+  DEFAULT_HYPOTHETICAL_EQUITY,
+  type RealisticSizingConfig,
   type ScoreRangeBucket,
   type StreakStats,
 } from "./backtestStats";
@@ -38,6 +41,11 @@ export interface BacktestRequest {
   pairs: Pair[];
   timeframe: Timeframe;
   lookbackDays: number;
+  /** Simulates break-even/trailing-stop position management, real lot-size-based
+   * sizing, and spread cost instead of the idealized fixed SL-vs-TP1 outcome -- see
+   * backtestEngine.ts's simulateRealisticOutcome. Defaults false so the existing quick/
+   * idealized path is unaffected for anyone not opting in. */
+  realistic?: boolean;
 }
 
 export type BacktestStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -176,6 +184,32 @@ class BacktestRunner {
       const allResults: BacktestBarResult[] = [];
       const perPairResults: { pair: Pair; results: BacktestBarResult[] }[] = [];
 
+      // Fetched once for the whole run, not per pair -- a single short-lived RPC
+      // connection (see historyLoader.ts's loadSymbolSpecs) covering every requested
+      // pair, rather than opening/closing one per pair.
+      let realisticSim: RealisticSimConfig | undefined;
+      let realisticSizing: RealisticSizingConfig | undefined;
+      if (job.request.realistic) {
+        const liveConfig = loadExecutionConfig("live");
+        realisticSim = {
+          positionManagement: {
+            breakEvenTriggerR: liveConfig.breakEvenTriggerR,
+            trailingArmTriggerR: liveConfig.trailingArmTriggerR,
+            trailingDistanceFractionOfStop: liveConfig.trailingDistanceFractionOfStop,
+            // Always false regardless of the account's real setting -- partial-close
+            // simulation is a separate, later addition, see backtestEngine.ts's own
+            // scope notes on why (a blended two-leg outcome, real added complexity).
+            partialCloseEnabled: false,
+          },
+          spreadFractionOfStop: DEFAULT_REALISTIC_SPREAD_FRACTION,
+        };
+        realisticSizing = {
+          specs: await loadSymbolSpecs(account, job.request.pairs),
+          equity: DEFAULT_HYPOTHETICAL_EQUITY,
+          riskPct: liveConfig.riskPerTradePct,
+        };
+      }
+
       for (const pair of job.request.pairs) {
         if (readStatus(job) === "cancelled") break;
 
@@ -202,6 +236,7 @@ class BacktestRunner {
           d1,
           windowStart,
           windowEnd,
+          realistic: realisticSim,
           onBar: (done, total) => {
             job.progress.barsEvaluated = done;
             job.progress.barsTotal = total;
@@ -213,8 +248,11 @@ class BacktestRunner {
         job.progress.pairsDone++;
       }
 
-      const converted = toJournalEntries(allResults);
-      const perPair = perPairResults.map(({ pair, results }) => ({ pair, stats: getPerformanceStats(toJournalEntries(results).entries) }));
+      const converted = toJournalEntries(allResults, undefined, realisticSizing);
+      const perPair = perPairResults.map(({ pair, results }) => ({
+        pair,
+        stats: getPerformanceStats(toJournalEntries(results, undefined, realisticSizing).entries),
+      }));
 
       job.result = {
         stats: getPerformanceStats(converted.entries),

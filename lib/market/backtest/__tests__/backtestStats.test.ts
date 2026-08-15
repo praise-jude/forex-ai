@@ -5,10 +5,12 @@ import {
   computeSharpeRatio,
   computeStreaks,
   toJournalEntries,
+  type RealisticSizingConfig,
 } from "../backtestStats";
 import type { BacktestBarResult } from "../backtestEngine";
 import type { JournalEntry, SignalContext } from "../../tradeJournal";
-import { buildSignal } from "../../__tests__/fixtures";
+import { buildSignal, buildSpec } from "../../__tests__/fixtures";
+import type { Pair } from "../../types";
 
 function entry(overrides: Partial<JournalEntry> = {}): JournalEntry {
   return {
@@ -90,6 +92,41 @@ describe("toJournalEntries", () => {
     const { entries, openAtWindowEnd } = toJournalEntries(results);
     expect(entries).toHaveLength(0);
     expect(openAtWindowEnd).toBe(0);
+  });
+
+  describe("with realistic sizing", () => {
+    function resultFor(pair: Pair, rMultiple: number): BacktestBarResult {
+      const signal = buildSignal({ id: "rs1", pair, entry: 1.105, stopLoss: 1.103, takeProfit: 1.109 });
+      return {
+        barTime: 1,
+        evaluation: { status: "signal", signal },
+        outcome: { exitPrice: 1.109, exitTime: 5000, reason: "take_profit", rMultiple, tp2Reached: false },
+        regime: "strong_uptrend",
+      };
+    }
+
+    it("uses real lot-size math instead of the flat hypothetical stake when a spec is available", () => {
+      // risk 20 pips, $10/pip/lot (0.0001 * 100000) -> 1% of $10,000 ($100) risk sizes to
+      // 0.5 lots -> riskDollars = 20 * 10 * 0.5 = $100 exactly, matching the requested risk.
+      const sizing: RealisticSizingConfig = { specs: new Map([["EUR/USD", buildSpec()]]), equity: 10000, riskPct: 1 };
+      const { entries } = toJournalEntries([resultFor("EUR/USD", 2)], 999 /* would-be flat stake, must be ignored */, sizing);
+      expect(entries[0].riskDollars).toBe(100);
+      expect(entries[0].profit).toBe(200); // 2R * $100
+    });
+
+    it("falls back to the flat hypothetical stake for a pair with no fetched spec", () => {
+      const sizing: RealisticSizingConfig = { specs: new Map(), equity: 10000, riskPct: 1 };
+      const { entries } = toJournalEntries([resultFor("EUR/USD", 2)], 250, sizing);
+      expect(entries[0].riskDollars).toBe(250);
+      expect(entries[0].profit).toBe(500); // 2R * $250
+    });
+
+    it("falls back to the flat hypothetical stake when computeLotSize itself skips (sub-minimum lot)", () => {
+      const sizing: RealisticSizingConfig = { specs: new Map([["EUR/USD", buildSpec()]]), equity: 1, riskPct: 1 };
+      const { entries } = toJournalEntries([resultFor("EUR/USD", 2)], 250, sizing);
+      expect(entries[0].riskDollars).toBe(250);
+      expect(entries[0].profit).toBe(500);
+    });
   });
 });
 

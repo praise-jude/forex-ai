@@ -1,6 +1,66 @@
 import type { JournalEntry, SignalContext } from "../tradeJournal";
 import { scoreSetupQuality } from "../setupQualityScore";
+import { computeLotSize } from "../positionSizing";
+import { pipSize } from "../symbols";
+import type { Pair, Signal, SymbolSpec } from "../types";
 import type { BacktestBarResult } from "./backtestEngine";
+
+const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD"]);
+
+/**
+ * Mirrors pipValue.ts's own pipValuePerLot, but takes an explicit historical reference
+ * price instead of reading priceStore -- pipValuePerLot's live price lookup would
+ * either return undefined (no live data during a pure backtest run) or, worse, silently
+ * apply TODAY's real price to a historical bar from weeks ago, exactly the look-ahead
+ * anti-pattern this app's own currency-strength handling already deliberately avoids
+ * (see README's backtesting disclosure). For a USD-base pair, the pair's OWN historical
+ * price at signal time already IS the needed conversion rate, so referencePrice is
+ * always the signal's own entry -- a real, contemporaneous quote, never fabricated.
+ */
+function historicalPipValuePerLot(pair: Pair, contractSize: number, referencePrice: number): number {
+  const quotePipValue = pipSize(pair) * contractSize;
+  return USD_BASE_PAIRS.has(pair) ? quotePipValue / referencePrice : quotePipValue;
+}
+
+/** Default hypothetical starting equity for realistic-sizing backtests -- a documented,
+ * configurable-by-caller starting point (not compounding across trades, see this
+ * feature's own scope notes), not a claim about what any real account should hold. */
+export const DEFAULT_HYPOTHETICAL_EQUITY = 10_000;
+
+export interface RealisticSizingConfig {
+  specs: Map<Pair, SymbolSpec>;
+  equity: number;
+  riskPct: number;
+}
+
+/**
+ * Real lot-size math (computeLotSize, the same function live execution uses) in place
+ * of a flat hypothetical stake -- falls back to hypotheticalRiskDollars per-entry,
+ * never for the whole run, when a pair has no fetched spec or computeLotSize itself
+ * skips (e.g. the risk-correct size would round to zero lots), same "log and degrade
+ * gracefully, never fabricate" posture the rest of this app already follows.
+ *
+ * Disclosed, narrow imprecision: computeLotSize's own internal pip-value conversion for
+ * USD-base pairs (USD/JPY, USD/CAD) reads pipValue.ts's live priceStore, not a
+ * historical price -- since this app's live streaming connection runs continuously in
+ * the same process a backtest executes in, that call succeeds rather than failing, but
+ * with TODAY's real exchange rate, not the rate at the historical signal's own time.
+ * Reworking computeLotSize itself to accept a historical override would touch tested
+ * live-execution code for this alone, so this is disclosed (see BacktestPanel.tsx's
+ * banner) rather than silently accepted or worked around by duplicating its logic.
+ * riskDollars itself (below) is NOT affected -- it's computed against the real
+ * historical entry price regardless of pair.
+ */
+function realisticRiskDollars(signal: Signal, sizing: RealisticSizingConfig): number | null {
+  const spec = sizing.specs.get(signal.pair);
+  if (!spec) return null;
+  const sizeResult = computeLotSize(signal, sizing.equity, sizing.riskPct, spec);
+  if ("skipped" in sizeResult) return null;
+
+  const pips = Math.abs(signal.entry - signal.stopLoss) / pipSize(signal.pair);
+  const pipValue = historicalPipValuePerLot(signal.pair, spec.contractSize, signal.entry);
+  return Number((pips * pipValue * sizeResult.lots).toFixed(2));
+}
 
 /** Arbitrary but disclosed fixed stake used to convert R-multiples into dollar figures
  * -- no real lot sizing, spread, commission, or compounding is simulated (see
@@ -27,7 +87,11 @@ export interface BacktestJournalConversion {
  * backtest stats, and its existing pair/timeframe/session/regime/signerBAgreement
  * filters all work for free here too.
  */
-export function toJournalEntries(results: BacktestBarResult[], hypotheticalRiskDollars = HYPOTHETICAL_RISK_DOLLARS): BacktestJournalConversion {
+export function toJournalEntries(
+  results: BacktestBarResult[],
+  hypotheticalRiskDollars = HYPOTHETICAL_RISK_DOLLARS,
+  realisticSizing?: RealisticSizingConfig
+): BacktestJournalConversion {
   const entries: JournalEntry[] = [];
   let openAtWindowEnd = 0;
 
@@ -58,6 +122,11 @@ export function toJournalEntries(results: BacktestBarResult[], hypotheticalRiskD
       createdAt: signal.createdAt,
     };
 
+    // Falls back to the flat hypothetical stake per-entry (never for the whole run) when
+    // realistic sizing was requested but couldn't be computed for this specific signal
+    // (no fetched spec, or computeLotSize itself skipped) -- see realisticRiskDollars.
+    const riskDollars = (realisticSizing && realisticRiskDollars(signal, realisticSizing)) ?? hypotheticalRiskDollars;
+
     entries.push({
       id: signal.id,
       signalId: signal.id,
@@ -67,8 +136,8 @@ export function toJournalEntries(results: BacktestBarResult[], hypotheticalRiskD
       direction: signal.direction,
       entryPrice: signal.entry,
       exitPrice: outcome.exitPrice,
-      profit: Number((outcome.rMultiple * hypotheticalRiskDollars).toFixed(2)),
-      riskDollars: hypotheticalRiskDollars,
+      profit: Number((outcome.rMultiple * riskDollars).toFixed(2)),
+      riskDollars,
       rMultiple: outcome.rMultiple,
       reason: outcome.reason,
       closedAt: outcome.exitTime,
