@@ -30,6 +30,9 @@ export default function DashboardPage() {
             <Link href="/backtest" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
               Backtest
             </Link>
+            <Link href="/settings" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
+              Settings
+            </Link>
             <ConnectionStatus />
             <KillSwitchControl />
           </div>
