@@ -1,4 +1,4 @@
-import { doublePrecision, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { doublePrecision, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 
 // Durability/audit persistence for two of lib/market/*.ts's in-memory stores --
 // signalStore.ts (every fired signal) and positionStore.ts (the execution ledger, "which
@@ -66,4 +66,47 @@ export const executedTrades = pgTable("executed_trades", {
   riskPct: doublePrecision("risk_pct").notNull(),
   attemptedAt: timestamp("attempted_at", { withTimezone: true }).notNull(),
   filledAt: timestamp("filled_at", { withTimezone: true }),
+});
+
+// --- Trade journal persistence (lib/market/tradeJournal.ts) ---
+// Replaces that module's old plain-JSON-file-on-disk store. Same pattern as
+// signals/executedTrades above: the in-memory store stays the real, synchronous source
+// of truth; these tables are a best-effort durability backstop.
+
+// SignalContext, stored whole as jsonb rather than normalized into columns -- it has
+// nested/array fields (setupQuality, confluences) that have already grown twice this
+// session, and it's never queried by an individual field, only ever read back whole
+// alongside the rest of the pending context/journal entry it's attached to.
+export const journalPendingContexts = pgTable("journal_pending_contexts", {
+  signalId: text("signal_id").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  context: jsonb("context").notNull().$type<Record<string, unknown>>(),
+});
+
+export const journalEntries = pgTable("journal_entries", {
+  id: text("id").primaryKey(),
+  signalId: text("signal_id").notNull(),
+  account: text("account").notNull(),
+  pair: text("pair").notNull(),
+  timeframe: text("timeframe"),
+  direction: text("direction").notNull(),
+  entryPrice: doublePrecision("entry_price").notNull(),
+  exitPrice: doublePrecision("exit_price").notNull(),
+  profit: doublePrecision("profit").notNull(),
+  riskDollars: doublePrecision("risk_dollars"),
+  rMultiple: doublePrecision("r_multiple"),
+  reason: text("reason").notNull(),
+  closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
+  context: jsonb("context").$type<Record<string, unknown> | null>(),
+});
+
+// SignalOutcome has no app-generated id of its own (unlike Signal/ExecutedTrade) -- a
+// DB-side serial is the simplest honest primary key rather than inventing one.
+export const journalSignalOutcomes = pgTable("journal_signal_outcomes", {
+  id: serial("id").primaryKey(),
+  signalId: text("signal_id").notNull(),
+  pair: text("pair").notNull(),
+  outcome: text("outcome").notNull(),
+  reason: text("reason"),
+  timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
 });

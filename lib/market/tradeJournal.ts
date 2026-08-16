@@ -1,20 +1,29 @@
-import fs from "node:fs";
+import { desc, eq, gte } from "drizzle-orm";
+import { getOptionalDb } from "../db/optionalClient";
+import {
+  journalEntries as journalEntriesTable,
+  journalPendingContexts as journalPendingContextsTable,
+  journalSignalOutcomes as journalSignalOutcomesTable,
+} from "../db/tradingSchema";
 import { CONFLUENCES, type AccountKey, type Confluence, type MarketRegime, type Pair, type Session, type Signal, type Timeframe } from "./types";
 import type { SetupQualityBreakdown } from "./setupQualityScore";
 import { pipSize } from "./symbols";
 import { pipValuePerLot } from "./pipValue";
 
-// Must survive a restart to be useful over time -- same reasoning, and same plain-JSON-
-// file-on-disk pattern, as deviceStore.ts (this app has no database; see its own
-// comment). Unlike deviceStore, writes here happen on every fired signal and every
-// trade close, not just user actions -- still infrequent (a handful a day at most,
-// given SMC's own selectivity), so the extra disk I/O is not a real concern.
-const STORE_FILE = process.env.TRADE_JOURNAL_FILE ?? ".trade-journal.json";
 // A trade can stay open far longer than signalStore's own 4-hour prune window
 // (STALE_AFTER_MS) -- that's exactly why the decision-context snapshot below can't
 // just reuse signalStore. 30 days comfortably covers any realistic hold time for this
 // app's SMC-style setups.
 const CONTEXT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Bounds how much hydrate() below reloads into memory at boot -- generous relative to
+// realistic trade/decision volume (a handful of trades/day at most, given SMC's own
+// selectivity), same "bound what's reloaded" reasoning as positionStore.ts's own
+// MAX_RECORDS. Unlike positionStore, there's no ONGOING eviction of entries/
+// signalOutcomes once loaded (this store's prior file-based version never pruned these
+// either) -- only pendingContexts gets ongoing pruning, since it's a genuinely
+// time-bounded working set (see pruneContexts below).
+const HYDRATE_LIMIT = 5000;
 
 /** The decision context at the moment a signal fired -- snapshotted separately from
  * the live `Signal` object (which is pruned after 4 hours) so it survives until the
@@ -34,9 +43,9 @@ export interface SignalContext {
   newsStatus: Signal["newsStatus"];
   session: Session;
   createdAt: number;
-  /** Optional -- entries recorded before this field existed (still on disk, still
-   * loaded via readFromDisk's tolerant parse) simply have it undefined, never a
-   * fabricated guess at which confluences were present. */
+  /** Optional -- entries recorded before this field existed simply have it undefined
+   * (old rows in the DB predate the column's use), never a fabricated guess at which
+   * confluences were present. */
   confluences?: Confluence[];
 }
 
@@ -87,53 +96,88 @@ export interface SignalOutcome {
   timestamp: number;
 }
 
-interface OnDisk {
-  pendingContexts: SignalContext[];
-  entries: JournalEntry[];
-  signalOutcomes: SignalOutcome[];
+async function persistContext(context: SignalContext): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  const row = { signalId: context.signalId, createdAt: new Date(context.createdAt), context: context as unknown as Record<string, unknown> };
+  await db.insert(journalPendingContextsTable).values(row).onConflictDoUpdate({ target: journalPendingContextsTable.signalId, set: row });
 }
 
-function readFromDisk(): OnDisk {
-  try {
-    // turbopackIgnore: STORE_FILE is an operator-configured path, same as
-    // deviceStore.ts's own DEVICE_STORE_FILE -- not something to bundle around.
-    const raw = fs.readFileSync(/* turbopackIgnore: true */ STORE_FILE, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<OnDisk>;
-    return { pendingContexts: parsed.pendingContexts ?? [], entries: parsed.entries ?? [], signalOutcomes: parsed.signalOutcomes ?? [] };
-  } catch {
-    // Missing file (first boot) or corrupt content -- start empty rather than crash the
-    // whole server over a runtime-state file, same philosophy as deviceStore.ts.
-    return { pendingContexts: [], entries: [], signalOutcomes: [] };
-  }
+async function deletePersistedContext(signalId: string): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  await db.delete(journalPendingContextsTable).where(eq(journalPendingContextsTable.signalId, signalId));
 }
 
+async function persistEntry(entry: JournalEntry): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  const row = {
+    id: entry.id,
+    signalId: entry.signalId,
+    account: entry.account,
+    pair: entry.pair,
+    timeframe: entry.timeframe,
+    direction: entry.direction,
+    entryPrice: entry.entryPrice,
+    exitPrice: entry.exitPrice,
+    profit: entry.profit,
+    riskDollars: entry.riskDollars,
+    rMultiple: entry.rMultiple,
+    reason: entry.reason,
+    closedAt: new Date(entry.closedAt),
+    context: entry.context as unknown as Record<string, unknown> | null,
+  };
+  await db.insert(journalEntriesTable).values(row).onConflictDoUpdate({ target: journalEntriesTable.id, set: row });
+}
+
+async function persistSignalOutcome(outcome: SignalOutcome): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  await db.insert(journalSignalOutcomesTable).values({
+    signalId: outcome.signalId,
+    pair: outcome.pair,
+    outcome: outcome.outcome,
+    reason: outcome.reason,
+    timestamp: new Date(outcome.timestamp),
+  });
+}
+
+/**
+ * In-memory Maps/array are the real, synchronous source of truth (same reasoning as
+ * positionStore.ts's own class doc) -- every read/write here is a plain in-memory
+ * operation with zero latency, matching this store's prior file-based behavior exactly
+ * from every caller's point of view. Postgres (via lib/db/optionalClient.ts) is a
+ * best-effort durability backstop: writes fire-and-forget, and hydrate() (called once
+ * at boot, see bootstrap.ts) reloads recent history back into memory so a restart
+ * doesn't lose it -- replacing this store's old plain-JSON-file-on-disk approach, which
+ * doesn't survive a Railway redeploy the way a real database does.
+ */
 class TradeJournalStore {
-  private state: OnDisk | null = null;
-
-  private load(): OnDisk {
-    if (!this.state) this.state = readFromDisk();
-    return this.state;
-  }
-
-  private persist(): void {
-    fs.writeFileSync(STORE_FILE, JSON.stringify(this.load(), null, 2));
-  }
+  private pendingContexts = new Map<string, SignalContext>();
+  private entries = new Map<string, JournalEntry>();
+  private signalOutcomes: SignalOutcome[] = [];
 
   /** Called once per fired signal (see metaApiConnection.ts, right alongside
    * publishSignal) -- never called from anywhere execution/risk-relevant, purely a
    * recording step. */
   recordSignalContext(context: SignalContext): void {
-    const state = this.load();
-    state.pendingContexts = state.pendingContexts.filter((c) => c.signalId !== context.signalId);
-    state.pendingContexts.push(context);
+    this.pendingContexts.set(context.signalId, context);
     this.pruneContexts();
-    this.persist();
+    void persistContext(context).catch((error: unknown) => {
+      console.error(`[tradeJournal] failed to persist signal context ${context.signalId}:`, error);
+    });
   }
 
+  // Only prunes the in-memory working set, same as positionStore.ts's own prune() --
+  // the DB row for a pruned-for-age context isn't actively deleted (see
+  // deletePersistedContext, only called when a context is actually consumed below);
+  // hydrate()'s own age filter simply never reloads it back in on the next boot.
   private pruneContexts(): void {
-    const state = this.load();
     const cutoff = Date.now() - CONTEXT_RETENTION_MS;
-    state.pendingContexts = state.pendingContexts.filter((c) => c.createdAt >= cutoff);
+    for (const [signalId, context] of this.pendingContexts) {
+      if (context.createdAt < cutoff) this.pendingContexts.delete(signalId);
+    }
   }
 
   /**
@@ -159,8 +203,6 @@ class TradeJournalStore {
     reason: JournalCloseReason;
     closedAt: number;
   }): JournalEntry {
-    const state = this.load();
-
     let riskDollars: number | null = null;
     if (input.contractSize !== undefined) {
       const pips = Math.abs(input.entryPrice - input.stopLoss) / pipSize(input.pair);
@@ -172,8 +214,13 @@ class TradeJournalStore {
     }
     const rMultiple = riskDollars !== null && riskDollars > 0 ? Number((input.profit / riskDollars).toFixed(4)) : null;
 
-    const context = state.pendingContexts.find((c) => c.signalId === input.signalId) ?? null;
-    state.pendingContexts = state.pendingContexts.filter((c) => c.signalId !== input.signalId);
+    const context = this.pendingContexts.get(input.signalId) ?? null;
+    if (context) {
+      this.pendingContexts.delete(input.signalId);
+      void deletePersistedContext(input.signalId).catch((error: unknown) => {
+        console.error(`[tradeJournal] failed to delete consumed signal context ${input.signalId}:`, error);
+      });
+    }
 
     const entry: JournalEntry = {
       id: input.dealId,
@@ -192,26 +239,80 @@ class TradeJournalStore {
       context,
     };
 
-    state.entries = state.entries.filter((e) => e.id !== entry.id);
-    state.entries.push(entry);
-    this.persist();
+    this.entries.set(entry.id, entry);
+    void persistEntry(entry).catch((error: unknown) => {
+      console.error(`[tradeJournal] failed to persist journal entry ${entry.id}:`, error);
+    });
     return entry;
   }
 
   all(): JournalEntry[] {
-    return this.load().entries.slice().sort((a, b) => b.closedAt - a.closedAt);
+    return Array.from(this.entries.values()).sort((a, b) => b.closedAt - a.closedAt);
   }
 
   /** Called from the execute route (approved/expired/blocked) and the reject route
    * (rejected) -- purely a recording step, never gates or alters execution itself. */
   recordSignalOutcome(outcome: SignalOutcome): void {
-    const state = this.load();
-    state.signalOutcomes.push(outcome);
-    this.persist();
+    this.signalOutcomes.push(outcome);
+    void persistSignalOutcome(outcome).catch((error: unknown) => {
+      console.error(`[tradeJournal] failed to persist signal outcome for ${outcome.signalId}:`, error);
+    });
   }
 
   allSignalOutcomes(): SignalOutcome[] {
-    return this.load().signalOutcomes.slice().sort((a, b) => b.timestamp - a.timestamp);
+    return this.signalOutcomes.slice().sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  /** Reloads recent history from the DB into memory -- called once at boot (see
+   * bootstrap.ts) so a restart doesn't lose the journal. No-ops when DATABASE_URL isn't
+   * set. Bypasses the record*() methods deliberately -- these rows already exist in the
+   * DB, so re-persisting them on load would just be a wasted round trip (same reasoning
+   * as positionStore.ts's own hydrate()). */
+  async hydrate(): Promise<void> {
+    const db = getOptionalDb();
+    if (!db) return;
+
+    const cutoff = new Date(Date.now() - CONTEXT_RETENTION_MS);
+    const [contextRows, entryRows, outcomeRows] = await Promise.all([
+      db.select().from(journalPendingContextsTable).where(gte(journalPendingContextsTable.createdAt, cutoff)),
+      db.select().from(journalEntriesTable).orderBy(desc(journalEntriesTable.closedAt)).limit(HYDRATE_LIMIT),
+      db.select().from(journalSignalOutcomesTable).orderBy(desc(journalSignalOutcomesTable.timestamp)).limit(HYDRATE_LIMIT),
+    ]);
+
+    for (const row of contextRows) {
+      if (!this.pendingContexts.has(row.signalId)) {
+        this.pendingContexts.set(row.signalId, row.context as unknown as SignalContext);
+      }
+    }
+    for (const row of entryRows) {
+      if (!this.entries.has(row.id)) {
+        this.entries.set(row.id, {
+          id: row.id,
+          signalId: row.signalId,
+          account: row.account as AccountKey,
+          pair: row.pair as Pair,
+          timeframe: (row.timeframe as Timeframe | null) ?? undefined,
+          direction: row.direction as "long" | "short",
+          entryPrice: row.entryPrice,
+          exitPrice: row.exitPrice,
+          profit: row.profit,
+          riskDollars: row.riskDollars,
+          rMultiple: row.rMultiple,
+          reason: row.reason as JournalCloseReason,
+          closedAt: row.closedAt.getTime(),
+          context: row.context as unknown as SignalContext | null,
+        });
+      }
+    }
+    for (const row of outcomeRows) {
+      this.signalOutcomes.push({
+        signalId: row.signalId,
+        pair: row.pair as Pair,
+        outcome: row.outcome as SignalOutcomeType,
+        reason: row.reason,
+        timestamp: row.timestamp.getTime(),
+      });
+    }
   }
 }
 

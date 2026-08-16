@@ -9,13 +9,13 @@ export interface TradeJournalModule {
 const globalKey = Symbol.for("forex-ai.tradeJournal");
 
 /**
- * Loads a fresh tradeJournal module instance pointed at `storeFile`. Same reasoning as
- * deviceStoreTestHelper.ts: clears the globalThis-keyed singleton between loads so a
- * "reload" in the same test process genuinely re-reads from disk instead of handing
- * back the first load's in-memory instance.
+ * Loads a fresh tradeJournal module instance with an empty in-memory store. Clears the
+ * globalThis-keyed singleton between loads so each test gets its own state -- DB
+ * persistence (see tradeJournal.ts's hydrate()) is a best-effort backstop that no-ops
+ * without DATABASE_URL (never set in tests), same as positionStore.ts/signalStore.ts's
+ * own tests, which don't exercise their DB path either.
  */
-export async function loadTradeJournalModule(storeFile: string): Promise<TradeJournalModule> {
-  process.env.TRADE_JOURNAL_FILE = storeFile;
+export async function loadTradeJournalModule(): Promise<TradeJournalModule> {
   delete (globalThis as Record<symbol, unknown>)[globalKey];
   vi.resetModules();
   return import("../tradeJournal");

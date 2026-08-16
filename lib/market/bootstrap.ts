@@ -8,6 +8,7 @@ import { startPositionInvalidation } from "./positionInvalidation";
 import { startWeeklyDigest } from "./weeklyDigest";
 import { signalStore } from "./signalStore";
 import { positionStore } from "./positionStore";
+import { tradeJournal } from "./tradeJournal";
 
 let started = false;
 
@@ -27,13 +28,15 @@ export function startMarketEngine(): void {
   started = true;
 
   // Fire-and-forget, same as ensureMetaApiConnection below -- reloads recent
-  // signals/execution history from the DB (see signalStore.ts/positionStore.ts's own
-  // hydrate()) so a restart doesn't blank the dashboard or reopen hasExecuted()'s
-  // idempotency window. No-ops (and logs once) when DATABASE_URL isn't set -- the engine
-  // itself doesn't wait on this, since the first real signal/execution is always much
-  // further off than a DB round trip.
-  Promise.all([signalStore.hydrate(), positionStore.hydrate()]).catch((error: unknown) => {
-    console.error("[market] failed to hydrate signal/execution history from the database:", error);
+  // signals/execution/journal history from the DB (see signalStore.ts/positionStore.ts/
+  // tradeJournal.ts's own hydrate()) so a restart doesn't blank the dashboard, reopen
+  // hasExecuted()'s idempotency window, or lose the trade journal (tradeJournal.ts used
+  // to persist to a local JSON file, which doesn't survive a Railway redeploy the way a
+  // real database does). No-ops (and logs once) when DATABASE_URL isn't set -- the
+  // engine itself doesn't wait on this, since the first real signal/execution is always
+  // much further off than a DB round trip.
+  Promise.all([signalStore.hydrate(), positionStore.hydrate(), tradeJournal.hydrate()]).catch((error: unknown) => {
+    console.error("[market] failed to hydrate signal/execution/journal history from the database:", error);
   });
 
   ensureMetaApiConnection("live").catch((error: unknown) => {

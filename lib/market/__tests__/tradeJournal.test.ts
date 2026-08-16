@@ -1,7 +1,4 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
 import { getConfidenceCalibration, getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
@@ -48,16 +45,10 @@ function buildEntry(overrides: Partial<JournalEntry> = {}): JournalEntry {
 }
 
 describe("tradeJournal store", () => {
-  let storeFile: string;
   let mod: TradeJournalModule;
 
   beforeEach(async () => {
-    storeFile = path.join(os.tmpdir(), `forex-ai-trade-journal-${Date.now()}-${Math.random()}.json`);
-    mod = await loadTradeJournalModule(storeFile);
-  });
-
-  afterEach(() => {
-    fs.rmSync(storeFile, { force: true });
+    mod = await loadTradeJournalModule();
   });
 
   it("joins a recorded outcome to its earlier-recorded signal context by signalId", () => {
@@ -225,28 +216,6 @@ describe("tradeJournal store", () => {
     });
 
     expect(entry.context).toBeNull();
-  });
-
-  it("persists recorded entries across a fresh module load (survives a restart)", async () => {
-    mod.tradeJournal.recordOutcome({
-      dealId: "deal-1",
-      signalId: "sig-1",
-      account: "live",
-      pair: "EUR/USD",
-      direction: "long",
-      entryPrice: 1.105,
-      stopLoss: 1.103,
-      lots: 0.5,
-      contractSize: 100000,
-      exitPrice: 1.109,
-      profit: 200,
-      reason: "take_profit",
-      closedAt: Date.now(),
-    });
-
-    const reloaded = await loadTradeJournalModule(storeFile);
-    expect(reloaded.tradeJournal.all()).toHaveLength(1);
-    expect(reloaded.tradeJournal.all()[0].rMultiple).toBeCloseTo(2);
   });
 
   it("all() returns entries most-recent-first", () => {
