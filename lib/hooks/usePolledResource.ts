@@ -5,7 +5,10 @@ import { useEffect, useState } from "react";
 interface PollerEntry {
   data: unknown;
   error: string | null;
-  intervalId: ReturnType<typeof setInterval>;
+  /** Null while paused (browser tab hidden, see the visibilitychange handler below) --
+   * a real interval only exists while at least one subscriber cares AND the tab is
+   * actually visible. */
+  intervalId: ReturnType<typeof setInterval> | null;
   subscribers: Set<(data: unknown, error: string | null) => void>;
   fetcher: () => Promise<unknown>;
 }
@@ -48,12 +51,25 @@ export interface PolledResource<T> {
   refetch: () => void;
 }
 
+/** True once at module load if the document is already hidden (e.g. this tab was
+ * opened in the background) -- `document.hidden` is undefined during SSR, so this
+ * guards for that the same way every other browser-only read in this codebase does. */
+function isDocumentHidden(): boolean {
+  return typeof document !== "undefined" && document.hidden;
+}
+
 /**
  * Polls `key` on a shared interval, deduplicated across every component that calls this
  * hook with the same key -- only one network request fires per tick no matter how many
  * subscribers there are. The first subscriber for a key starts the interval and fires an
  * immediate fetch (matching every existing poller's "poll(); then setInterval(poll)"
  * behavior); the last subscriber to unmount clears it.
+ *
+ * Pauses the shared interval while the browser tab isn't visible (mirrors the mobile
+ * app's own AppState-driven pause in usePolling.ts) and fires an immediate refetch the
+ * moment it becomes visible again -- a background tab has no reason to keep hitting the
+ * API every few seconds, and the user should see fresh data the instant they switch back
+ * rather than waiting out whatever's left of the last interval.
  */
 export function usePolledResource<T>(key: string, fetcher: () => Promise<T>, intervalMs: number): PolledResource<T> {
   const [state, setState] = useState<{ data: T | null; error: string | null }>(() => {
@@ -70,25 +86,47 @@ export function usePolledResource<T>(key: string, fetcher: () => Promise<T>, int
         error: null,
         subscribers: new Set(),
         fetcher: fetcher as () => Promise<unknown>,
-        intervalId: setInterval(() => void runFetch(key), intervalMs),
+        intervalId: isDocumentHidden() ? null : setInterval(() => void runFetch(key), intervalMs),
       };
       registry.set(key, entry);
     }
 
     const subscriber = (data: unknown, error: string | null) => setState({ data: data as T | null, error });
     entry.subscribers.add(subscriber);
-    if (isFirstSubscriber) void runFetch(key);
+    if (isFirstSubscriber && !isDocumentHidden()) void runFetch(key);
 
     return () => {
       const current = registry.get(key);
       if (!current) return;
       current.subscribers.delete(subscriber);
       if (current.subscribers.size === 0) {
-        clearInterval(current.intervalId);
+        if (current.intervalId) clearInterval(current.intervalId);
         registry.delete(key);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetcher intentionally not tracked: every caller for a given key passes an equivalent closure (same URL), and re-subscribing on every fetcher identity change would defeat the dedup this hook exists for.
+  }, [key, intervalMs]);
+
+  // One shared visibilitychange listener per hook instance (not per registry entry) --
+  // each subscriber independently starts/stops the SAME underlying interval via the
+  // registry's own intervalId, so redundant listeners across subscribers of the same
+  // key are harmless (idempotent start/stop), same as React's own effect cleanup model.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      const current = registry.get(key);
+      if (!current) return;
+      if (document.hidden) {
+        if (current.intervalId) {
+          clearInterval(current.intervalId);
+          current.intervalId = null;
+        }
+      } else if (!current.intervalId) {
+        current.intervalId = setInterval(() => void runFetch(key), intervalMs);
+        void runFetch(key);
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [key, intervalMs]);
 
   function setData(next: T): void {
