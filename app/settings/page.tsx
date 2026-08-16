@@ -7,16 +7,14 @@ import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnostics
 import { SystemHealthPanel } from "@/components/dashboard/SystemHealthPanel";
 import { loadExecutionConfig, type ExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
-import { tradeJournal, getConfidenceCalibration, type ConfidenceCalibrationBucket } from "@/lib/market/tradeJournal";
+import {
+  tradeJournal,
+  getConfidenceCalibration,
+  defaultCalibrationMinSamples,
+  type ConfidenceCalibrationBucket,
+} from "@/lib/market/tradeJournal";
 
 export const dynamic = "force-dynamic";
-
-// Same "invalid/unset -> safe fallback" posture as executionConfig.ts's own envNumber --
-// a non-positive or non-numeric override can't mean anything sensible here.
-function minCalibrationSamples(): number {
-  const raw = Number(process.env.CONFIDENCE_CALIBRATION_MIN_SAMPLES);
-  return Number.isFinite(raw) && raw > 0 ? raw : 30;
-}
 
 function ConfigRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -104,7 +102,7 @@ export default function SettingsPage() {
   const liveConfig = loadExecutionConfig("live");
   const demoConfigured = isAccountConfigured("demo");
   const demoConfig = demoConfigured ? loadExecutionConfig("demo") : null;
-  const minSamples = minCalibrationSamples();
+  const minSamples = defaultCalibrationMinSamples();
   const calibration = getConfidenceCalibration(tradeJournal.all(), minSamples);
 
   return (

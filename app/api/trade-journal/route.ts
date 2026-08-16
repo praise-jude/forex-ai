@@ -1,5 +1,7 @@
 import { PAIRS, type AccountKey, type MarketRegime, type Pair, type Session, type Timeframe } from "@/lib/market/types";
 import {
+  defaultCalibrationMinSamples,
+  getConfidenceCalibration,
   getConfluenceBreakdown,
   getPerformanceBreakdown,
   getPerformanceStats,
@@ -104,5 +106,11 @@ export async function GET(request: Request) {
     // closed yet, so this is a superset of (not scoped to) the closed-trade entries above.
     slippage: getSlippageStats(slippagePoints),
     slippageByPair: getSlippageBreakdownByPair(slippagePoints),
+    // "Can I actually trust a 95% confidence signal" -- same measurement the web
+    // /settings page already shows, now available to mobile too. calibrationMinSamples
+    // is included alongside (not hardcoded client-side) so both platforms always agree
+    // on the real threshold, including any CONFIDENCE_CALIBRATION_MIN_SAMPLES override.
+    confidenceCalibration: getConfidenceCalibration(entries, defaultCalibrationMinSamples()),
+    calibrationMinSamples: defaultCalibrationMinSamples(),
   });
 }

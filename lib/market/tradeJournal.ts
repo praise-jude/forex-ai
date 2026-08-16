@@ -343,6 +343,15 @@ export function getSignalFunnelStats(outcomes: SignalOutcome[]): SignalFunnelSta
   };
 }
 
+// Same "invalid/unset -> safe fallback" posture as executionConfig.ts's own envNumber --
+// a non-positive or non-numeric override can't mean anything sensible here. Single
+// source of truth for this threshold -- both the web /settings page and
+// /api/trade-journal (for mobile) call this rather than each guessing their own copy.
+export function defaultCalibrationMinSamples(): number {
+  const raw = Number(process.env.CONFIDENCE_CALIBRATION_MIN_SAMPLES);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30;
+}
+
 export type CalibrationStatus = "calibrated" | "insufficient_data";
 
 export interface ConfidenceCalibrationBucket {
