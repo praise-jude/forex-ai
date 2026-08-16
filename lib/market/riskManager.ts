@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import type { Pair } from "./types";
-import { isCorrelated } from "./pairCorrelation";
+import { isCorrelated } from "./rollingCorrelation";
 
 export interface RiskCheckInput {
   killSwitchActive: boolean;
@@ -102,10 +102,12 @@ export interface CorrelatedExposureInput {
 /**
  * Blocks a new position from stacking the same directional bet an already-open one
  * represents -- e.g. EUR/USD long opened, then a GBP/USD long signal fires: both are a
- * bet that USD weakens, not two diversified trades. See pairCorrelation.ts for the
- * (deliberately simple, static) grouping this counts against. A bug here can only make
- * execution MORE conservative (block a trade it shouldn't), never less -- it has no way
- * to permit a trade that every other check would have blocked anyway.
+ * bet that USD weakens, not two diversified trades. See rollingCorrelation.ts for the
+ * grouping this counts against -- a union of a static USD-direction/commodity-complex
+ * grouping and a real rolling Pearson correlation computed from D1 candle history. A
+ * bug here can only make execution MORE conservative (block a trade it shouldn't),
+ * never less -- it has no way to permit a trade that every other check would have
+ * blocked anyway.
  */
 export function checkCorrelatedExposure(input: CorrelatedExposureInput): RiskCheckResult {
   const correlatedCount = input.openPositions.filter((p) => isCorrelated(input.pair, input.direction, p.pair, p.direction)).length;

@@ -3,6 +3,7 @@ import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
 import { startNewsFilter } from "./newsFilter";
 import { startCurrencyStrength } from "./currencyStrength";
+import { startRollingCorrelation } from "./rollingCorrelation";
 import { startPositionManager } from "./positionManager";
 import { startPositionInvalidation } from "./positionInvalidation";
 import { startWeeklyDigest } from "./weeklyDigest";
@@ -55,6 +56,7 @@ export function startMarketEngine(): void {
   startConnectionWatcher();
   startNewsFilter();
   startCurrencyStrength();
+  startRollingCorrelation();
   // Unlike auto-execution above, these two manage trades already on the books rather
   // than opening new ones -- they run unconditionally, independent of engine mode/kill
   // switch (see positionManager.ts's own doc comment), governed only by each account's

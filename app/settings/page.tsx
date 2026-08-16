@@ -5,6 +5,7 @@ import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
 import { SystemHealthPanel } from "@/components/dashboard/SystemHealthPanel";
+import { CorrelationPanel } from "@/components/dashboard/CorrelationPanel";
 import { loadExecutionConfig, type ExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
 import {
@@ -199,6 +200,13 @@ export default function SettingsPage() {
             <ExecutionConfigTable account="Live" config={liveConfig} />
             {demoConfig && <ExecutionConfigTable account="Demo" config={demoConfig} />}
           </div>
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Pair correlation <span className="normal-case text-zinc-600">(what the correlated-exposure risk gate is using right now)</span>
+          </h2>
+          <CorrelationPanel />
         </section>
 
         <section className="flex flex-col gap-4">
