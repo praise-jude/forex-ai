@@ -21,6 +21,9 @@ interface JournalResponse {
    * getPerformanceBreakdown in tradeJournal.ts. Always over the full ledger. */
   breakdownByPair: Record<string, PerformanceStats>;
   breakdownBySession: Record<string, PerformanceStats>;
+  /** "Which market regime is my SMC strategy actually working in" -- effectively
+   * SMC-only, see getPerformanceBreakdown's own doc comment in tradeJournal.ts. */
+  breakdownByRegime: Record<string, PerformanceStats>;
   /** "Which confluences actually predict wins" -- see getConfluenceBreakdown in
    * tradeJournal.ts. Always over the full ledger. */
   breakdownByConfluence: ConfluenceBreakdownBucket[];
@@ -135,6 +138,17 @@ const SESSION_LABEL: Record<string, string> = {
   london: "London",
   newyork: "New York",
   "off-session": "Off-session",
+};
+
+const REGIME_LABEL: Record<string, string> = {
+  news_driven: "News-driven",
+  breakout: "Breakout",
+  strong_uptrend: "Strong uptrend",
+  strong_downtrend: "Strong downtrend",
+  high_volatility: "High volatility",
+  low_volatility: "Low volatility",
+  consolidation: "Consolidation",
+  range: "Range",
 };
 
 /**
@@ -537,6 +551,9 @@ export function JournalPanel() {
       {data && <SignalFunnelSummary funnel={data.signalFunnel} />}
       {data && <BreakdownTable title="Performance by pair" breakdown={data.breakdownByPair} labelFor={(key) => key} />}
       {data && <BreakdownTable title="Performance by session" breakdown={data.breakdownBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
+      {data && (
+        <BreakdownTable title="Performance by market regime (SMC signals only)" breakdown={data.breakdownByRegime} labelFor={(key) => REGIME_LABEL[key] ?? key} />
+      )}
       {data && <ConfluenceBreakdownTable breakdown={data.breakdownByConfluence} />}
       {data && <SlippageSummary stats={data.slippage} />}
       {data && <SlippageBreakdownTable breakdown={data.slippageByPair} />}

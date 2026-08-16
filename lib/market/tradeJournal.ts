@@ -295,18 +295,22 @@ export function getPerformanceStats(entries: JournalEntry[], filter: Performance
 }
 
 /**
- * Groups entries by pair or session and runs getPerformanceStats over each bucket --
- * the aggregate "stats" figure answers "am I profitable", this answers "which pairs/
- * sessions is that actually coming from". Entries with no context (aged-out/predates
- * this feature) are simply excluded from the "session" grouping (there's nothing to
- * group them by), same null-handling getPerformanceStats itself already does for a
- * session filter -- they still count toward the aggregate stats, just not this
- * breakdown.
+ * Groups entries by pair, session, or market regime and runs getPerformanceStats over
+ * each bucket -- the aggregate "stats" figure answers "am I profitable", this answers
+ * "which pairs/sessions/regimes is that actually coming from". Entries with no context
+ * (aged-out/predates this feature) are simply excluded from the "session"/"regime"
+ * groupings (there's nothing to group them by), same null-handling getPerformanceStats
+ * itself already does for a session/regime filter -- they still count toward the
+ * aggregate stats, just not this breakdown. "regime" is also, as a side effect,
+ * effectively SMC-only: context is only ever recorded from the internal SMC engine loop
+ * (see recordSignalContext's call site in metaApiConnection.ts) -- a TradingView-sourced
+ * entry has no context at all, so it's excluded the same way an aged-out one is, never
+ * needing a separate source check.
  */
-export function getPerformanceBreakdown(entries: JournalEntry[], dimension: "pair" | "session"): Record<string, PerformanceStats> {
+export function getPerformanceBreakdown(entries: JournalEntry[], dimension: "pair" | "session" | "regime"): Record<string, PerformanceStats> {
   const buckets = new Map<string, JournalEntry[]>();
   for (const entry of entries) {
-    const key = dimension === "pair" ? entry.pair : entry.context?.session;
+    const key = dimension === "pair" ? entry.pair : dimension === "session" ? entry.context?.session : entry.context?.regime;
     if (!key) continue;
     const bucket = buckets.get(key);
     if (bucket) bucket.push(entry);

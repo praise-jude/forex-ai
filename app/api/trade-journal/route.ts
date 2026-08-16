@@ -91,6 +91,10 @@ export async function GET(request: Request) {
     // since the point is to compare buckets against each other, not view one pre-picked.
     breakdownByPair: getPerformanceBreakdown(entries, "pair"),
     breakdownBySession: getPerformanceBreakdown(entries, "session"),
+    // "Which market regime is my SMC strategy actually working in" -- effectively
+    // SMC-only, see getPerformanceBreakdown's own doc comment. Also always over the
+    // full unfiltered ledger, same reasoning as the breakdowns above.
+    breakdownByRegime: getPerformanceBreakdown(entries, "regime"),
     // "Which confluences actually predict wins" -- see getConfluenceBreakdown's own doc
     // comment. Also always over the full unfiltered ledger, same reasoning as above.
     breakdownByConfluence: getConfluenceBreakdown(entries),
