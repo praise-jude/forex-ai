@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ConfluenceBreakdownBucket, JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
 import { formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
@@ -171,6 +172,170 @@ function BreakdownTable({ title, breakdown, labelFor }: { title: string; breakdo
   );
 }
 
+interface EquityPoint {
+  time: number;
+  cumulativeR: number;
+}
+
+/** Chronological cumulative R across every closed trade with a computed rMultiple --
+ * same exclusion (null rMultiple) as getPerformanceStats' own R-based figures, and the
+ * same chronological-sort-then-accumulate approach tradeJournal.ts's own maxDrawdownR
+ * uses internally, just kept as a full running series here instead of collapsing to one
+ * peak-to-trough number. */
+function buildEquityCurve(entries: JournalEntry[]): EquityPoint[] {
+  const withR = entries
+    .filter((e): e is JournalEntry & { rMultiple: number } => e.rMultiple !== null)
+    .slice()
+    .sort((a, b) => a.closedAt - b.closedAt);
+
+  let cumulative = 0;
+  return withR.map((e) => {
+    cumulative += e.rMultiple;
+    return { time: e.closedAt, cumulativeR: cumulative };
+  });
+}
+
+const CHART_WIDTH = 600;
+const CHART_HEIGHT = 160;
+const CHART_PADDING = { top: 14, right: 8, bottom: 14, left: 8 };
+const EMERALD = "#34d399";
+const ROSE = "#fb7185";
+
+/**
+ * The one "is this thing actually working over time" view the journal was missing --
+ * everything else here is a table or a tile, this is the only place performance reads
+ * as a trajectory. Single series (cumulative R), so no legend -- the title names it and
+ * the line's color (emerald/rose) already carries the one bit of identity that matters
+ * (net positive vs. net negative), matching this file's own established StatTile/
+ * BreakdownTable convention of coloring by sign. A hand-rolled SVG line+area, not
+ * lightweight-charts (that library is reserved for PriceChart.tsx's real candlestick
+ * view) -- this is a single simple series, not worth the extra bundle weight.
+ */
+function EquityCurveChart({ entries }: { entries: JournalEntry[] }) {
+  const points = useMemo(() => buildEquityCurve(entries), [entries]);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right;
+  const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom;
+
+  const minTime = points[0]?.time ?? 0;
+  const maxTime = points[points.length - 1]?.time ?? 1;
+  const timeRange = Math.max(maxTime - minTime, 1);
+
+  const values = points.map((p) => p.cumulativeR);
+  const minR = Math.min(0, ...values);
+  const maxR = Math.max(0, ...values);
+  const rRange = Math.max(maxR - minR, 1e-6);
+
+  function x(time: number): number {
+    return CHART_PADDING.left + ((time - minTime) / timeRange) * plotWidth;
+  }
+  function y(value: number): number {
+    return CHART_PADDING.top + (1 - (value - minR) / rRange) * plotHeight;
+  }
+
+  function handleMove(e: ReactMouseEvent<SVGSVGElement>) {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || points.length === 0) return;
+    const px = ((e.clientX - rect.left) / rect.width) * CHART_WIDTH;
+    let nearest = 0;
+    let best = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const d = Math.abs(x(points[i].time) - px);
+      if (d < best) {
+        best = d;
+        nearest = i;
+      }
+    }
+    setHoverIndex(nearest);
+  }
+
+  if (points.length < 2) {
+    return (
+      <div>
+        <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Equity curve (cumulative R)</h2>
+        <div className="rounded-xl border border-white/10 bg-zinc-900 p-6 text-center text-sm text-zinc-500">
+          Needs at least 2 closed trades with a computed R multiple to plot a curve.
+        </div>
+      </div>
+    );
+  }
+
+  const last = points[points.length - 1];
+  const positive = last.cumulativeR >= 0;
+  const color = positive ? EMERALD : ROSE;
+
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.time).toFixed(1)},${y(p.cumulativeR).toFixed(1)}`).join(" ");
+  const areaPath = `${linePath} L${x(last.time).toFixed(1)},${y(0).toFixed(1)} L${x(points[0].time).toFixed(1)},${y(0).toFixed(1)} Z`;
+
+  const hovered = hoverIndex !== null ? points[hoverIndex] : null;
+
+  return (
+    <div>
+      <div className="mb-2.5 flex items-baseline justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Equity curve (cumulative R)</h2>
+        <span className={`text-xs font-semibold tabular-nums ${positive ? "text-emerald-400" : "text-rose-400"}`}>
+          {positive ? "+" : ""}
+          {last.cumulativeR.toFixed(2)}R
+        </span>
+      </div>
+      <div className="rounded-xl border border-white/10 bg-zinc-900 p-3">
+        <div className="relative">
+          <svg
+            ref={svgRef}
+            viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+            className="w-full"
+            style={{ height: "auto", display: "block" }}
+            onMouseMove={handleMove}
+            onMouseLeave={() => setHoverIndex(null)}
+          >
+            <line
+              x1={CHART_PADDING.left}
+              x2={CHART_WIDTH - CHART_PADDING.right}
+              y1={y(0)}
+              y2={y(0)}
+              stroke="rgba(255,255,255,0.12)"
+              strokeWidth={1}
+            />
+            <path d={areaPath} fill={color} fillOpacity={0.1} stroke="none" />
+            <path d={linePath} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            <circle cx={x(last.time)} cy={y(last.cumulativeR)} r={4} fill={color} stroke="#18181b" strokeWidth={2} />
+            {hovered && (
+              <>
+                <line
+                  x1={x(hovered.time)}
+                  x2={x(hovered.time)}
+                  y1={CHART_PADDING.top}
+                  y2={CHART_HEIGHT - CHART_PADDING.bottom}
+                  stroke="rgba(255,255,255,0.2)"
+                  strokeWidth={1}
+                />
+                <circle cx={x(hovered.time)} cy={y(hovered.cumulativeR)} r={4} fill={color} stroke="#18181b" strokeWidth={2} />
+              </>
+            )}
+          </svg>
+          {hovered && (
+            <div
+              className="pointer-events-none absolute rounded-md border border-white/10 bg-zinc-950 px-2 py-1 text-[11px] whitespace-nowrap text-zinc-300 shadow-lg"
+              style={{
+                left: `${Math.min(85, Math.max(2, (x(hovered.time) / CHART_WIDTH) * 100))}%`,
+                top: `${Math.max(2, (y(hovered.cumulativeR) / CHART_HEIGHT) * 100 - 16)}%`,
+              }}
+            >
+              <span className={`font-semibold ${hovered.cumulativeR >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                {hovered.cumulativeR >= 0 ? "+" : ""}
+                {hovered.cumulativeR.toFixed(2)}R
+              </span>
+              <span className="ml-1.5 text-zinc-500">{new Date(hovered.time).toLocaleDateString()}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const CONFLUENCE_LABEL: Record<string, string> = {
   liquidity_sweep: "Liquidity sweep",
   bos: "Break of structure",
@@ -289,6 +454,7 @@ export function JournalPanel() {
   return (
     <div className="flex flex-col gap-4">
       {data && <StatsSummary stats={data.stats} openCount={data.openCount} />}
+      {data && <EquityCurveChart entries={data.entries} />}
       {data && <SignalFunnelSummary funnel={data.signalFunnel} />}
       {data && <BreakdownTable title="Performance by pair" breakdown={data.breakdownByPair} labelFor={(key) => key} />}
       {data && <BreakdownTable title="Performance by session" breakdown={data.breakdownBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
