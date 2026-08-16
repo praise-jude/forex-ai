@@ -338,20 +338,27 @@ async function connect(accountKey: AccountKey): Promise<void> {
   const account = await api.metatraderAccountApi.getAccount(accountId);
 
   // Only "live" needs candle history -- "demo" is purely an execution target (see
-  // MarketSyncListener above), not a second signal engine. Never allowed to abort the
-  // connection below -- seedHistoricalCandles already catches its own per-symbol
-  // failures, but this is defense in depth against a more systemic seeding failure
-  // (e.g. MetaApi's market-data API itself unreachable at boot) also taking down the
-  // streaming connection, which is the actually critical piece (real-time prices,
-  // candles, and the ability to execute at all). A confirmed real incident: one
-  // transient 504 here previously left the live engine fully disconnected until the
-  // next redeploy, since ensureMetaApiConnection is only ever attempted once at boot.
+  // MarketSyncListener above), not a second signal engine. Fire-and-forget, not
+  // awaited: this used to run BEFORE the streaming connect below, meaning the entire
+  // live engine sat fully disconnected (status: "disconnected", no prices, no signals)
+  // for as long as all 60 pair/timeframe REST calls took -- a real, measured startup
+  // cost on every cold boot/redeploy. Seeding is backfill for the candle store, not a
+  // prerequisite for being connected: API routes and the signal engine already tolerate
+  // an empty store until live ticks or this seeding fills it in naturally (see
+  // seedHistoricalCandles' own doc comment). Running it concurrently with connect()
+  // instead means the two no longer add together -- total time is whichever is slower,
+  // not both. Never allowed to abort the connection -- seedHistoricalCandles already
+  // catches its own per-symbol failures, but this .catch() is defense in depth against
+  // a more systemic seeding failure (e.g. MetaApi's market-data API itself unreachable
+  // at boot) also taking down the streaming connection, which is the actually critical
+  // piece (real-time prices, candles, and the ability to execute at all). A confirmed
+  // real incident: one transient 504 here previously left the live engine fully
+  // disconnected until the next redeploy, since ensureMetaApiConnection is only ever
+  // attempted once at boot.
   if (accountKey === "live") {
-    try {
-      await seedHistoricalCandles(account);
-    } catch (error) {
-      console.error("[market] historical candle seeding failed entirely (continuing to connect live streaming):", error);
-    }
+    void seedHistoricalCandles(account).catch((error: unknown) => {
+      console.error("[market] historical candle seeding failed entirely (live streaming unaffected):", error);
+    });
   }
 
   const connection = account.getStreamingConnection();

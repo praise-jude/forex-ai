@@ -24,23 +24,33 @@ const HISTORY_BARS = 300;
  * naturally from live ticks once the streaming connection (established regardless,
  * see connect()) starts flowing.
  */
+// Pairs run concurrently (10 at once) -- getHistoricalCandles is a plain REST fetch
+// with no documented MetaApi rate-limit history the way subscribeToMarketData has (see
+// connect()'s own comment on that), so there's no reason to serialize across pairs.
+// Each pair's own 6 timeframes still run sequentially -- 6 concurrent requests per pair
+// is already redundant with the 10-way pair concurrency and not worth the added
+// complexity of a second parallel dimension. This cuts the sequential chain from 60
+// awaits down to 6, the dominant remaining cost being connect()'s own no-longer-blocking
+// use of this function (see connect()'s comment on why it's now fire-and-forget there).
 export async function seedHistoricalCandles(account: MetatraderAccount): Promise<void> {
-  for (const pair of PAIRS) {
-    for (const timeframe of TIMEFRAMES) {
-      try {
-        const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), HISTORY_BARS);
-        const candles: Candle[] = raw.map((c) => ({
-          time: c.time.getTime(),
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          tickVolume: c.tickVolume,
-        }));
-        candleStore.seed(pair, timeframe, candles);
-      } catch (error) {
-        console.error(`[market] failed to seed ${pair} ${timeframe} history (continuing):`, error);
+  await Promise.all(
+    PAIRS.map(async (pair) => {
+      for (const timeframe of TIMEFRAMES) {
+        try {
+          const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), HISTORY_BARS);
+          const candles: Candle[] = raw.map((c) => ({
+            time: c.time.getTime(),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            tickVolume: c.tickVolume,
+          }));
+          candleStore.seed(pair, timeframe, candles);
+        } catch (error) {
+          console.error(`[market] failed to seed ${pair} ${timeframe} history (continuing):`, error);
+        }
       }
-    }
-  }
+    })
+  );
 }
