@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
-import { getConfidenceCalibration, getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats } from "../tradeJournal";
+import { getConfidenceCalibration, getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats, getSignerBCalibration } from "../tradeJournal";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
 import { loadTradeJournalModule } from "./tradeJournalTestHelper";
 
@@ -419,6 +419,62 @@ describe("getConfidenceCalibration", () => {
   it("returns insufficient_data for both tiers on an empty list", () => {
     const result = getConfidenceCalibration([], 30);
     expect(result).toEqual([
+      { tier: "buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+      { tier: "strong_buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+    ]);
+  });
+});
+
+describe("getSignerBCalibration", () => {
+  it("buckets by Signer B's own confidence, independently of the fired signal's own confidence", () => {
+    const entries = [
+      buildEntry({ id: "1", context: buildContext({ confidence: 92, signerBConfidence: 45 }) }), // no_trade
+      buildEntry({ id: "2", context: buildContext({ confidence: 92, signerBConfidence: 85 }) }), // watch
+      buildEntry({ id: "3", context: buildContext({ confidence: 92, signerBConfidence: 92 }) }), // buy
+      buildEntry({ id: "4", context: buildContext({ confidence: 92, signerBConfidence: 97 }) }), // strong_buy
+    ];
+
+    const [noTrade, watch, buy, strongBuy] = getSignerBCalibration(entries, 1);
+    expect(noTrade.sampleSize).toBe(1);
+    expect(watch.sampleSize).toBe(1);
+    expect(buy.sampleSize).toBe(1);
+    expect(strongBuy.sampleSize).toBe(1);
+  });
+
+  it("can bucket a fired signal's Signer B confidence as low as no_trade -- agreement alone gates a signal, not any Signer B confidence floor", () => {
+    const entries = [buildEntry({ id: "1", context: buildContext({ signerBConfidence: 45 }) })];
+
+    const [noTrade] = getSignerBCalibration(entries, 1);
+    expect(noTrade.sampleSize).toBe(1);
+    expect(noTrade.status).toBe("calibrated");
+  });
+
+  it("reports real calibrated stats once the minimum sample size is reached", () => {
+    const entries = [
+      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ signerBConfidence: 92 }) }),
+      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ signerBConfidence: 91 }) }),
+    ];
+
+    const [, , buy] = getSignerBCalibration(entries, 2);
+    expect(buy.status).toBe("calibrated");
+    expect(buy.sampleSize).toBe(2);
+    expect(buy.winRate).toBe(50);
+    expect(buy.averageR).toBeCloseTo(0.5);
+    expect(buy.expectancy).toBe(buy.averageR);
+  });
+
+  it("excludes entries with no captured context", () => {
+    const entries = [buildEntry({ id: "1", context: buildContext({ signerBConfidence: 92 }) }), buildEntry({ id: "2", context: null })];
+
+    const [, , buy] = getSignerBCalibration(entries, 1);
+    expect(buy.sampleSize).toBe(1);
+  });
+
+  it("returns insufficient_data for all four tiers on an empty list", () => {
+    const result = getSignerBCalibration([], 30);
+    expect(result).toEqual([
+      { tier: "no_trade", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+      { tier: "watch", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
       { tier: "buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
       { tier: "strong_buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
     ]);

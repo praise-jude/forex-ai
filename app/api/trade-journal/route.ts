@@ -6,6 +6,7 @@ import {
   getPerformanceBreakdown,
   getPerformanceStats,
   getSignalFunnelStats,
+  getSignerBCalibration,
   tradeJournal,
   type PerformanceFilter,
 } from "@/lib/market/tradeJournal";
@@ -111,6 +112,10 @@ export async function GET(request: Request) {
     // is included alongside (not hardcoded client-side) so both platforms always agree
     // on the real threshold, including any CONFIDENCE_CALIBRATION_MIN_SAMPLES override.
     confidenceCalibration: getConfidenceCalibration(entries, defaultCalibrationMinSamples()),
+    // "Is Signer B actually pulling its weight, or just rubber-stamping Signer A" --
+    // see getSignerBCalibration's own doc comment. Shares the same min-samples
+    // threshold as confidenceCalibration above, for a direct apples-to-apples scorecard.
+    signerBCalibration: getSignerBCalibration(entries, defaultCalibrationMinSamples()),
     calibrationMinSamples: defaultCalibrationMinSamples(),
   });
 }

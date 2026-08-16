@@ -10,9 +10,12 @@ import { isAccountConfigured } from "@/lib/market/metaApiConnection";
 import {
   tradeJournal,
   getConfidenceCalibration,
+  getSignerBCalibration,
   defaultCalibrationMinSamples,
-  type ConfidenceCalibrationBucket,
+  type CalibrationStatus,
+  type SignerBCalibrationBucket,
 } from "@/lib/market/tradeJournal";
+import type { DimensionTier } from "@/lib/market/confidenceScore";
 
 export const dynamic = "force-dynamic";
 
@@ -66,20 +69,31 @@ function ExecutionConfigTable({ account, config }: { account: string; config: Ex
   );
 }
 
+interface CalibrationBucketLike {
+  sampleSize: number;
+  status: CalibrationStatus;
+  winRate: number | null;
+  averageR: number | null;
+  expectancy: number | null;
+}
+
 /** Read-only measurement, per the plan's own top safety principle: confidence must be
  * calibrated against real outcomes before it's ever allowed to influence position size
- * -- this section never has, and doesn't yet, feed anything back into sizing/execution. */
-function CalibrationRow({ bucket, minSamples }: { bucket: ConfidenceCalibrationBucket; minSamples: number }) {
-  const tierLabel = bucket.tier === "strong_buy" ? "Strong buy (95-100)" : "Buy (90-94)";
+ * -- this section never has, and doesn't yet, feed anything back into sizing/execution.
+ * Shared by both Signer A's (getConfidenceCalibration) and Signer B's
+ * (getSignerBCalibration) buckets -- `label` is computed by the caller since the two
+ * use different tier vocabularies (Signer A only ever buy/strong_buy; Signer B spans
+ * all four of tierOf's tiers, see getSignerBCalibration's own doc comment). */
+function CalibrationRow({ label, bucket, minSamples }: { label: string; bucket: CalibrationBucketLike; minSamples: number }) {
   return (
     <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <div className="flex items-center justify-between">
-        <span className="font-semibold text-zinc-200">{tierLabel}</span>
+        <span className="font-semibold text-zinc-200">{label}</span>
         <span className="text-[11px] text-zinc-500">{bucket.sampleSize} closed trades</span>
       </div>
       {bucket.status === "insufficient_data" ? (
         <p className="mt-1 text-xs text-amber-400">
-          Insufficient data — needs {minSamples}, have {bucket.sampleSize}. Using base risk only; no calibrated adjustment is possible yet.
+          Insufficient data — needs {minSamples}, have {bucket.sampleSize}.
         </p>
       ) : (
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-400">
@@ -98,12 +112,50 @@ function CalibrationRow({ bucket, minSamples }: { bucket: ConfidenceCalibrationB
   );
 }
 
+const SIGNER_A_TIER_LABEL: Record<"buy" | "strong_buy", string> = {
+  buy: "Buy (90-94)",
+  strong_buy: "Strong buy (95-100)",
+};
+
+const SIGNER_B_TIER_LABEL: Record<DimensionTier, string> = {
+  no_trade: "No trade (<80)",
+  watch: "Watch (80-89)",
+  buy: "Buy (90-94)",
+  strong_buy: "Strong buy (95-100)",
+};
+
+/**
+ * "Is Signer B actually pulling its weight, or just rubber-stamping Signer A" -- a
+ * fired signal always has Signer B agreeing on direction (decisionMatrix.ts holds on
+ * any disagreement or neutral read), so the interesting comparison isn't agree/disagree
+ * (always "agree"), it's whether Signer B's own strength of conviction predicts real
+ * outcomes independently of Signer A's. See getSignerBCalibration's own doc comment.
+ */
+function SignerBScorecard({ buckets, minSamples }: { buckets: SignerBCalibrationBucket[]; minSamples: number }) {
+  return (
+    <div>
+      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Signer B (independent confirmation)</h3>
+      <p className="mb-2 text-xs text-zinc-500">
+        Every fired signal already has Signer B agreeing with Signer A on direction — the question here is whether Signer B&apos;s
+        own confidence level (not just its yes/no agreement) actually tracks real outcomes.
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        {buckets.map((bucket) => (
+          <CalibrationRow key={bucket.tier} label={SIGNER_B_TIER_LABEL[bucket.tier]} bucket={bucket} minSamples={minSamples} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const liveConfig = loadExecutionConfig("live");
   const demoConfigured = isAccountConfigured("demo");
   const demoConfig = demoConfigured ? loadExecutionConfig("demo") : null;
   const minSamples = defaultCalibrationMinSamples();
-  const calibration = getConfidenceCalibration(tradeJournal.all(), minSamples);
+  const journalEntries = tradeJournal.all();
+  const calibration = getConfidenceCalibration(journalEntries, minSamples);
+  const signerBCalibration = getSignerBCalibration(journalEntries, minSamples);
 
   return (
     <main className="min-h-dvh bg-zinc-950 text-zinc-100">
@@ -149,20 +201,24 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Confidence calibration <span className="normal-case text-zinc-600">(measurement only — not wired into sizing)</span>
-          </h2>
-          <p className="mb-2 text-xs text-zinc-500">
-            Real historical performance per confidence tier, so &quot;95% confidence&quot; can be checked against what actually happened
-            instead of trusted as a probability. Confidence-weighted sizing will only ever use these numbers once a tier has enough
-            samples to trust — never the raw AI score alone.
-          </p>
-          <div className="grid gap-3 md:grid-cols-2">
-            {calibration.map((bucket) => (
-              <CalibrationRow key={bucket.tier} bucket={bucket} minSamples={minSamples} />
-            ))}
+        <section className="flex flex-col gap-4">
+          <div>
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Confidence calibration <span className="normal-case text-zinc-600">(measurement only — not wired into sizing)</span>
+            </h2>
+            <p className="mb-2 text-xs text-zinc-500">
+              Real historical performance per confidence tier, so &quot;95% confidence&quot; can be checked against what actually happened
+              instead of trusted as a probability. Confidence-weighted sizing will only ever use these numbers once a tier has enough
+              samples to trust — never the raw AI score alone.
+            </p>
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Signer A (SMC)</h3>
+            <div className="grid gap-3 md:grid-cols-2">
+              {calibration.map((bucket) => (
+                <CalibrationRow key={bucket.tier} label={SIGNER_A_TIER_LABEL[bucket.tier]} bucket={bucket} minSamples={minSamples} />
+              ))}
+            </div>
           </div>
+          <SignerBScorecard buckets={signerBCalibration} minSamples={minSamples} />
         </section>
 
         <section>

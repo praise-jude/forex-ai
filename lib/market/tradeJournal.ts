@@ -6,6 +6,7 @@ import {
   journalSignalOutcomes as journalSignalOutcomesTable,
 } from "../db/tradingSchema";
 import { CONFLUENCES, type AccountKey, type Confluence, type MarketRegime, type Pair, type Session, type Signal, type Timeframe } from "./types";
+import { tierOf, type DimensionTier } from "./confidenceScore";
 import type { SetupQualityBreakdown } from "./setupQualityScore";
 import { pipSize } from "./symbols";
 import { pipValuePerLot } from "./pipValue";
@@ -490,6 +491,48 @@ export function getConfidenceCalibration(entries: JournalEntry[], minSamples: nu
 
   return (["buy", "strong_buy"] as const).map((tier) => {
     const bucketEntries = withContext.filter((e) => (e.context.confidence >= 95 ? "strong_buy" : "buy") === tier);
+    const sampleSize = bucketEntries.length;
+    const status: CalibrationStatus = sampleSize >= minSamples ? "calibrated" : "insufficient_data";
+
+    if (status === "insufficient_data") {
+      return { tier, sampleSize, status, winRate: null, averageR: null, expectancy: null };
+    }
+
+    const stats = getPerformanceStats(bucketEntries);
+    return { tier, sampleSize, status, winRate: stats.winRate, averageR: stats.averageR, expectancy: stats.averageR };
+  });
+}
+
+export interface SignerBCalibrationBucket {
+  tier: DimensionTier;
+  sampleSize: number;
+  status: CalibrationStatus;
+  winRate: number | null;
+  averageR: number | null;
+  expectancy: number | null;
+}
+
+/**
+ * The "is Signer B actually pulling its weight, or just rubber-stamping Signer A"
+ * scorecard -- same measurement as getConfidenceCalibration, but bucketed by Signer B's
+ * OWN independent confidence (context.signerBConfidence) instead of the fired signal's
+ * SMC-derived confidence (context.confidence). These are genuinely different numbers:
+ * decisionMatrix.ts's combineSigners only ever requires Signer B to AGREE on direction
+ * to let a signal through, never any confidence floor -- "a merely-lower Signer B
+ * confidence while still agreeing on direction... never blocks". So unlike Signer A
+ * (gated at buy/90+ by construction of what becomes a Signal at all, see
+ * getConfidenceCalibration's own comment), Signer B's confidence on a fired signal can
+ * genuinely land in ANY of tierOf's four tiers -- all four are bucketed here, not just
+ * buy/strong_buy. A real difference in win rate/average R across these tiers means
+ * Signer B's strength of conviction (not just its yes/no agreement, which is always
+ * "yes" on a fired signal) is real, independent signal -- not decoration.
+ */
+export function getSignerBCalibration(entries: JournalEntry[], minSamples: number): SignerBCalibrationBucket[] {
+  const withContext = entries.filter((e): e is JournalEntry & { context: SignalContext } => e.context !== null);
+  const tiers: DimensionTier[] = ["no_trade", "watch", "buy", "strong_buy"];
+
+  return tiers.map((tier) => {
+    const bucketEntries = withContext.filter((e) => tierOf(e.context.signerBConfidence) === tier);
     const sampleSize = bucketEntries.length;
     const status: CalibrationStatus = sampleSize >= minSamples ? "calibrated" : "insufficient_data";
 
