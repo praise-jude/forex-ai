@@ -159,6 +159,7 @@ class MarketSyncListener extends SynchronizationListener {
             newsStatus: signal.newsStatus,
             session: signal.session,
             createdAt: signal.createdAt,
+            confluences: signal.confluences,
           });
         }
       }

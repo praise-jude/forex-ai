@@ -109,6 +109,27 @@ export type Confluence =
   | "currency_strength"
   | "rsi_divergence";
 
+export const CONFLUENCES: Confluence[] = [
+  "liquidity_sweep",
+  "bos",
+  "choch",
+  "fvg",
+  "order_block",
+  "killzone",
+  "ema_trend",
+  "rsi_momentum",
+  "macd_crossover",
+  "volume",
+  "trend_ema_stack",
+  "market_structure",
+  "adx",
+  "candlestick",
+  "multi_timeframe",
+  "supertrend",
+  "currency_strength",
+  "rsi_divergence",
+];
+
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
 export type SignalSource = "smc" | "tradingview";

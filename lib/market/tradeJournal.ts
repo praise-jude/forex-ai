@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import type { AccountKey, MarketRegime, Pair, Session, Signal, Timeframe } from "./types";
+import { CONFLUENCES, type AccountKey, type Confluence, type MarketRegime, type Pair, type Session, type Signal, type Timeframe } from "./types";
 import type { SetupQualityBreakdown } from "./setupQualityScore";
 import { pipSize } from "./symbols";
 import { pipValuePerLot } from "./pipValue";
@@ -34,6 +34,10 @@ export interface SignalContext {
   newsStatus: Signal["newsStatus"];
   session: Session;
   createdAt: number;
+  /** Optional -- entries recorded before this field existed (still on disk, still
+   * loaded via readFromDisk's tolerant parse) simply have it undefined, never a
+   * fabricated guess at which confluences were present. */
+  confluences?: Confluence[];
 }
 
 // "invalidation" -- positionManager.ts's own early exit (the original SMC+Signer B
@@ -382,4 +386,50 @@ export function getConfidenceCalibration(entries: JournalEntry[], minSamples: nu
     const stats = getPerformanceStats(bucketEntries);
     return { tier, sampleSize, status, winRate: stats.winRate, averageR: stats.averageR, expectancy: stats.averageR };
   });
+}
+
+// Below this many closed trades, a confluence's win rate is noise, not edge -- shown
+// as "insufficient_data" rather than hidden, same posture as getConfidenceCalibration.
+// Lower than that function's own threshold (30): confluences are far more numerous (18
+// vs. 2 tiers) and non-exclusive, so each individual bucket naturally gets fewer samples
+// for the same total trade count -- a stricter bar here would leave most buckets
+// perpetually unratable even with a healthy amount of trading history.
+export const DEFAULT_CONFLUENCE_MIN_SAMPLES = 10;
+
+export type ConfluenceStatus = "ok" | "insufficient_data";
+
+export interface ConfluenceBreakdownBucket {
+  confluence: Confluence;
+  sampleSize: number;
+  status: ConfluenceStatus;
+  winRate: number | null;
+  averageR: number | null;
+}
+
+/**
+ * "Which confluences actually predict wins" -- buckets closed trades by whether each
+ * confluence factor was present on the signal that produced them, and runs
+ * getPerformanceStats over each bucket. Unlike getPerformanceBreakdown's pair/session
+ * grouping, these buckets are NOT mutually exclusive (a single trade's signal can
+ * carry many confluences at once, e.g. both "fvg" and "order_block"), so a trade
+ * legitimately contributes to several buckets here. Entries with no context (predates
+ * this feature, or aged out) or no confluences recorded (predates the confluences field
+ * itself) are excluded -- there's nothing real to bucket them by. Read-only measurement,
+ * same as getConfidenceCalibration -- never wired into signal scoring or execution.
+ */
+export function getConfluenceBreakdown(entries: JournalEntry[], minSamples = DEFAULT_CONFLUENCE_MIN_SAMPLES): ConfluenceBreakdownBucket[] {
+  const withConfluences = entries.filter((e) => e.context?.confluences !== undefined);
+
+  return CONFLUENCES.map((confluence) => {
+    const bucketEntries = withConfluences.filter((e) => e.context!.confluences!.includes(confluence));
+    const sampleSize = bucketEntries.length;
+    const status: ConfluenceStatus = sampleSize >= minSamples ? "ok" : "insufficient_data";
+
+    if (status === "insufficient_data") {
+      return { confluence, sampleSize, status, winRate: null, averageR: null };
+    }
+
+    const stats = getPerformanceStats(bucketEntries);
+    return { confluence, sampleSize, status, winRate: stats.winRate, averageR: stats.averageR };
+  }).sort((a, b) => b.sampleSize - a.sampleSize);
 }

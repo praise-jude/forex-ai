@@ -1,6 +1,6 @@
 "use client";
 
-import type { JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
+import type { ConfluenceBreakdownBucket, JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
 import { formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
@@ -19,7 +19,17 @@ interface JournalResponse {
    * getPerformanceBreakdown in tradeJournal.ts. Always over the full ledger. */
   breakdownByPair: Record<string, PerformanceStats>;
   breakdownBySession: Record<string, PerformanceStats>;
+  /** "Which confluences actually predict wins" -- see getConfluenceBreakdown in
+   * tradeJournal.ts. Always over the full ledger. */
+  breakdownByConfluence: ConfluenceBreakdownBucket[];
 }
+
+// Mirrors tradeJournal.ts's own DEFAULT_CONFLUENCE_MIN_SAMPLES -- duplicated (not
+// imported) for the same reason BacktestPanel.tsx type-only-imports backtestRunner.ts:
+// tradeJournal.ts pulls in node:fs at module scope, which can't end up in this client
+// component's bundle. Purely a display label; the server is the actual source of truth
+// for each bucket's real "ok"/"insufficient_data" status.
+const CONFLUENCE_MIN_SAMPLES = 10;
 
 // Trades close on the order of minutes to hours, not seconds -- a slow poll is
 // plenty responsive without hammering the API for a page that isn't the primary
@@ -161,6 +171,86 @@ function BreakdownTable({ title, breakdown, labelFor }: { title: string; breakdo
   );
 }
 
+const CONFLUENCE_LABEL: Record<string, string> = {
+  liquidity_sweep: "Liquidity sweep",
+  bos: "Break of structure",
+  choch: "Change of character",
+  fvg: "Fair value gap",
+  order_block: "Order block",
+  killzone: "Killzone timing",
+  ema_trend: "EMA trend",
+  rsi_momentum: "RSI momentum",
+  macd_crossover: "MACD crossover",
+  volume: "Volume",
+  trend_ema_stack: "EMA stack trend",
+  market_structure: "Market structure",
+  adx: "ADX strength",
+  candlestick: "Candlestick pattern",
+  multi_timeframe: "Multi-timeframe",
+  supertrend: "Supertrend",
+  currency_strength: "Currency strength",
+  rsi_divergence: "RSI divergence",
+};
+
+/**
+ * "Which confluences actually predict wins" -- a dedicated table (not BreakdownTable
+ * above) because buckets aren't mutually exclusive and can be "insufficient_data",
+ * which needs an honest flagged cell instead of a misleadingly-precise percentage from
+ * a handful of trades. Rows already arrive sorted by sample size (see
+ * getConfluenceBreakdown), so the most-evidenced factors surface first regardless of
+ * status.
+ */
+function ConfluenceBreakdownTable({ breakdown }: { breakdown: ConfluenceBreakdownBucket[] }) {
+  if (breakdown.length === 0) return null;
+
+  return (
+    <div>
+      <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Which confluences actually predict wins</h2>
+      <p className="mb-2.5 text-[11px] text-zinc-500">
+        Real win rate/average R for closed trades where each confluence was present on the signal -- not a static score,
+        an outcome. Buckets under {CONFLUENCE_MIN_SAMPLES} trades are shown but flagged, not hidden, since a handful of
+        trades can look like edge by chance.
+      </p>
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-zinc-900">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-zinc-500">
+              <th className="px-3 py-2 font-medium">Confluence</th>
+              <th className="px-3 py-2 font-medium">Trades</th>
+              <th className="px-3 py-2 font-medium">Win rate</th>
+              <th className="px-3 py-2 font-medium">Avg R</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map((bucket) => (
+              <tr key={bucket.confluence} className="border-b border-white/5 last:border-0">
+                <td className="px-3 py-2 font-medium text-zinc-200">{CONFLUENCE_LABEL[bucket.confluence] ?? bucket.confluence}</td>
+                <td className="px-3 py-2 tabular-nums text-zinc-300">{bucket.sampleSize}</td>
+                {bucket.status === "insufficient_data" ? (
+                  <td colSpan={2} className="px-3 py-2 text-amber-400">
+                    Needs {CONFLUENCE_MIN_SAMPLES}, have {bucket.sampleSize}
+                  </td>
+                ) : (
+                  <>
+                    <td className="px-3 py-2 tabular-nums text-zinc-300">{bucket.winRate!.toFixed(0)}%</td>
+                    <td
+                      className={`px-3 py-2 tabular-nums ${
+                        bucket.averageR === null ? "text-zinc-500" : bucket.averageR >= 0 ? "text-emerald-400" : "text-rose-400"
+                      }`}
+                    >
+                      {bucket.averageR === null ? "—" : `${bucket.averageR >= 0 ? "+" : ""}${bucket.averageR.toFixed(2)}R`}
+                    </td>
+                  </>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function EntryRow({ entry }: { entry: JournalEntry }) {
   const isLong = entry.direction === "long";
   const inProfit = entry.profit >= 0;
@@ -202,6 +292,7 @@ export function JournalPanel() {
       {data && <SignalFunnelSummary funnel={data.signalFunnel} />}
       {data && <BreakdownTable title="Performance by pair" breakdown={data.breakdownByPair} labelFor={(key) => key} />}
       {data && <BreakdownTable title="Performance by session" breakdown={data.breakdownBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
+      {data && <ConfluenceBreakdownTable breakdown={data.breakdownByConfluence} />}
 
       <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
         <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Closed trades</h2>

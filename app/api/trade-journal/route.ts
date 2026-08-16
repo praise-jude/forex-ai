@@ -1,5 +1,12 @@
 import { PAIRS, type AccountKey, type MarketRegime, type Pair, type Session, type Timeframe } from "@/lib/market/types";
-import { getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
+import {
+  getConfluenceBreakdown,
+  getPerformanceBreakdown,
+  getPerformanceStats,
+  getSignalFunnelStats,
+  tradeJournal,
+  type PerformanceFilter,
+} from "@/lib/market/tradeJournal";
 import { getOpenPositions, isAccountConfigured } from "@/lib/market/metaApiConnection";
 
 export const runtime = "nodejs";
@@ -81,5 +88,8 @@ export async function GET(request: Request) {
     // since the point is to compare buckets against each other, not view one pre-picked.
     breakdownByPair: getPerformanceBreakdown(entries, "pair"),
     breakdownBySession: getPerformanceBreakdown(entries, "session"),
+    // "Which confluences actually predict wins" -- see getConfluenceBreakdown's own doc
+    // comment. Also always over the full unfiltered ledger, same reasoning as above.
+    breakdownByConfluence: getConfluenceBreakdown(entries),
   });
 }
