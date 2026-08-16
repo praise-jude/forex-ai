@@ -356,6 +356,7 @@ export interface NotificationPrefs {
   riskAlerts: boolean;
   connectionAlerts: boolean;
   weeklyDigest: boolean;
+  dailyDigest: boolean;
   minConfidence: number;
 }
 
@@ -367,6 +368,11 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   riskAlerts: true,
   connectionAlerts: true,
   weeklyDigest: true,
+  // Defaults OFF, unlike weeklyDigest -- a nightly push is a much higher-frequency ask
+  // than a weekly one, and this is a brand-new category existing devices won't have
+  // opted into; better to have an operator explicitly turn it on than surprise anyone
+  // testing on demo with a notification every evening.
+  dailyDigest: false,
   minConfidence: 80,
 };
 
@@ -378,7 +384,8 @@ export type NotificationCategory =
   | "order_rejected"
   | "risk_alert"
   | "connection_alert"
-  | "weekly_digest";
+  | "weekly_digest"
+  | "daily_digest";
 
 export type DevicePlatform = "ios" | "android" | "web";
 

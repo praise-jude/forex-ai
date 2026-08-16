@@ -7,6 +7,7 @@ import { startRollingCorrelation } from "./rollingCorrelation";
 import { startPositionManager } from "./positionManager";
 import { startPositionInvalidation } from "./positionInvalidation";
 import { startWeeklyDigest } from "./weeklyDigest";
+import { startDailyDigest } from "./dailyDigest";
 import { signalStore } from "./signalStore";
 import { positionStore } from "./positionStore";
 import { tradeJournal } from "./tradeJournal";
@@ -64,4 +65,5 @@ export function startMarketEngine(): void {
   startPositionManager();
   startPositionInvalidation();
   startWeeklyDigest();
+  startDailyDigest();
 }
