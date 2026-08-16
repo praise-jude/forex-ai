@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ConfluenceBreakdownBucket, JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
+import type { SlippageStats } from "@/lib/market/slippage";
 import { formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
@@ -23,6 +24,11 @@ interface JournalResponse {
   /** "Which confluences actually predict wins" -- see getConfluenceBreakdown in
    * tradeJournal.ts. Always over the full ledger. */
   breakdownByConfluence: ConfluenceBreakdownBucket[];
+  /** "Is the broker filling me at a worse price than I asked for" -- see
+   * getSlippageStats in lib/market/slippage.ts. Covers every filled trade (open or
+   * closed), not just the closed-trade entries above. */
+  slippage: SlippageStats;
+  slippageByPair: Record<string, SlippageStats>;
 }
 
 // Mirrors tradeJournal.ts's own DEFAULT_CONFLUENCE_MIN_SAMPLES -- duplicated (not
@@ -416,6 +422,79 @@ function ConfluenceBreakdownTable({ breakdown }: { breakdown: ConfluenceBreakdow
   );
 }
 
+function formatPips(pips: number | null): string {
+  return pips === null ? "—" : `${pips >= 0 ? "+" : ""}${pips.toFixed(1)} pips`;
+}
+
+/**
+ * "Is the broker filling me at a worse price than I asked for" -- requestedEntry vs.
+ * filledEntry was already recorded on every filled trade but never surfaced. Positive
+ * pips = adverse (cost you); negative = favorable (helped you) -- matches this file's
+ * StatTile tone convention (rose for adverse/negative outcomes, emerald for favorable).
+ */
+function SlippageSummary({ stats }: { stats: SlippageStats }) {
+  if (stats.count === 0) return null;
+  const avgTone = stats.averagePips === null || stats.averagePips === 0 ? undefined : stats.averagePips > 0 ? "negative" : "positive";
+  const worstIsAdverse = stats.worstAdversePips !== null && stats.worstAdversePips > 0;
+  const bestIsFavorable = stats.bestFavorablePips !== null && stats.bestFavorablePips < 0;
+
+  return (
+    <div>
+      <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Execution quality (slippage)</h2>
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+        <StatTile label="Fills measured" value={String(stats.count)} />
+        <StatTile label="Average slippage" value={formatPips(stats.averagePips)} tone={avgTone} />
+        <StatTile label="Adverse fills" value={`${stats.adverseRate.toFixed(0)}%`} tone={stats.adverseRate > 50 ? "negative" : undefined} />
+        <StatTile label="Worst adverse" value={formatPips(stats.worstAdversePips)} tone={worstIsAdverse ? "negative" : "positive"} />
+        <StatTile label="Best favorable" value={formatPips(stats.bestFavorablePips)} tone={bestIsFavorable ? "positive" : "negative"} />
+      </div>
+    </div>
+  );
+}
+
+function SlippageBreakdownTable({ breakdown }: { breakdown: Record<string, SlippageStats> }) {
+  const rows = Object.entries(breakdown).sort((a, b) => b[1].count - a[1].count);
+  if (rows.length === 0) return null;
+
+  return (
+    <div>
+      <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Slippage by pair</h2>
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-zinc-900">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-zinc-500">
+              <th className="px-3 py-2 font-medium">Pair</th>
+              <th className="px-3 py-2 font-medium">Fills</th>
+              <th className="px-3 py-2 font-medium">Avg slippage</th>
+              <th className="px-3 py-2 font-medium">Adverse rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([pair, stats]) => (
+              <tr key={pair} className="border-b border-white/5 last:border-0">
+                <td className="px-3 py-2 font-medium text-zinc-200">{pair}</td>
+                <td className="px-3 py-2 tabular-nums text-zinc-300">{stats.count}</td>
+                <td
+                  className={`px-3 py-2 tabular-nums ${
+                    stats.averagePips === null || stats.averagePips === 0
+                      ? "text-zinc-500"
+                      : stats.averagePips > 0
+                        ? "text-rose-400"
+                        : "text-emerald-400"
+                  }`}
+                >
+                  {formatPips(stats.averagePips)}
+                </td>
+                <td className="px-3 py-2 tabular-nums text-zinc-300">{stats.adverseRate.toFixed(0)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function EntryRow({ entry }: { entry: JournalEntry }) {
   const isLong = entry.direction === "long";
   const inProfit = entry.profit >= 0;
@@ -459,6 +538,8 @@ export function JournalPanel() {
       {data && <BreakdownTable title="Performance by pair" breakdown={data.breakdownByPair} labelFor={(key) => key} />}
       {data && <BreakdownTable title="Performance by session" breakdown={data.breakdownBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
       {data && <ConfluenceBreakdownTable breakdown={data.breakdownByConfluence} />}
+      {data && <SlippageSummary stats={data.slippage} />}
+      {data && <SlippageBreakdownTable breakdown={data.slippageByPair} />}
 
       <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
         <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Closed trades</h2>

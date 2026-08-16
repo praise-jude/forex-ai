@@ -8,6 +8,8 @@ import {
   type PerformanceFilter,
 } from "@/lib/market/tradeJournal";
 import { getOpenPositions, isAccountConfigured } from "@/lib/market/metaApiConnection";
+import { positionStore } from "@/lib/market/positionStore";
+import { getSlippageBreakdownByPair, getSlippagePoints, getSlippageStats } from "@/lib/market/slippage";
 
 export const runtime = "nodejs";
 
@@ -73,6 +75,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filter = filterFromParams(searchParams);
   const entries = tradeJournal.all();
+  const slippagePoints = getSlippagePoints(positionStore.all());
 
   return Response.json({
     entries,
@@ -91,5 +94,11 @@ export async function GET(request: Request) {
     // "Which confluences actually predict wins" -- see getConfluenceBreakdown's own doc
     // comment. Also always over the full unfiltered ledger, same reasoning as above.
     breakdownByConfluence: getConfluenceBreakdown(entries),
+    // "Is the broker filling me at a worse price than I asked for" -- sourced from
+    // positionStore's execution ledger (requestedEntry/filledEntry), not tradeJournal --
+    // a filled trade has real slippage the instant it fills, whether or not it has
+    // closed yet, so this is a superset of (not scoped to) the closed-trade entries above.
+    slippage: getSlippageStats(slippagePoints),
+    slippageByPair: getSlippageBreakdownByPair(slippagePoints),
   });
 }
