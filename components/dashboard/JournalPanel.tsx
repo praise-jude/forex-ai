@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ConfluenceBreakdownBucket, JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
 import type { SlippageStats } from "@/lib/market/slippage";
+import { ProgressBar } from "./ProgressBar";
 import { formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
@@ -412,8 +413,8 @@ function ConfluenceBreakdownTable({ breakdown }: { breakdown: ConfluenceBreakdow
                 <td className="px-3 py-2 font-medium text-zinc-200">{CONFLUENCE_LABEL[bucket.confluence] ?? bucket.confluence}</td>
                 <td className="px-3 py-2 tabular-nums text-zinc-300">{bucket.sampleSize}</td>
                 {bucket.status === "insufficient_data" ? (
-                  <td colSpan={2} className="px-3 py-2 text-amber-400">
-                    Needs {CONFLUENCE_MIN_SAMPLES}, have {bucket.sampleSize}
+                  <td colSpan={2} className="px-3 py-2">
+                    <ProgressBar value={bucket.sampleSize} max={CONFLUENCE_MIN_SAMPLES} label={`${bucket.sampleSize} of ${CONFLUENCE_MIN_SAMPLES}`} />
                   </td>
                 ) : (
                   <>

@@ -6,6 +6,7 @@ import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopContro
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
 import { SystemHealthPanel } from "@/components/dashboard/SystemHealthPanel";
 import { CorrelationPanel } from "@/components/dashboard/CorrelationPanel";
+import { ProgressBar } from "@/components/dashboard/ProgressBar";
 import { loadExecutionConfig, type ExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
 import {
@@ -93,9 +94,9 @@ function CalibrationRow({ label, bucket, minSamples }: { label: string; bucket: 
         <span className="text-[11px] text-zinc-500">{bucket.sampleSize} closed trades</span>
       </div>
       {bucket.status === "insufficient_data" ? (
-        <p className="mt-1 text-xs text-amber-400">
-          Insufficient data — needs {minSamples}, have {bucket.sampleSize}.
-        </p>
+        <div className="mt-1.5">
+          <ProgressBar value={bucket.sampleSize} max={minSamples} label={`${bucket.sampleSize} of ${minSamples} closed trades`} />
+        </div>
       ) : (
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-400">
           <span>
