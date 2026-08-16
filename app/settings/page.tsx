@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
+import { ConfirmationModeControl } from "@/components/dashboard/ConfirmationModeControl";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
@@ -185,6 +186,9 @@ export default function SettingsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <EngineModeControl />
             <ExecutionPolicyControl />
+          </div>
+          <div className="mt-2">
+            <ConfirmationModeControl />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <KillSwitchControl account="live" />
