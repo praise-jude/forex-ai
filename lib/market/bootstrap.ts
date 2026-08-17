@@ -2,6 +2,7 @@ import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnectio
 import { checkEngineModeAfterRestart } from "./engineMode";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
+import { startConnectionWatchdog } from "./connectionWatchdog";
 import { startNewsFilter } from "./newsFilter";
 import { startCurrencyStrength } from "./currencyStrength";
 import { startRollingCorrelation } from "./rollingCorrelation";
@@ -63,6 +64,7 @@ export function startMarketEngine(): void {
 
   startAutoExecutionListener();
   startConnectionWatcher();
+  startConnectionWatchdog();
   startNewsFilter();
   startCurrencyStrength();
   startRollingCorrelation();

@@ -661,3 +661,44 @@ export function ensureMetaApiConnection(accountKey: AccountKey = "live"): Promis
   }
   return promise;
 }
+
+const FORCE_RECONNECT_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([promise, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))]);
+}
+
+/**
+ * Recovery path for the resync-loop failure mode seen repeatedly in production: the SDK
+ * gets stuck endlessly resynchronizing without ever completing, and nothing in this app
+ * previously re-attempted a connection after boot -- ensureMetaApiConnection's cached
+ * promise means a plain retry there is a no-op, and StreamingMetaApiConnectionInstance's
+ * own connect() is documented as one-shot ("next calls will be ignored"). The only fix
+ * that has ever actually cleared this tonight was a full process redeploy (a fresh
+ * globalThis heap forcing connect() to genuinely rerun). This reproduces that same
+ * "genuinely fresh connection" outcome without a real process restart: close() the
+ * stuck instance (best-effort, time-boxed -- a truly wedged connection might not even
+ * respond to close()) and rebuild via connect() below, which constructs an entirely new
+ * MetaApi/account/connection object graph. Called by connectionWatchdog.ts once a
+ * connection has been unhealthy long enough that it's very unlikely to self-recover.
+ */
+export async function forceReconnect(accountKey: AccountKey): Promise<void> {
+  const state = stateFor(accountKey);
+  const stale = state.connection;
+  // Fail closed immediately, before the rebuild even starts -- getConnectionStatus must
+  // read "disconnected" while this is in flight, never a falsely-healthy stale read off
+  // the connection object we're about to discard.
+  state.connection = null;
+
+  if (stale) {
+    try {
+      await withTimeout(stale.close(), FORCE_RECONNECT_TIMEOUT_MS, `${accountKey} stale connection close()`);
+    } catch (error) {
+      console.error(`[market] error closing stale ${accountKey} connection during forced reconnect (continuing anyway):`, error);
+    }
+  }
+
+  const fresh = connect(accountKey);
+  connectPromises.set(accountKey, fresh);
+  await fresh;
+}
