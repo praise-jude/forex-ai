@@ -110,6 +110,15 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     seriesRef.current?.setData(candles.map(toBar));
   }, []);
 
+  // Clears this pair+timeframe's saved zoom (see handleVisibleRangeChange below) and
+  // re-fits the chart to the full loaded history -- the only way back to "normal" once a
+  // pair has gotten stuck zoomed in, since the saved range otherwise wins on every
+  // future reload/pair-switch (see the reseed effect's savedRange check).
+  const resetZoom = useCallback(() => {
+    window.localStorage.removeItem(visibleRangeStorageKey(pair, timeframe));
+    chartRef.current?.timeScale().fitContent();
+  }, [pair, timeframe]);
+
   // Draws (or clears) the entry/SL/TP/zone price lines and the AI forecast curve for
   // the currently held `prediction` prop, against whatever candle history is currently
   // loaded. Never fabricates a curve for a no_trade evaluation -- there's no entry/TP
@@ -296,6 +305,13 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
+      <button
+        type="button"
+        onClick={resetZoom}
+        className="absolute left-2 top-2 rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400 hover:text-zinc-200"
+      >
+        Reset zoom
+      </button>
       <div
         ref={forecastLabelRef}
         className="pointer-events-none absolute right-2 top-2 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400"

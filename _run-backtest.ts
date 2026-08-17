@@ -5,9 +5,11 @@ async function main() {
   const { backtestRunner, DEFAULT_LOOKBACK_DAYS } = await import("./lib/market/backtest/backtestRunner");
   const { PAIRS } = await import("./lib/market/types");
 
+  const timeframe = (process.argv[2] ?? "15m") as "15m" | "30m" | "1h";
+
   const job = backtestRunner.start({
     pairs: PAIRS,
-    timeframe: "15m",
+    timeframe,
     lookbackDays: DEFAULT_LOOKBACK_DAYS,
     realistic: true,
   });
@@ -16,7 +18,7 @@ async function main() {
     console.error("START ERROR:", job.error);
     process.exit(1);
   }
-  console.error(`started job ${job.id}`);
+  console.error(`started job ${job.id} timeframe=${timeframe}`);
 
   for (;;) {
     const status = backtestRunner.status();
