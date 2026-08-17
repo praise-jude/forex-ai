@@ -98,5 +98,13 @@ function describeReason(reason: NoTradeReason): string {
       const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";
       return `A ${directionWord} setup formed on the higher timeframes, but the most recent 5-minute candle hasn't confirmed it yet -- waiting for M5 price action to agree before entering.`;
     }
+    case "not_ranging":
+      return `Market regime is ${REGIME_LABEL[reason.regime]} -- the range engine only looks for setups when the market is genuinely ranging or consolidating, not trending or breaking out.`;
+    case "no_boundary_touch":
+      return "A recent support/resistance range exists, but the last closed candle hasn't touched either boundary yet -- nothing to react to right now.";
+    case "range_below_threshold": {
+      const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";
+      return `A ${directionWord} boundary touch happened, but the combined confidence (${reason.total.toFixed(0)}%) didn't clear the threshold -- not enough RSI extremity, rejection strength, or range cleanliness together.`;
+    }
   }
 }

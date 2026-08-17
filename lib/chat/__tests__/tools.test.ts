@@ -186,6 +186,7 @@ describe("chat tools -- confirm-phrase safety gates", () => {
       predictionStore.set("EUR/USD", "15m", {
         pair: "EUR/USD",
         timeframe: "15m",
+        source: "smc",
         evaluation: { status: "signal", signal },
         time: Date.now(),
         regime: "strong_uptrend",

@@ -7,6 +7,7 @@ function buildUpdate(overrides: Partial<PredictionUpdate> = {}): PredictionUpdat
   return {
     pair: "GBP/USD", // distinct from other test files' default pair to avoid cross-test collisions on this shared globalThis singleton
     timeframe: "15m",
+    source: "smc",
     evaluation: { status: "signal", signal: buildSignal({ pair: "GBP/USD" }) },
     time: Date.now(),
     regime: "strong_uptrend",
@@ -19,20 +20,20 @@ describe("predictionStore", () => {
   it("set() then get() returns the same update", () => {
     const update = buildUpdate();
     predictionStore.set(update.pair, update.timeframe, update);
-    expect(predictionStore.get(update.pair, update.timeframe)).toEqual(update);
+    expect(predictionStore.get(update.pair, update.timeframe, update.source)).toEqual(update);
   });
 
-  it("get() returns undefined for a pair/timeframe never set", () => {
-    expect(predictionStore.get("USOIL", "15m")).toBeUndefined();
+  it("get() returns undefined for a pair/timeframe/source never set", () => {
+    expect(predictionStore.get("USOIL", "15m", "smc")).toBeUndefined();
   });
 
-  it("set() overwrites the previous value for the same pair+timeframe -- latest only, no history", () => {
+  it("set() overwrites the previous value for the same pair+timeframe+source -- latest only, no history", () => {
     const first = buildUpdate({ time: 1000 });
     const second = buildUpdate({ time: 2000, evaluation: { status: "no_trade", reason: { code: "outside_killzone" } } });
     predictionStore.set("GBP/USD", "15m", first);
     predictionStore.set("GBP/USD", "15m", second);
 
-    expect(predictionStore.get("GBP/USD", "15m")).toEqual(second);
+    expect(predictionStore.get("GBP/USD", "15m", "smc")).toEqual(second);
     expect(predictionStore.all().filter((u) => u.pair === "GBP/USD" && u.timeframe === "15m")).toHaveLength(1);
   });
 
@@ -44,10 +45,25 @@ describe("predictionStore", () => {
     predictionStore.set("GBP/USD", "30m", thirtyMin);
     predictionStore.set("GBP/USD", "1h", oneHour);
 
-    expect(predictionStore.get("GBP/USD", "15m")).toEqual(fifteenMin);
-    expect(predictionStore.get("GBP/USD", "30m")).toEqual(thirtyMin);
-    expect(predictionStore.get("GBP/USD", "1h")).toEqual(oneHour);
+    expect(predictionStore.get("GBP/USD", "15m", "smc")).toEqual(fifteenMin);
+    expect(predictionStore.get("GBP/USD", "30m", "smc")).toEqual(thirtyMin);
+    expect(predictionStore.get("GBP/USD", "1h", "smc")).toEqual(oneHour);
     expect(predictionStore.forPair("GBP/USD")).toHaveLength(3);
+  });
+
+  it("set() keeps separate entries per source for the same pair+timeframe -- two independent engines never overwrite each other", () => {
+    const smcUpdate = buildUpdate({ source: "smc", time: 1000 });
+    const rangeUpdate = buildUpdate({
+      source: "mean_reversion",
+      time: 2000,
+      evaluation: { status: "no_trade", reason: { code: "not_ranging", regime: "strong_uptrend" } },
+    });
+    predictionStore.set("GBP/USD", "15m", smcUpdate);
+    predictionStore.set("GBP/USD", "15m", rangeUpdate);
+
+    expect(predictionStore.get("GBP/USD", "15m", "smc")).toEqual(smcUpdate);
+    expect(predictionStore.get("GBP/USD", "15m", "mean_reversion")).toEqual(rangeUpdate);
+    expect(predictionStore.forPair("GBP/USD").filter((u) => u.timeframe === "15m")).toHaveLength(2);
   });
 
   it("forPair() returns an empty array for a pair never set", () => {

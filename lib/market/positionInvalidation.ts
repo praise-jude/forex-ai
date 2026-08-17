@@ -4,15 +4,17 @@ import { positionStore } from "./positionStore";
 import { closePosition } from "./metaApiConnection";
 import { mark as markInvalidation } from "./invalidationMarker";
 import { markPending, clearPending } from "./pendingInvalidationClose";
+import { loadExecutionConfig } from "./executionConfig";
 
 /**
  * Pure matching logic: which currently-open trades does this fresh signal invalidate?
  * Same pair AND timeframe (three signal engines run concurrently per pair, see
  * metaApiConnection.ts's own SIGNAL_TIMEFRAMES) and the OPPOSITE direction -- across
  * both accounts, since a live position and a demo position can both be open on the same
- * pair/timeframe independently. The caller is responsible for only ever passing an
- * `source === "smc"` signal here (see startPositionInvalidation) -- this function
- * doesn't re-check that, since it operates purely on already-filtered inputs.
+ * pair/timeframe independently. The caller is responsible for only ever passing a fully
+ * qualified signal here (see startPositionInvalidation's own source/rangeEngineEnabled
+ * gating) -- this function doesn't re-check that, since it operates purely on
+ * already-filtered inputs.
  */
 export function findInvalidatedTrades(signal: Signal, openTrades: ExecutedTrade[]): ExecutedTrade[] {
   const oppositeDirection = signal.direction === "long" ? "short" : "long";
@@ -35,18 +37,26 @@ let started = false;
  * position, never a partial/ambiguous read. Deliberately excludes TradingView-sourced
  * signals (source !== "smc"), which never went through Signer B confirmation at all --
  * reusing autoExecutionListener.ts's own identical guard, for the identical reason.
+ *
+ * source === "mean_reversion" (rangeEngine.ts) is included too, but gated per-trade on
+ * executionConfig.ts's rangeEngineEnabled for that trade's own account -- until that
+ * engine is explicitly turned on for an account, its signals must not affect real
+ * positions there at all, invalidation included.
  */
 export function startPositionInvalidation(): void {
   if (started) return;
   started = true;
 
   eventBus.subscribe((event) => {
-    if (event.type !== "signal" || event.signal.source !== "smc") return;
+    if (event.type !== "signal") return;
+    if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion") return;
 
     const openTrades = positionStore.all().filter((t) => t.status === "filled");
     const invalidated = findInvalidatedTrades(event.signal, openTrades);
 
     for (const trade of invalidated) {
+      if (event.signal.source === "mean_reversion" && !loadExecutionConfig(trade.account).rangeEngineEnabled) continue;
+
       const brokerPositionId = trade.brokerPositionId;
       if (!brokerPositionId) continue;
 

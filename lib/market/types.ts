@@ -107,7 +107,12 @@ export type Confluence =
   | "multi_timeframe"
   | "supertrend"
   | "currency_strength"
-  | "rsi_divergence";
+  | "rsi_divergence"
+  // rangeEngine.ts (mean-reversion) confluences below -- SMC never produces these.
+  | "range_regime"
+  | "boundary_touch"
+  | "rsi_extreme"
+  | "rejection_candle";
 
 export const CONFLUENCES: Confluence[] = [
   "liquidity_sweep",
@@ -128,11 +133,15 @@ export const CONFLUENCES: Confluence[] = [
   "supertrend",
   "currency_strength",
   "rsi_divergence",
+  "range_regime",
+  "boundary_touch",
+  "rsi_extreme",
+  "rejection_candle",
 ];
 
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
-export type SignalSource = "smc" | "tradingview";
+export type SignalSource = "smc" | "tradingview" | "mean_reversion";
 
 /** The current candle's classified market condition -- see marketRegime.ts for how
  * this is derived (existing ADX/ATR/EMA reads only, no new indicator). Explanatory
@@ -229,7 +238,21 @@ export type NoTradeReason =
   // Everything else passed (including Signer B agreement) but the most recently closed
   // 5-minute candle didn't confirm the setup's own direction -- see m5Confirmation.ts.
   // An on-demand REST check at decision time, never a live subscription.
-  | { code: "m5_not_confirmed"; impliedDirection: "long" | "short" };
+  | { code: "m5_not_confirmed"; impliedDirection: "long" | "short" }
+  // --- rangeEngine.ts (mean-reversion) reasons below -- SMC never produces these. ---
+  // The market isn't genuinely ranging right now (see marketRegime.ts) -- a trending or
+  // breakout regime is exactly the condition a mean-reversion setup needs to avoid, not
+  // an arbitrary filter the way SMC's killzone gate is.
+  | { code: "not_ranging"; regime: MarketRegime }
+  // A support/resistance range exists, but the most recently closed candle didn't
+  // actually touch either boundary -- there's nothing to react to yet.
+  | { code: "no_boundary_touch" }
+  // A genuine boundary touch happened, but the weighted score (RSI extremity,
+  // rejection-candle quality, range cleanliness, entry proximity) didn't clear the
+  // shared tierOf floor -- a single total, not SMC's two-dimension DimensionScore
+  // shape, since this engine scores one combined dimension, not direction+entry
+  // separately.
+  | { code: "range_below_threshold"; total: number; impliedDirection: "long" | "short" };
 
 export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 
@@ -252,6 +275,7 @@ export type StreamEvent =
       type: "prediction";
       pair: Pair;
       timeframe: Timeframe;
+      source: SignalSource;
       evaluation: SignalEvaluation;
       time: number;
       regime: MarketRegime;
@@ -264,6 +288,10 @@ export type StreamEvent =
 export interface PredictionUpdate {
   pair: Pair;
   timeframe: Timeframe;
+  /** Which engine produced this evaluation -- predictionStore keys on this too (see
+   * predictionStore.ts), so two engines evaluating the same pair/timeframe never
+   * silently overwrite each other's latest status. */
+  source: SignalSource;
   evaluation: SignalEvaluation;
   time: number;
   /** Computed independently of `evaluation` (see marketRegime.ts) -- shown for every

@@ -67,6 +67,7 @@ describe("loadExecutionConfig", () => {
       confidenceSizingEnabled: false,
       riskMultiplierBuy: 1.0,
       riskMultiplierStrongBuy: 1.5,
+      rangeEngineEnabled: false,
       killSwitchFile: ".trading-paused",
     });
     expect(loadExecutionConfig("demo")).toEqual({
@@ -88,6 +89,7 @@ describe("loadExecutionConfig", () => {
       confidenceSizingEnabled: false,
       riskMultiplierBuy: 1.0,
       riskMultiplierStrongBuy: 1.5,
+      rangeEngineEnabled: false,
       killSwitchFile: ".trading-paused-demo",
     });
   });

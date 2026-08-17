@@ -3,6 +3,7 @@ import { attemptExecution } from "./executionEngine";
 import { autoExecutionAccount, getEngineMode } from "./engineMode";
 import { getAccountInformation } from "./metaApiConnection";
 import { requiresAcknowledgement, riskState } from "./riskState";
+import { loadExecutionConfig } from "./executionConfig";
 
 let started = false;
 
@@ -21,16 +22,24 @@ let started = false;
  * risk auto-firing a TradingView alert against the demo account as a side effect of
  * whatever engine mode happens to be selected -- behavior that integration was never
  * designed for.
+ *
+ * source === "mean_reversion" (rangeEngine.ts) additionally requires
+ * executionConfig.ts's rangeEngineEnabled for the target account -- that engine has no
+ * backtest history yet, so it ships detection-only (visible on the dashboard, never
+ * executed) until explicitly turned on.
  */
 export function startAutoExecutionListener(): void {
   if (started) return;
   started = true;
 
   eventBus.subscribe((event) => {
-    if (event.type !== "signal" || event.signal.source !== "smc") return;
+    if (event.type !== "signal") return;
+    if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion") return;
 
     const accountKey = autoExecutionAccount(getEngineMode());
     if (!accountKey) return; // ANALYSIS: no-op
+
+    if (event.signal.source === "mean_reversion" && !loadExecutionConfig(accountKey).rangeEngineEnabled) return;
 
     // A halt/cooldown that has since cleared on its own (day rollover, cooldown timer)
     // still blocks auto-execution here until a human explicitly acknowledges it (see

@@ -131,7 +131,7 @@ export function buildTools(ctx: ToolContext) {
             // regime read and quality breakdown off those would fabricate meaning
             // that isn't there, so both stay undefined for that source (same
             // exclusion SignerBBreakdown.tsx/SetupQualityBreakdown.tsx apply).
-            const regime = signal.source === "tradingview" ? undefined : predictionStore.get(signal.pair, signal.timeframe)?.regime;
+            const regime = signal.source === "tradingview" ? undefined : predictionStore.get(signal.pair, signal.timeframe, signal.source)?.regime;
             return {
               id: signal.id,
               pair: signal.pair,

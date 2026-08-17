@@ -17,6 +17,7 @@ import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
 import { eventBus } from "./eventBus";
 import { evaluateSignal } from "./signalEngine";
+import { evaluateRangeSignal } from "./rangeEngine";
 import { confirmsDirection, M5_CONFIRMATION_BARS } from "./m5Confirmation";
 import { publishSignal } from "./signalPublisher";
 import { predictionStore } from "./predictionStore";
@@ -137,8 +138,8 @@ class MarketSyncListener extends SynchronizationListener {
         // against.
         const lastClosed = priorSeries[priorSeries.length - 1];
         const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
-        predictionStore.set(pair, timeframe, { pair, timeframe, evaluation, time, regime, trends });
-        eventBus.publish({ type: "prediction", pair, timeframe, evaluation, time, regime, trends });
+        predictionStore.set(pair, timeframe, { pair, timeframe, source: "smc", evaluation, time, regime, trends });
+        eventBus.publish({ type: "prediction", pair, timeframe, source: "smc", evaluation, time, regime, trends });
         if (evaluation.status === "signal") {
           publishSignal(evaluation.signal);
           // Snapshot the decision context now, while it's still real -- signalStore
@@ -163,6 +164,46 @@ class MarketSyncListener extends SynchronizationListener {
             confluences: signal.confluences,
           });
         }
+      }
+
+      // rangeEngine.ts's mean-reversion engine, evaluated independently alongside SMC
+      // on the exact same closed candle -- 15m only for now (see rangeEngine.ts's own
+      // doc comment). No M5 confirmation gate, no trade-journal setup-quality scoring
+      // (scoreSetupQuality is SMC-shaped -- e.g. it rewards a "strong_uptrend"/
+      // "strong_downtrend" regime, the opposite of what this engine wants, so applying
+      // it here would produce a meaningless score, not a real one). Journal/calibration
+      // integration is a natural follow-up once rangeEngineEnabled is actually turned
+      // on for real execution.
+      if (barJustClosed && timeframe === "15m") {
+        const rangeEvaluation = evaluateRangeSignal(priorSeries, pair, timeframe);
+        const rangeTime = Date.now();
+        const rangeLastClosed = priorSeries[priorSeries.length - 1];
+        const rangeRegime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, rangeLastClosed.time));
+        const rangeTrends = {
+          d1: emaTrendDirection(candleStore.get(pair, "1d")),
+          h4: emaTrendDirection(candleStore.get(pair, "4h")),
+          h1: emaTrendDirection(candleStore.get(pair, "1h")),
+        };
+        predictionStore.set(pair, timeframe, {
+          pair,
+          timeframe,
+          source: "mean_reversion",
+          evaluation: rangeEvaluation,
+          time: rangeTime,
+          regime: rangeRegime,
+          trends: rangeTrends,
+        });
+        eventBus.publish({
+          type: "prediction",
+          pair,
+          timeframe,
+          source: "mean_reversion",
+          evaluation: rangeEvaluation,
+          time: rangeTime,
+          regime: rangeRegime,
+          trends: rangeTrends,
+        });
+        if (rangeEvaluation.status === "signal") publishSignal(rangeEvaluation.signal);
       }
     }
   }

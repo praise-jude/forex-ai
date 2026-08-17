@@ -7,6 +7,7 @@ function buildUpdate(overrides: Partial<PredictionUpdate> = {}): PredictionUpdat
   return {
     pair: "EUR/USD",
     timeframe: "15m",
+    source: "smc",
     evaluation: { status: "no_trade", reason: { code: "no_setup" } },
     time: Date.now(),
     regime: "range",

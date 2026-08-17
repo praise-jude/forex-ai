@@ -63,6 +63,13 @@ export interface ExecutionConfig {
    * same posture as every other weighted constant in this codebase (e.g.
    * setupQualityScore.ts's dimension weights). */
   riskMultiplierStrongBuy: number;
+  /** Master on/off switch for rangeEngine.ts's mean-reversion signals ever reaching
+   * autoExecutionListener.ts/positionInvalidation.ts. Defaults OFF, same "off until
+   * explicitly configured" posture as partialCloseEnabled -- this engine has zero
+   * backtest history yet (unlike SMC, which got hours of validation the night it
+   * shipped), so it stays detection-only (visible on the dashboard, journaled, never
+   * executed) until deliberately turned on. */
+  rangeEngineEnabled: boolean;
 }
 
 // A non-finite or non-positive multiplier can't reflect a real risk-scaling intent (a
@@ -124,6 +131,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     confidenceSizingEnabled: envBoolean(`${prefix}CONFIDENCE_SIZING_ENABLED`, false),
     riskMultiplierBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_BUY`, 1.0),
     riskMultiplierStrongBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_STRONG_BUY`, 1.5),
+    rangeEngineEnabled: envBoolean(`${prefix}RANGE_ENGINE_ENABLED`, false),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

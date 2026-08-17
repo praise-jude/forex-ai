@@ -52,7 +52,7 @@ interface Zone {
   sinceIndex: number;
 }
 
-interface HigherTimeframeCandles {
+export interface HigherTimeframeCandles {
   h1: Candle[];
   h4: Candle[];
   d1: Candle[];

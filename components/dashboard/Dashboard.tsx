@@ -201,6 +201,7 @@ export function Dashboard() {
         const update = {
           pair: event.pair,
           timeframe: event.timeframe,
+          source: event.source,
           evaluation: event.evaluation,
           time: event.time,
           regime: event.regime,

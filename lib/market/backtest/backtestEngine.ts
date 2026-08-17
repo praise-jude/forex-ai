@@ -202,6 +202,11 @@ export interface RunBacktestInput {
    * byte-identical to before this feature existed. */
   realistic?: RealisticSimConfig;
   onBar?: (done: number, total: number) => void;
+  /** Defaults to SMC's own evaluateSignal -- overridable so other engines (e.g.
+   * rangeEngine.ts's mean-reversion evaluator, via its own evaluateSignal-shaped
+   * adapter) can reuse this exact same window-walking/outcome-simulation scaffolding
+   * instead of forking it. */
+  evaluate?: typeof evaluateSignal;
 }
 
 /**
@@ -214,6 +219,7 @@ export interface RunBacktestInput {
  */
 export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
   const { pair, timeframe, primary, h1, h4, d1, windowStart, windowEnd } = input;
+  const evaluate = input.evaluate ?? evaluateSignal;
   const results: BacktestBarResult[] = [];
 
   const startIndex = primary.findIndex((c) => c.time >= windowStart);
@@ -236,7 +242,7 @@ export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
       d1: closedAsOf(d1, barCloseTime, "1d"),
     };
 
-    const evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes, {
+    const evaluation = evaluate(priorSeries, pair, timeframe, higherTimeframes, {
       usdStrength: { status: "unavailable" },
       newsStatus: { status: "clear" },
     });
