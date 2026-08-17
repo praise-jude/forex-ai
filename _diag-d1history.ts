@@ -2,7 +2,7 @@ import { config } from "dotenv";
 config({ path: "./.env.local" });
 
 async function main() {
-  const { getBacktestAccount, loadHistoricalRange } = await import("./lib/market/backtest/historyLoader.ts");
+  const { getBacktestAccount, loadHistoricalRange } = await import("./lib/market/backtest/historyLoader");
 
   const account = await getBacktestAccount();
   const now = new Date();

@@ -2,8 +2,8 @@ import { config } from "dotenv";
 config({ path: "./.env.local" });
 
 async function main() {
-  const { backtestRunner, DEFAULT_LOOKBACK_DAYS } = await import("./lib/market/backtest/backtestRunner.ts");
-  const { PAIRS } = await import("./lib/market/types.ts");
+  const { backtestRunner, DEFAULT_LOOKBACK_DAYS } = await import("./lib/market/backtest/backtestRunner");
+  const { PAIRS } = await import("./lib/market/types");
 
   const job = backtestRunner.start({
     pairs: PAIRS,

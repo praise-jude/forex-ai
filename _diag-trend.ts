@@ -7,9 +7,9 @@ const LOOKBACK_DAYS = 60;
 const TIMEFRAME = "15m" as const;
 
 async function main() {
-  const { getBacktestAccount, loadHistoricalRange } = await import("./lib/market/backtest/historyLoader.ts");
-  const { runBacktest } = await import("./lib/market/backtest/backtestEngine.ts");
-  const { PAIRS } = await import("./lib/market/types.ts");
+  const { getBacktestAccount, loadHistoricalRange } = await import("./lib/market/backtest/historyLoader");
+  const { runBacktest } = await import("./lib/market/backtest/backtestEngine");
+  const { PAIRS } = await import("./lib/market/types");
 
   const account = await getBacktestAccount();
   const windowEnd = Date.now();
