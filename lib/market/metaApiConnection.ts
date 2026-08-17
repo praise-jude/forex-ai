@@ -26,6 +26,7 @@ import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
 import { sendNotification } from "./pushNotifier";
+import { isPending } from "./pendingInvalidationClose";
 import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
 import { detectMarketRegime } from "./marketRegime";
@@ -463,9 +464,16 @@ export function getSymbolTradingInfo(pair: Pair, accountKey: AccountKey = "live"
   return { tradeMode: spec.tradeMode, stopsLevel: spec.stopsLevel };
 }
 
-/** Total open positions on the account, including any not opened by this app — used for risk limits. */
+/** Total open positions on the account, including any not opened by this app — used for
+ * risk limits. Excludes a position mid-close from a fresh invalidation exit (see
+ * pendingInvalidationClose.ts) — this is MetaApi's own live broker state, which won't
+ * reflect that close until the broker actually processes it, and this is the only
+ * caller of this function (executionEngine.ts's maxConcurrentPositions check), so the
+ * exclusion can't mislead any other reader of "how many positions are open right now"
+ * (getOpenPositions below is unaffected, deliberately). */
 export function getOpenPositionCount(accountKey: AccountKey = "live"): number {
-  return stateFor(accountKey).connection?.terminalState.positions.length ?? 0;
+  const positions = stateFor(accountKey).connection?.terminalState.positions ?? [];
+  return positions.filter((p) => !isPending(String(p.id))).length;
 }
 
 /** Open positions mapped to our tracked pairs only (skips symbols outside PAIRS, e.g. opened manually). */

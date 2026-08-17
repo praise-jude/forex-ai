@@ -3,6 +3,7 @@ import { eventBus } from "./eventBus";
 import { positionStore } from "./positionStore";
 import { closePosition } from "./metaApiConnection";
 import { mark as markInvalidation } from "./invalidationMarker";
+import { markPending, clearPending } from "./pendingInvalidationClose";
 
 /**
  * Pure matching logic: which currently-open trades does this fresh signal invalidate?
@@ -49,6 +50,15 @@ export function startPositionInvalidation(): void {
       const brokerPositionId = trade.brokerPositionId;
       if (!brokerPositionId) continue;
 
+      // Marked synchronously, before the close request even goes out -- this same
+      // fired signal's own new (opposite-direction) position is about to run its
+      // maxConcurrentPositions check via autoExecutionListener, an independent
+      // subscriber to this same event. getOpenPositionCount reads MetaApi's live
+      // broker position list, which won't reflect this close until the broker
+      // actually processes it -- without this mark, the reversal's new leg could be
+      // blocked by the exact slot this close is in the middle of vacating.
+      markPending(brokerPositionId);
+
       closePosition(brokerPositionId, trade.account)
         .then((result) => {
           if (result.success) {
@@ -63,6 +73,13 @@ export function startPositionInvalidation(): void {
         })
         .catch((error: unknown) => {
           console.error(`[position-invalidation] error closing ${trade.pair} (${brokerPositionId}, ${trade.account}):`, error);
+        })
+        .finally(() => {
+          // Cleared either way -- a failed close means the position is still
+          // genuinely open and must count again; a successful one means MetaApi's
+          // own terminalState will reflect it directly from here on, this mark's
+          // job is done.
+          clearPending(brokerPositionId);
         });
     }
   });
