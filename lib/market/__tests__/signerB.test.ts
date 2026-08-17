@@ -60,7 +60,7 @@ describe("evaluateSignerB", () => {
   });
 
   it("is neutral with confidence 0 when every factor is unavailable/excluded (never a fabricated lean)", () => {
-    const candles = flatCandles(50); // < 200, EMA trend excluded (neutral)
+    const candles = flatCandles(50); // flat price -- EMA20/EMA50 equal, EMA trend excluded (neutral)
     const result = evaluateSignerB({
       candles,
       pair: PAIR,

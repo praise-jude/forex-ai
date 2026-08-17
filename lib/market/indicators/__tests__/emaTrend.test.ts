@@ -16,15 +16,15 @@ function trendingCandles(count: number, direction: "up" | "down", start = 1): Ca
 }
 
 describe("emaTrendDirection", () => {
-  it("is neutral with fewer than 200 candles (pure extraction of the prior private behavior)", () => {
-    expect(emaTrendDirection(trendingCandles(50, "up"))).toBe("neutral");
+  it("is neutral with fewer than 50 candles (the EMA50 warmup floor)", () => {
+    expect(emaTrendDirection(trendingCandles(30, "up"))).toBe("neutral");
   });
 
-  it("reads bullish when EMA50 is above EMA200 in a sustained uptrend", () => {
+  it("reads bullish when EMA20 is above EMA50 in a sustained uptrend", () => {
     expect(emaTrendDirection(trendingCandles(250, "up"))).toBe("bullish");
   });
 
-  it("reads bearish when EMA50 is below EMA200 in a sustained downtrend", () => {
+  it("reads bearish when EMA20 is below EMA50 in a sustained downtrend", () => {
     expect(emaTrendDirection(trendingCandles(250, "down", 2))).toBe("bearish");
   });
 });
