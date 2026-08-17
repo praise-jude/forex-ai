@@ -19,6 +19,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A backtest walks dozens of pages across every requested pair/timeframe over several
+// minutes -- long enough that a single transient network blip (DNS hiccup, reset
+// connection) on any one page used to fail the ENTIRE job, discarding several minutes
+// of otherwise-successful work for every other pair. Retried here instead, so one blip
+// doesn't cost the whole run.
+const MAX_FETCH_RETRIES = 3;
+const RETRY_BACKOFF_MS = 2000;
+
+// Only network-level connectivity errors are retried -- a legitimate application-level
+// rejection (bad symbol, invalid timeframe, auth failure) should surface immediately,
+// never be silently retried into a misleadingly-late failure.
+function isRetryableFetchError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up/i.test(message);
+}
+
+async function getHistoricalCandlesWithRetry(
+  account: MetatraderAccount,
+  symbol: string,
+  timeframe: Timeframe,
+  cursor: Date,
+  barCount: number
+): ReturnType<MetatraderAccount["getHistoricalCandles"]> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await account.getHistoricalCandles(symbol, timeframe, cursor, barCount);
+    } catch (error) {
+      if (!isRetryableFetchError(error) || attempt >= MAX_FETCH_RETRIES - 1) throw error;
+      console.error(`[backtest] transient fetch error for ${symbol} ${timeframe} (attempt ${attempt + 1}/${MAX_FETCH_RETRIES}), retrying:`, error);
+      await sleep(RETRY_BACKOFF_MS * (attempt + 1));
+    }
+  }
+}
+
 /**
  * A fresh, read-only account handle for historical data only -- deliberately NEVER
  * obtained through metaApiConnection.ts's stored streaming connection. This keeps a
@@ -57,7 +91,7 @@ export async function loadHistoricalRange(
   let cursor = to;
 
   for (let page = 0; page < MAX_PAGES && cursor.getTime() > from.getTime(); page++) {
-    const raw = await account.getHistoricalCandles(symbol, timeframe, cursor, MAX_BARS_PER_CALL);
+    const raw = await getHistoricalCandlesWithRetry(account, symbol, timeframe, cursor, MAX_BARS_PER_CALL);
     if (raw.length === 0) break;
 
     let earliestTime = cursor.getTime();

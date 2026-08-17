@@ -57,7 +57,7 @@ export type ExecutionPolicyCheckResult = { allowed: true } | { allowed: false; c
 
 /**
  * Pure. A policy floor sitting on top of an already-computed signal -- it never changes
- * how a signal is scored (confidenceScore.ts's 95/90/80 tier boundaries) or how its
+ * how a signal is scored (confidenceScore.ts's 90/80/70 tier boundaries) or how its
  * take-profit targets were picked (signalEngine.ts's RR constants), both of which stay
  * fixed, tested constants. This only decides whether an otherwise-valid signal clears
  * the operator's own configured selectivity bar before being allowed to execute.

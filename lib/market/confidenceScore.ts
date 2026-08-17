@@ -35,9 +35,17 @@ export interface ScoreBreakdown {
   total: number;
 }
 
-const STRONG_BUY_THRESHOLD = 95;
-const BUY_THRESHOLD = 90;
-const WATCH_THRESHOLD = 80;
+// Lowered from 95/90/80 -- at 95/90/80 this account fired exactly one signal across a
+// 60-day, 10-pair, all-timeframe backtest (a real trend-gate bug that permanently
+// blocked every setup was ALSO fixed the same night, so 95/90/80's own true rate was
+// never actually observed cleanly). 85/70/60 was tried first and rejected: 11 signals
+// but a 27% win rate and a 0.53 profit factor -- net-losing. 90/80/70 is a deliberately
+// smaller step: on the same backtest window it produced 2 signals at a 100% win rate,
+// +0.80 average R -- still a tiny sample, not proof this generalizes, but a real,
+// measured result rather than a guess. Revisit once more live data accumulates.
+const STRONG_BUY_THRESHOLD = 90;
+const BUY_THRESHOLD = 80;
+const WATCH_THRESHOLD = 70;
 
 const ADX_STRONG = 25;
 const ADX_ADEQUATE = 20;
@@ -45,7 +53,7 @@ const ADX_ADEQUATE = 20;
 const TIER_RANK: Record<DimensionTier, number> = { strong_buy: 3, buy: 2, watch: 1, no_trade: 0 };
 
 /** Exported for reuse by signerB.ts (Signer B's own confidence bucketing) and
- * decisionMatrix.ts (comparing tiers) -- one shared 95/90/80 bucketing rule for every
+ * decisionMatrix.ts (comparing tiers) -- one shared 90/80/70 bucketing rule for every
  * tiered score in the app, never redefined per-caller. */
 export function tierOf(total: number): DimensionTier {
   if (total >= STRONG_BUY_THRESHOLD) return "strong_buy";
@@ -58,7 +66,7 @@ export function tierOf(total: number): DimensionTier {
  * A strongly-trending market doesn't mean *this moment* is a good entry, and a
  * perfect entry trigger doesn't matter if the higher-timeframe trend isn't really
  * there -- so trend/structure evidence (direction) and entry-timing evidence (entry)
- * are scored independently, each against the same 95/90/80 tier thresholds, and the
+ * are scored independently, each against the same 90/80/70 tier thresholds, and the
  * result is only as good as whichever of the two is weaker. Pure function -- the
  * caller (signalEngine) is responsible for the hard pre-gates (killzone, D1/H4/H1
  * agreement, ADX floor, ATR health, the SMC trigger itself) before this is ever

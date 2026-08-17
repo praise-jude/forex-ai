@@ -113,7 +113,7 @@ describe("assembleSignals", () => {
       direction: "long",
       timeframe: "15m",
       session: "london",
-      tier: "buy",
+      tier: "strong_buy",
       confidence: 90,
     });
     expect(signals[0].confluences).toEqual(
@@ -188,18 +188,18 @@ describe("assembleSignals", () => {
     expect(assembleSignals(buildCandles(), "EUR/USD", "15m", higherTimeframes)).toEqual([]);
   });
 
-  it("downgrades to a watch-tier signal when volume confirmation is missing", () => {
-    // Same pattern that scores 90 ("buy") in the first test, but the final candle's
-    // volume is dropped below the 20-candle average -- an isolated, single-category
-    // change (tickVolume doesn't affect price-based checks like MACD/RSI/candlestick),
-    // costing exactly the 10-point volume weight: 90 - 10 = 80, landing right at the
-    // "watch" floor rather than clearing the 90% "buy" threshold.
+  it("downgrades to a buy-tier signal when volume confirmation is missing", () => {
+    // Same pattern that scores 90 ("strong_buy") in the first test, but the final
+    // candle's volume is dropped below the 20-candle average -- an isolated,
+    // single-category change (tickVolume doesn't affect price-based checks like
+    // MACD/RSI/candlestick), costing exactly the 10-point volume weight: 90 - 10 = 80,
+    // landing right at the "buy" floor rather than clearing the 90% "strong_buy" one.
     const candles = buildCandles({ strongFinalCandle: true });
     const finalCandle = candles[candles.length - 1];
     candles[candles.length - 1] = { ...finalCandle, tickVolume: 1 };
     const signals = assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"));
     expect(signals).toHaveLength(1);
-    expect(signals[0].tier).toBe("watch");
+    expect(signals[0].tier).toBe("buy");
     expect(signals[0].confidence).toBe(80);
   });
 
@@ -221,7 +221,7 @@ describe("evaluateSignal", () => {
     const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
     expect(evaluation.status).toBe("signal");
     if (evaluation.status !== "signal") return;
-    expect(evaluation.signal).toMatchObject({ pair: "EUR/USD", direction: "long", tier: "buy", confidence: 90 });
+    expect(evaluation.signal).toMatchObject({ pair: "EUR/USD", direction: "long", tier: "strong_buy", confidence: 90 });
     // The real order-block/FVG zone bounds behind entry, for chart annotations.
     expect(evaluation.signal.zoneTop).toBeGreaterThanOrEqual(evaluation.signal.zoneBottom!);
     expect(evaluation.signal.entry).toBeGreaterThanOrEqual(evaluation.signal.zoneBottom!);
@@ -303,7 +303,7 @@ describe("evaluateSignal", () => {
       expect(evaluation.status).toBe("signal");
       if (evaluation.status !== "signal") return;
       expect(evaluation.signal.direction).toBe("long");
-      expect(evaluation.signal.tier).toBe("buy");
+      expect(evaluation.signal.tier).toBe("strong_buy");
       expect(evaluation.signal.confidence).toBe(90); // SMC's own score, untouched by Signer B
       expect(evaluation.signal.signerBDirection).toBe("long"); // net vote still long despite currency strength
       expect(evaluation.signal.usdStrengthStatus).toBe("conflicts"); // shown honestly, just doesn't block

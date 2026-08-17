@@ -490,7 +490,10 @@ export function getConfidenceCalibration(entries: JournalEntry[], minSamples: nu
   const withContext = entries.filter((e): e is JournalEntry & { context: SignalContext } => e.context !== null);
 
   return (["buy", "strong_buy"] as const).map((tier) => {
-    const bucketEntries = withContext.filter((e) => (e.context.confidence >= 95 ? "strong_buy" : "buy") === tier);
+    // Reuses tierOf rather than a hardcoded confidence cutoff, so this stays in sync
+    // with confidenceScore.ts's actual STRONG_BUY_THRESHOLD if it's ever tuned again --
+    // a literal duplicate number here already drifted silently out of sync once.
+    const bucketEntries = withContext.filter((e) => tierOf(e.context.confidence) === tier);
     const sampleSize = bucketEntries.length;
     const status: CalibrationStatus = sampleSize >= minSamples ? "calibrated" : "insufficient_data";
 

@@ -18,14 +18,14 @@ function buildInput(overrides: Partial<FullInput> = {}): FullInput {
 }
 
 describe("tierOf", () => {
-  it("buckets at the documented 95/90/80 thresholds", () => {
+  it("buckets at the documented 90/80/70 thresholds", () => {
     expect(tierOf(100)).toBe("strong_buy");
-    expect(tierOf(95)).toBe("strong_buy");
-    expect(tierOf(94.9)).toBe("buy");
-    expect(tierOf(90)).toBe("buy");
-    expect(tierOf(89.9)).toBe("watch");
-    expect(tierOf(80)).toBe("watch");
-    expect(tierOf(79.9)).toBe("no_trade");
+    expect(tierOf(90)).toBe("strong_buy");
+    expect(tierOf(89.9)).toBe("buy");
+    expect(tierOf(80)).toBe("buy");
+    expect(tierOf(79.9)).toBe("watch");
+    expect(tierOf(70)).toBe("watch");
+    expect(tierOf(69.9)).toBe("no_trade");
     expect(tierOf(0)).toBe("no_trade");
   });
 });
@@ -63,12 +63,12 @@ describe("scoreSignal", () => {
     expect(result.total).toBe(result.direction.total);
   });
 
-  it("tiers buy at 90-94 on both dimensions", () => {
-    const result = scoreSignal(buildInput({ adx: 22, volumeAboveAverage: false }));
-    expect(result.direction.total).toBe(92.5); // 45 + 40 + 7.5 (partial ADX credit)
-    expect(result.entry.total).toBe(90); // 35 + 25 + 20 + 10, no volume credit
+  it("tiers buy at 80-89 on both dimensions", () => {
+    const result = scoreSignal(buildInput({ adx: 15, rsiAgrees: false, volumeAboveAverage: false }));
+    expect(result.direction.total).toBe(85); // 45 + 40, no ADX credit below 20
+    expect(result.entry.total).toBe(80); // 35 + 25 + 20, no rsi/volume credit
     expect(result.tier).toBe("buy");
-    expect(result.total).toBe(90);
+    expect(result.total).toBe(80);
   });
 
   it("gives partial ADX credit between 20 and 25, and none below 20 (direction dimension)", () => {

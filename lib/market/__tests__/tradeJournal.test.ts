@@ -375,8 +375,8 @@ describe("getSignalFunnelStats", () => {
 describe("getConfidenceCalibration", () => {
   it("reports insufficient_data below the minimum sample size, with null stats", () => {
     const entries = [
-      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ confidence: 92 }) }),
-      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ confidence: 91 }) }),
+      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ confidence: 82 }) }),
+      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ confidence: 81 }) }),
     ];
 
     const [buy] = getConfidenceCalibration(entries, 30);
@@ -385,8 +385,8 @@ describe("getConfidenceCalibration", () => {
 
   it("reports real calibrated stats once the minimum sample size is reached", () => {
     const entries = [
-      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ confidence: 92 }) }),
-      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ confidence: 91 }) }),
+      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ confidence: 82 }) }),
+      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ confidence: 81 }) }),
     ];
 
     const [buy] = getConfidenceCalibration(entries, 2);
@@ -397,10 +397,10 @@ describe("getConfidenceCalibration", () => {
     expect(buy.expectancy).toBe(buy.averageR); // same number, not a second computation
   });
 
-  it("buckets by the signal's tier at fire time -- confidence >= 95 is strong_buy, below is buy", () => {
+  it("buckets by the signal's tier at fire time -- confidence >= 90 is strong_buy, below is buy", () => {
     const entries = [
-      buildEntry({ id: "1", context: buildContext({ confidence: 94 }) }), // buy
-      buildEntry({ id: "2", context: buildContext({ confidence: 95 }) }), // strong_buy
+      buildEntry({ id: "1", context: buildContext({ confidence: 89 }) }), // buy
+      buildEntry({ id: "2", context: buildContext({ confidence: 90 }) }), // strong_buy
       buildEntry({ id: "3", context: buildContext({ confidence: 100 }) }), // strong_buy
     ];
 
@@ -410,7 +410,7 @@ describe("getConfidenceCalibration", () => {
   });
 
   it("excludes entries with no captured context -- there's no confidence to bucket them by", () => {
-    const entries = [buildEntry({ id: "1", context: buildContext({ confidence: 92 }) }), buildEntry({ id: "2", context: null })];
+    const entries = [buildEntry({ id: "1", context: buildContext({ confidence: 82 }) }), buildEntry({ id: "2", context: null })];
 
     const [buy] = getConfidenceCalibration(entries, 1);
     expect(buy.sampleSize).toBe(1);
@@ -429,8 +429,8 @@ describe("getSignerBCalibration", () => {
   it("buckets by Signer B's own confidence, independently of the fired signal's own confidence", () => {
     const entries = [
       buildEntry({ id: "1", context: buildContext({ confidence: 92, signerBConfidence: 45 }) }), // no_trade
-      buildEntry({ id: "2", context: buildContext({ confidence: 92, signerBConfidence: 85 }) }), // watch
-      buildEntry({ id: "3", context: buildContext({ confidence: 92, signerBConfidence: 92 }) }), // buy
+      buildEntry({ id: "2", context: buildContext({ confidence: 92, signerBConfidence: 75 }) }), // watch
+      buildEntry({ id: "3", context: buildContext({ confidence: 92, signerBConfidence: 85 }) }), // buy
       buildEntry({ id: "4", context: buildContext({ confidence: 92, signerBConfidence: 97 }) }), // strong_buy
     ];
 
@@ -451,8 +451,8 @@ describe("getSignerBCalibration", () => {
 
   it("reports real calibrated stats once the minimum sample size is reached", () => {
     const entries = [
-      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ signerBConfidence: 92 }) }),
-      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ signerBConfidence: 91 }) }),
+      buildEntry({ id: "1", profit: 100, rMultiple: 2, context: buildContext({ signerBConfidence: 82 }) }),
+      buildEntry({ id: "2", profit: -50, rMultiple: -1, context: buildContext({ signerBConfidence: 81 }) }),
     ];
 
     const [, , buy] = getSignerBCalibration(entries, 2);
@@ -464,7 +464,7 @@ describe("getSignerBCalibration", () => {
   });
 
   it("excludes entries with no captured context", () => {
-    const entries = [buildEntry({ id: "1", context: buildContext({ signerBConfidence: 92 }) }), buildEntry({ id: "2", context: null })];
+    const entries = [buildEntry({ id: "1", context: buildContext({ signerBConfidence: 85 }) }), buildEntry({ id: "2", context: null })];
 
     const [, , buy] = getSignerBCalibration(entries, 1);
     expect(buy.sampleSize).toBe(1);

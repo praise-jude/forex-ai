@@ -83,8 +83,8 @@ interface HigherTimeframeCandles {
  * downgrades Signer A's. This is the hard/soft filter split: only a genuine tie or
  * opposite-direction read from Signer B ever blocks a trade.
  *
- * A Signal is constructed at 80%+ (watch — informational only, not executable), 90%+
- * (buy), or 95%+ (strong_buy) on Signer A's own tier, optionally upgraded to strong_buy
+ * A Signal is constructed at 70%+ (watch — informational only, not executable), 80%+
+ * (buy), or 90%+ (strong_buy) on Signer A's own tier, optionally upgraded to strong_buy
  * when Signer B also strongly agrees. Only buy/strong_buy can ever be manually executed
  * (see executionEngine.ts's watch-tier guard) — watch exists purely so a near-miss setup
  * is visible on the dashboard. Call this once per closed candle — never on the still-
