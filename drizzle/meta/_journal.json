@@ -22,6 +22,13 @@
       "when": 1786883033508,
       "tag": "0002_quiet_blur",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786958006754,
+      "tag": "0003_cool_princess_powerful",
+      "breakpoints": true
     }
   ]
 }

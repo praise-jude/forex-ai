@@ -357,6 +357,11 @@ export interface NotificationPrefs {
   connectionAlerts: boolean;
   weeklyDigest: boolean;
   dailyDigest: boolean;
+  /** Fires when a restart (deploy, crash, host restart) silently drops engine mode back
+   * to its safe ANALYSIS default from LIVE/DEMO -- see engineMode.ts's own doc comment
+   * on why that reset is unconditional and deliberate, not a bug. Defaults ON: missing
+   * this one means believing you're still live-trading when you're not. */
+  engineModeAlerts: boolean;
   minConfidence: number;
 }
 
@@ -373,6 +378,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   // opted into; better to have an operator explicitly turn it on than surprise anyone
   // testing on demo with a notification every evening.
   dailyDigest: false,
+  engineModeAlerts: true,
   minConfidence: 80,
 };
 
@@ -385,7 +391,8 @@ export type NotificationCategory =
   | "risk_alert"
   | "connection_alert"
   | "weekly_digest"
-  | "daily_digest";
+  | "daily_digest"
+  | "engine_mode_reset";
 
 export type DevicePlatform = "ios" | "android" | "web";
 

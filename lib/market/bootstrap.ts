@@ -1,4 +1,5 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
+import { checkEngineModeAfterRestart } from "./engineMode";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
 import { startNewsFilter } from "./newsFilter";
@@ -39,6 +40,13 @@ export function startMarketEngine(): void {
   // much further off than a DB round trip.
   Promise.all([signalStore.hydrate(), positionStore.hydrate(), tradeJournal.hydrate()]).catch((error: unknown) => {
     console.error("[market] failed to hydrate signal/execution/journal history from the database:", error);
+  });
+
+  // Fire-and-forget, same reasoning as above -- if this restart silently dropped engine
+  // mode out of LIVE/DEMO back to its safe ANALYSIS default (see engineMode.ts), sends a
+  // push notification rather than that only being discoverable by chance.
+  checkEngineModeAfterRestart().catch((error: unknown) => {
+    console.error("[market] failed to check engine mode across restart:", error);
   });
 
   ensureMetaApiConnection("live").catch((error: unknown) => {

@@ -110,3 +110,15 @@ export const journalSignalOutcomes = pgTable("journal_signal_outcomes", {
   reason: text("reason"),
   timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
 });
+
+// Tiny durability backstop for engineMode.ts's own in-memory mode -- NOT read back to
+// auto-restore LIVE after a restart (that must always require a human to re-confirm,
+// see engineMode.ts's own doc comment on why the in-memory default is unconditional).
+// Read-back is only ever compared against the fresh post-boot default to detect "this
+// restart silently dropped out of LIVE/DEMO", so a push notification can be sent -- see
+// checkEngineModeAfterRestart in engineMode.ts. Always exactly one row (id "singleton").
+export const engineModeState = pgTable("engine_mode_state", {
+  id: text("id").primaryKey(),
+  mode: text("mode").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});

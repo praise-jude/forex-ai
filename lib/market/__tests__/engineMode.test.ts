@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   LIVE_CONFIRMATION_PHRASE,
   autoExecutionAccount,
+  checkEngineModeAfterRestart,
   enableLiveMode,
   getEngineMode,
   manualExecutionAccount,
@@ -40,6 +41,27 @@ describe("engineMode", () => {
     setEngineMode("demo");
     resetEngineModeForTests();
     expect(getEngineMode()).toBe("analysis");
+  });
+});
+
+describe("checkEngineModeAfterRestart", () => {
+  afterEach(() => {
+    resetEngineModeForTests();
+  });
+
+  // Deliberately doesn't assert on whether a notification was sent -- that depends on
+  // whatever was last persisted to the DB by earlier runs/tests, which this suite
+  // doesn't control (see engineMode.ts's own "best-effort, DB may be unconfigured"
+  // posture). What every environment can assert regardless: this never touches the
+  // in-memory mode itself (only setEngineMode/enableLiveMode may), and never throws.
+  it("never mutates the in-memory engine mode", async () => {
+    setEngineMode("demo");
+    await checkEngineModeAfterRestart();
+    expect(getEngineMode()).toBe("demo");
+  });
+
+  it("resolves without throwing regardless of DB configuration", async () => {
+    await expect(checkEngineModeAfterRestart()).resolves.toBeUndefined();
   });
 });
 

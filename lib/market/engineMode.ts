@@ -1,6 +1,29 @@
+import { eq } from "drizzle-orm";
+import { getOptionalDb } from "../db/optionalClient";
+import { engineModeState } from "../db/tradingSchema";
 import type { AccountKey } from "./types";
+import { sendNotification } from "./pushNotifier";
 
 export type EngineMode = "analysis" | "demo" | "live";
+
+const SINGLETON_ID = "singleton";
+
+// Best-effort, fire-and-forget -- never lets a DB hiccup affect the in-memory mode
+// switch itself, same posture as tradeJournal.ts's own persistEntry. This is NOT how
+// mode gets restored after a restart (see the unconditional "analysis" default below
+// for why it must never auto-restore LIVE) -- it exists solely so
+// checkEngineModeAfterRestart can tell "what was this set to right before the process
+// that just booted" apart from "the app has never run before".
+async function persistMode(mode: EngineMode): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+  const row = { id: SINGLETON_ID, mode, updatedAt: new Date() };
+  await db
+    .insert(engineModeState)
+    .values(row)
+    .onConflictDoUpdate({ target: engineModeState.id, set: row })
+    .catch((error: unknown) => console.error("[engineMode] failed to persist mode:", error));
+}
 
 interface EngineModeState {
   mode: EngineMode;
@@ -26,6 +49,7 @@ export function getEngineMode(): EngineMode {
  * "pause needs no confirm, resume does" asymmetry. LIVE must go through enableLiveMode. */
 export function setEngineMode(mode: "analysis" | "demo"): void {
   state.mode = mode;
+  void persistMode(mode);
 }
 
 export const LIVE_CONFIRMATION_PHRASE = "ENABLE LIVE TRADING";
@@ -45,6 +69,7 @@ export function enableLiveMode(confirmationPhrase: string): { ok: true } | { ok:
     return { ok: false, error: "confirmation phrase did not match -- live mode NOT enabled" };
   }
   state.mode = "live";
+  void persistMode("live");
   return { ok: true };
 }
 
@@ -67,4 +92,37 @@ export function manualExecutionAccount(mode: EngineMode): AccountKey {
 export function autoExecutionAccount(mode: EngineMode): AccountKey | null {
   if (mode === "analysis") return null;
   return mode;
+}
+
+/**
+ * Called once from bootstrap.ts, after the module-level default above has already put
+ * `state.mode` at "analysis" for this fresh process. Reads back whatever mode was
+ * persisted right before this restart -- if that was "demo" or "live", this restart
+ * just silently dropped out of it (the intended, unconditional safety behavior, not a
+ * bug -- see the "Always boots to analysis" comment above), so a push notification
+ * fires to make that visible instead of only being discoverable by chance later.
+ * Immediately re-persists "analysis" afterward so a second restart, before anyone has
+ * re-enabled LIVE/DEMO, doesn't notify again for the same already-reported drop.
+ * No-ops silently when DATABASE_URL isn't set, same as every other DB touch in this file.
+ */
+export async function checkEngineModeAfterRestart(): Promise<void> {
+  const db = getOptionalDb();
+  if (!db) return;
+
+  try {
+    const rows = await db.select().from(engineModeState).where(eq(engineModeState.id, SINGLETON_ID)).limit(1);
+    const previousMode = rows[0]?.mode as EngineMode | undefined;
+
+    if (previousMode === "live" || previousMode === "demo") {
+      await sendNotification({
+        category: "engine_mode_reset",
+        title: "JUDE AI — Engine Mode reset to Analysis",
+        body: `A restart dropped Engine Mode from ${previousMode.toUpperCase()} back to ANALYSIS. Auto-trading is OFF until you re-enable it in Settings.`,
+      });
+    }
+  } catch (error) {
+    console.error("[engineMode] failed to check mode across restart:", error);
+  }
+
+  await persistMode("analysis");
 }
