@@ -376,6 +376,10 @@ const CONFLUENCE_LABEL: Record<string, string> = {
   supertrend: "Supertrend",
   currency_strength: "Currency strength",
   rsi_divergence: "RSI divergence",
+  range_regime: "Range regime",
+  boundary_touch: "Boundary touch",
+  rsi_extreme: "RSI extreme",
+  rejection_candle: "Rejection candle",
 };
 
 /**
