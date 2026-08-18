@@ -38,6 +38,7 @@ export function buildSpec(overrides: Partial<SymbolSpec> = {}): SymbolSpec {
     volumeStep: 0.01,
     volumeMin: 0.01,
     volumeMax: 100,
+    point: 0.00001,
     ...overrides,
   };
 }

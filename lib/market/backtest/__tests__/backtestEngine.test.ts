@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { simulateOutcome, simulateRealisticOutcome, type RealisticSimConfig } from "../backtestEngine";
-import { buildSignal } from "../../__tests__/fixtures";
+import { buildSignal, buildSpec } from "../../__tests__/fixtures";
 import type { Candle } from "../../types";
 
 // Long fixture signal: entry 1.105, stopLoss 1.103 (risk 0.002), takeProfit 1.109
@@ -134,27 +134,35 @@ describe("simulateRealisticOutcome", () => {
     expect(realistic).toEqual(idealized);
   });
 
-  it("uses the firing candle's real spread (points -> price via pointSize) over the fixed fraction-of-stop estimate when present", () => {
-    // EUR/USD pointSize = 10^-5 (see symbols.ts's decimals=5) -- 20 points = 0.0002,
-    // the exact same spread cost the "spread worsens..." test above reaches via a 10%
-    // config fraction instead, so this should land on the identical realized R.
+  it("uses the firing candle's real spread (points -> price via the account's own real symbol spec) over the fixed fraction-of-stop estimate when present", () => {
+    // A real EUR/USD-like point size (0.00001) -- 20 points = 0.0002, the exact same
+    // spread cost the "spread worsens..." test above reaches via a 10% config fraction
+    // instead, so this should land on the identical realized R.
     const signal = buildSignal({ direction: "long", entry: 1.105, stopLoss: 1.103, takeProfit: 1.109, takeProfit2: 1.113 });
     const future = [candle({ time: 1000, high: 1.11, low: 1.104 })];
-    const result = simulateRealisticOutcome(signal, future, noSpreadConfig, 20);
+    const config: RealisticSimConfig = { ...noSpreadConfig, specs: new Map([["EUR/USD", buildSpec({ point: 0.00001 })]]) };
+    const result = simulateRealisticOutcome(signal, future, config, 20);
     expect(result.reason).toBe("take_profit");
     // effectiveEntry = 1.105 + 0.0002 = 1.1052; R = (1.109 - 1.1052) / 0.002 = 1.9
     expect(result.rMultiple).toBeCloseTo(1.9);
   });
 
-  it("falls back to the fixed fraction-of-stop estimate when the real spread reading is missing or non-positive", () => {
+  it("falls back to the fixed fraction-of-stop estimate when the real spread reading or the pair's own spec is missing", () => {
     const signal = buildSignal({ direction: "long", entry: 1.105, stopLoss: 1.103, takeProfit: 1.109, takeProfit2: 1.113 });
-    const config: RealisticSimConfig = { ...noSpreadConfig, spreadFractionOfStop: 0.1 };
+    const withSpec: RealisticSimConfig = {
+      ...noSpreadConfig,
+      spreadFractionOfStop: 0.1,
+      specs: new Map([["EUR/USD", buildSpec({ point: 0.00001 })]]),
+    };
+    const withoutSpec: RealisticSimConfig = { ...noSpreadConfig, spreadFractionOfStop: 0.1 };
     const future = [candle({ time: 1000, high: 1.11, low: 1.104 })];
 
-    const withoutReading = simulateRealisticOutcome(signal, future, config, undefined);
-    const withZeroReading = simulateRealisticOutcome(signal, future, config, 0);
+    const withoutReading = simulateRealisticOutcome(signal, future, withSpec, undefined);
+    const withZeroReading = simulateRealisticOutcome(signal, future, withSpec, 0);
+    const withoutSpecAtAll = simulateRealisticOutcome(signal, future, withoutSpec, 20);
     // Same 0.0002 spread cost the fraction-based test above asserts -- R = 1.9.
     expect(withoutReading.rMultiple).toBeCloseTo(1.9);
     expect(withZeroReading.rMultiple).toBeCloseTo(1.9);
+    expect(withoutSpecAtAll.rMultiple).toBeCloseTo(1.9);
   });
 });

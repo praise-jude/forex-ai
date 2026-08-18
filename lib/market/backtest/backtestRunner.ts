@@ -212,6 +212,7 @@ class BacktestRunner {
       let realisticSizing: RealisticSizingConfig | undefined;
       if (job.request.realistic) {
         const liveConfig = loadExecutionConfig("live");
+        const specs = await loadSymbolSpecs(account, job.request.pairs);
         realisticSim = {
           positionManagement: {
             breakEvenTriggerR: liveConfig.breakEvenTriggerR,
@@ -223,12 +224,9 @@ class BacktestRunner {
             partialCloseEnabled: false,
           },
           spreadFractionOfStop: DEFAULT_REALISTIC_SPREAD_FRACTION,
+          specs,
         };
-        realisticSizing = {
-          specs: await loadSymbolSpecs(account, job.request.pairs),
-          equity: DEFAULT_HYPOTHETICAL_EQUITY,
-          riskPct: liveConfig.riskPerTradePct,
-        };
+        realisticSizing = { specs, equity: DEFAULT_HYPOTHETICAL_EQUITY, riskPct: liveConfig.riskPerTradePct };
       }
 
       for (const pair of job.request.pairs) {

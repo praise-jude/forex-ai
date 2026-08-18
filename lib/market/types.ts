@@ -317,6 +317,14 @@ export interface SymbolSpec {
   volumeStep: number;
   volumeMin: number;
   volumeMax: number;
+  /** The broker's own real MT5 "point" size for this symbol (see MetaApi's
+   * MetatraderSymbolSpecification.point) -- the actual price delta one point of a
+   * broker-reported spread reading represents. Read directly from the account's real
+   * spec rather than derived/guessed from decimals(pair), since a broker's quoted
+   * precision doesn't reliably predict its own point convention (see
+   * backtest/historyLoader.ts's loadSymbolSpecs, backtest/backtestEngine.ts's
+   * simulateRealisticOutcome). */
+  point: number;
 }
 
 export interface AccountInfo {

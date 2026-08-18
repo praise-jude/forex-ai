@@ -1,4 +1,4 @@
-import type { Candle, ExecutedTrade, MarketRegime, Pair, Signal, SignalEvaluation, Timeframe } from "../types";
+import type { Candle, ExecutedTrade, MarketRegime, Pair, Signal, SignalEvaluation, SymbolSpec, Timeframe } from "../types";
 import { evaluateSignal } from "../signalEngine";
 import { TIMEFRAME_MS } from "../timeframes";
 import { detectMarketRegime } from "../marketRegime";
@@ -6,7 +6,6 @@ import { calculateAdx } from "../indicators/adx";
 import { calculateAtr } from "../indicators/atr";
 import { evaluatePositionForManagement, type PositionManagementConfig, type PositionManagementState } from "../positionManager";
 import { computeHistoricalUsdStrength } from "../currencyStrength";
-import { pointSize } from "../symbols";
 
 export interface OutcomeSim {
   exitPrice: number;
@@ -84,8 +83,16 @@ export interface RealisticSimConfig {
   /** Fraction of the signal's own stop distance, same convention as
    * executionConfig.ts's maxSpreadFractionOfStop -- worsens the effective entry price
    * (a market buy fills at ask, sell at bid), the one cost simulateOutcome ignores
-   * entirely today. */
+   * entirely today. Used as the fallback whenever a real spread reading/spec isn't
+   * available (see specs below). */
   spreadFractionOfStop: number;
+  /** Real per-pair symbol specs (see historyLoader.ts's loadSymbolSpecs), needed here
+   * for their own real broker `point` size -- the only reliable way to convert a fired
+   * candle's real spread-in-points reading (see Candle.spread) into a price delta. A
+   * broker's own point convention isn't reliably derivable from decimals(pair) (that
+   * was tried and produced garbage R-multiples on some pairs -- see this feature's own
+   * fix), so this must come from the account's real spec, never guessed. */
+  specs?: Map<Pair, SymbolSpec>;
 }
 
 /**
@@ -110,18 +117,20 @@ export function simulateRealisticOutcome(
   future: Candle[],
   config: RealisticSimConfig,
   /** The firing candle's own broker-reported spread, in points (see historyLoader.ts's
-   * Candle.spread) -- when present and positive, used instead of the fixed
-   * spreadFractionOfStop estimate, converted to a price delta via symbols.ts's
-   * pointSize. Falls back to the estimate when missing/zero (older cached history
-   * fetched before spread-plumbing existed, or a broker that genuinely reports 0 on
-   * that candle) -- never fabricated as a real reading either way. */
+   * Candle.spread) -- when present and positive, AND a real symbol spec (config.specs)
+   * is available for this pair to convert it with, used instead of the fixed
+   * spreadFractionOfStop estimate. Falls back to the estimate whenever either is
+   * missing (older cached history fetched before spread-plumbing existed, a broker that
+   * genuinely reports 0 on that candle, or a pair whose spec fetch failed) -- never
+   * fabricated as a real reading either way. */
   realSpreadPoints?: number
 ): OutcomeSim {
   const isLong = signal.direction === "long";
   const stopDistance = Math.abs(signal.entry - signal.stopLoss);
 
+  const point = config.specs?.get(signal.pair)?.point;
   const spreadCost =
-    realSpreadPoints && realSpreadPoints > 0 ? realSpreadPoints * pointSize(signal.pair) : config.spreadFractionOfStop * stopDistance;
+    realSpreadPoints && realSpreadPoints > 0 && point ? realSpreadPoints * point : config.spreadFractionOfStop * stopDistance;
   const effectiveEntry = isLong ? signal.entry + spreadCost : signal.entry - spreadCost;
 
   const pseudoTrade: ExecutedTrade = {

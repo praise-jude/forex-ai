@@ -136,7 +136,13 @@ export async function loadSymbolSpecs(account: MetatraderAccount, pairs: Pair[])
     for (const pair of pairs) {
       try {
         const spec = await connection.getSymbolSpecification(brokerSymbol(pair));
-        specs.set(pair, { contractSize: spec.contractSize, volumeStep: spec.volumeStep, volumeMin: spec.minVolume, volumeMax: spec.maxVolume });
+        specs.set(pair, {
+          contractSize: spec.contractSize,
+          volumeStep: spec.volumeStep,
+          volumeMin: spec.minVolume,
+          volumeMax: spec.maxVolume,
+          point: spec.point,
+        });
       } catch (err) {
         console.error(`[backtest] failed to fetch symbol spec for ${pair} (realistic sizing will fall back to flat stake for it):`, err);
       }

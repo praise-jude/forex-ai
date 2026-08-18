@@ -83,10 +83,3 @@ export function pipSize(pair: Pair): number {
 export function decimals(pair: Pair): number {
   return CONFIG[pair].decimals;
 }
-
-/** MT5's own "point" size -- the smallest quoted price increment, 10^-decimals(pair).
- * Used to convert a broker-reported spread-in-points reading (see backtest/
- * historyLoader.ts's Candle.spread) into a real price delta. */
-export function pointSize(pair: Pair): number {
-  return Math.pow(10, -decimals(pair));
-}

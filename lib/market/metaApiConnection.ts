@@ -543,7 +543,7 @@ export function getOpenPositions(accountKey: AccountKey = "live"): OpenPosition[
 export function getSymbolSpecification(pair: Pair, accountKey: AccountKey = "live"): SymbolSpec | undefined {
   const spec = stateFor(accountKey).connection?.terminalState.specification(brokerSymbol(pair));
   if (!spec) return undefined;
-  return { contractSize: spec.contractSize, volumeStep: spec.volumeStep, volumeMin: spec.minVolume, volumeMax: spec.maxVolume };
+  return { contractSize: spec.contractSize, volumeStep: spec.volumeStep, volumeMin: spec.minVolume, volumeMax: spec.maxVolume, point: spec.point };
 }
 
 export type PlaceOrderResult =
