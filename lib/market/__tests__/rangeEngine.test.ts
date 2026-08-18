@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateRangeSignal } from "../rangeEngine";
+import { calculateAtr } from "../indicators/atr";
 import type { Candle } from "../types";
 
 const STEP = 15 * 60 * 1000;
@@ -138,6 +139,26 @@ describe("evaluateRangeSignal", () => {
     if (evaluation.reason.code !== "range_below_threshold") return;
     expect(evaluation.reason.impliedDirection).toBe("long");
     expect(evaluation.reason.total).toBeLessThan(70);
+  });
+
+  it("floors the stop distance at MIN_STOP_ATR_FRACTION*ATR when entry lands almost exactly on the touched boundary", () => {
+    const base = buildRangeCandles();
+    const time = base.length * STEP;
+    // Close lands essentially AT support (0.00001 away) -- the naive boundary-anchored
+    // stopLoss (support - STOP_BUFFER_ATR_FRACTION*ATR) would otherwise put real risk
+    // at barely a quarter of an ATR, the exact degenerate scenario this floor guards
+    // against (found via a real backtest: a signal like this priced risk at a fraction
+    // of a pip against a genuine ~30 pip move).
+    const touch = candle(time, SUPPORT - 0.0008, SUPPORT + 0.00002, SUPPORT - 0.0015, SUPPORT - 0.00001);
+    const candles = [...base, touch];
+
+    const evaluation = evaluateRangeSignal(candles, "EUR/USD", "15m", CLEAR_NEWS);
+    expect(evaluation.status).toBe("signal");
+    if (evaluation.status !== "signal") return;
+
+    const atr = calculateAtr(candles)[candles.length - 1];
+    const risk = Math.abs(evaluation.signal.entry - evaluation.signal.stopLoss);
+    expect(risk).toBeCloseTo(atr * 0.5, 5);
   });
 
   it("returns no_boundary_touch on too little history to evaluate at all", () => {

@@ -30,6 +30,17 @@ const BOUNDARY_TOUCH_ATR_FRACTION = 0.15;
 // SL buffer beyond the touched boundary -- same convention as signalEngine.ts's own
 // ATR_BUFFER_FRACTION.
 const STOP_BUFFER_ATR_FRACTION = 0.25;
+// Floor on the total stop distance (entry to stopLoss), regardless of how close entry
+// (the touched candle's own close) happens to land to the boundary itself -- only
+// STOP_BUFFER_ATR_FRACTION is guaranteed by construction otherwise, and a weak/
+// borderline rejection (close landing almost exactly at the boundary) can leave the
+// real entry-to-stop distance far below that. Confirmed via a real backtest: without
+// this floor, one such signal priced risk at a few thousandths of a price unit against
+// a genuine ~30-pip move, producing a +/-60R+ outcome that swamped every other trade's
+// contribution to the stats. Larger than STOP_BUFFER_ATR_FRACTION so it's the actual
+// binding floor in the degenerate case; matches nearBoundary's own 0.5 ATR fraction
+// used elsewhere in this file.
+const MIN_STOP_ATR_FRACTION = 0.5;
 const RSI_OVERSOLD = 30;
 const RSI_OVERBOUGHT = 70;
 const ADX_RANGE_CEILING = 20; // genuinely non-trending, not just "not currently classified strong"
@@ -144,7 +155,15 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
 
   const entry = lastCandle.close;
   const slBuffer = atr * STOP_BUFFER_ATR_FRACTION;
-  const stopLoss = wantsBullish ? support - slBuffer : resistance + slBuffer;
+  let stopLoss = wantsBullish ? support - slBuffer : resistance + slBuffer;
+  // Push the stop further past the boundary (never across entry, never tighter than
+  // what STOP_BUFFER_ATR_FRACTION already placed it at) when entry itself lands too
+  // close to the boundary for the buffer alone to guarantee a sane risk -- see
+  // MIN_STOP_ATR_FRACTION's own comment.
+  const minRisk = atr * MIN_STOP_ATR_FRACTION;
+  if (Math.abs(entry - stopLoss) < minRisk) {
+    stopLoss = wantsBullish ? entry - minRisk : entry + minRisk;
+  }
   const takeProfit = wantsBullish ? resistance : support; // the opposite boundary
   const risk = Math.abs(entry - stopLoss);
   if (risk <= 0) return noTrade({ code: "no_boundary_touch" });
