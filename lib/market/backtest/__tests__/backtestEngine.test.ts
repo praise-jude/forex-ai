@@ -133,4 +133,28 @@ describe("simulateRealisticOutcome", () => {
     const realistic = simulateRealisticOutcome(signal, future, noSpreadConfig);
     expect(realistic).toEqual(idealized);
   });
+
+  it("uses the firing candle's real spread (points -> price via pointSize) over the fixed fraction-of-stop estimate when present", () => {
+    // EUR/USD pointSize = 10^-5 (see symbols.ts's decimals=5) -- 20 points = 0.0002,
+    // the exact same spread cost the "spread worsens..." test above reaches via a 10%
+    // config fraction instead, so this should land on the identical realized R.
+    const signal = buildSignal({ direction: "long", entry: 1.105, stopLoss: 1.103, takeProfit: 1.109, takeProfit2: 1.113 });
+    const future = [candle({ time: 1000, high: 1.11, low: 1.104 })];
+    const result = simulateRealisticOutcome(signal, future, noSpreadConfig, 20);
+    expect(result.reason).toBe("take_profit");
+    // effectiveEntry = 1.105 + 0.0002 = 1.1052; R = (1.109 - 1.1052) / 0.002 = 1.9
+    expect(result.rMultiple).toBeCloseTo(1.9);
+  });
+
+  it("falls back to the fixed fraction-of-stop estimate when the real spread reading is missing or non-positive", () => {
+    const signal = buildSignal({ direction: "long", entry: 1.105, stopLoss: 1.103, takeProfit: 1.109, takeProfit2: 1.113 });
+    const config: RealisticSimConfig = { ...noSpreadConfig, spreadFractionOfStop: 0.1 };
+    const future = [candle({ time: 1000, high: 1.11, low: 1.104 })];
+
+    const withoutReading = simulateRealisticOutcome(signal, future, config, undefined);
+    const withZeroReading = simulateRealisticOutcome(signal, future, config, 0);
+    // Same 0.0002 spread cost the fraction-based test above asserts -- R = 1.9.
+    expect(withoutReading.rMultiple).toBeCloseTo(1.9);
+    expect(withZeroReading.rMultiple).toBeCloseTo(1.9);
+  });
 });

@@ -99,7 +99,7 @@ export async function loadHistoricalRange(
       const time = c.time.getTime();
       earliestTime = Math.min(earliestTime, time);
       if (time >= from.getTime()) {
-        byTime.set(time, { time, open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume });
+        byTime.set(time, { time, open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume, spread: c.spread });
       }
     }
 

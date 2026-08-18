@@ -34,6 +34,11 @@ export interface Candle {
   low: number;
   close: number;
   tickVolume: number;
+  /** Broker-reported spread in points at this candle (see symbols.ts's pointSize for
+   * the price-unit conversion) -- only ever populated by the backtester's historical
+   * fetch (see backtest/historyLoader.ts); undefined on live-streamed candles, which
+   * don't carry it. */
+  spread?: number;
 }
 
 export interface Price {

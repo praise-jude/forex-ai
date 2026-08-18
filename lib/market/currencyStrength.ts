@@ -1,4 +1,4 @@
-import type { Pair } from "./types";
+import type { Candle, Pair } from "./types";
 
 const CURRENCYLAYER_URL = "http://apilayer.net/api/live";
 // Free-tier currencylayer accounts are typically capped around 100-250 requests/month.
@@ -147,6 +147,70 @@ export function currencyStrengthStatus(): {
     lastFetchOk: state.lastFetchOk,
     snapshotCount: state.snapshots.length,
   };
+}
+
+const STRENGTH_TRACKING_PAIRS: Record<(typeof TRACKED_CURRENCIES)[number], Pair> = {
+  EUR: "EUR/USD",
+  GBP: "GBP/USD",
+  JPY: "USD/JPY",
+  AUD: "AUD/USD",
+  CAD: "USD/CAD",
+};
+
+/** Index of the last candle at or before `atMs`, or -1 if none qualify -- `series` must
+ * be time-ascending (see loadHistoricalRange's own contract). Binary search since this
+ * runs once per tracked currency for every replayed bar across a backtest's full candle
+ * count. */
+function lastAtOrBefore(series: Candle[], atMs: number): number {
+  let lo = 0;
+  let hi = series.length - 1;
+  let result = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid].time <= atMs) {
+      result = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return result;
+}
+
+/** A currency's real USDxxx rate from its own tracked pair's close -- mirrors
+ * USD_BASE_PAIRS' existing live distinction: USD/JPY and USD/CAD quote USD as the base,
+ * so their own close IS the USDxxx rate directly; the rest quote USD as the counter, so
+ * the rate is the close's reciprocal. */
+function usdRateFromClose(pair: Pair, close: number): number {
+  return USD_BASE_PAIRS.has(pair) ? close : 1 / close;
+}
+
+/**
+ * Historical-replay counterpart to computeUsdStrength -- identical %-change-of-a-5-
+ * currency-basket math, but reading two real historical closes (REFRESH_INTERVAL_MS
+ * apart, matching the live cache's own poll cadence) from supplied candle series
+ * instead of the live currencylayer cache. Used only by the backtester (see
+ * backtestEngine.ts's currencyStrengthCloses) -- computeUsdStrength itself, and every
+ * live call site, is untouched.
+ */
+export function computeHistoricalUsdStrength(closesByPair: Partial<Record<Pair, Candle[]>>, atTimeMs: number): UsdStrength {
+  const moves: number[] = [];
+  for (const currency of TRACKED_CURRENCIES) {
+    const pair = STRENGTH_TRACKING_PAIRS[currency];
+    const series = closesByPair[pair];
+    if (!series || series.length === 0) return { status: "unavailable" };
+
+    const latestIndex = lastAtOrBefore(series, atTimeMs);
+    const previousIndex = lastAtOrBefore(series, atTimeMs - REFRESH_INTERVAL_MS);
+    if (latestIndex === -1 || previousIndex === -1 || previousIndex === latestIndex) return { status: "unavailable" };
+
+    const prevRate = usdRateFromClose(pair, series[previousIndex].close);
+    const latestRate = usdRateFromClose(pair, series[latestIndex].close);
+    moves.push((latestRate - prevRate) / prevRate);
+  }
+
+  const index = moves.reduce((sum, m) => sum + m, 0) / moves.length;
+  return { status: "available", index };
 }
 
 /** Used by tests to reset cache state between cases. */

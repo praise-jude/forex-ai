@@ -5,11 +5,19 @@ import { detectMarketRegime } from "../marketRegime";
 import { calculateAdx } from "../indicators/adx";
 import { calculateAtr } from "../indicators/atr";
 import { evaluatePositionForManagement, type PositionManagementConfig, type PositionManagementState } from "../positionManager";
+import { computeHistoricalUsdStrength } from "../currencyStrength";
+import { pointSize } from "../symbols";
 
 export interface OutcomeSim {
   exitPrice: number;
   exitTime: number;
-  reason: "take_profit" | "stop_loss" | "still_open_at_end";
+  /** "invalidation" is never produced by simulateOutcome/simulateRealisticOutcome
+   * themselves -- only by backtestInvalidation.ts's post-processing pass, which
+   * truncates an earlier signal's natural outcome when a later opposite-direction
+   * signal fires first (mirroring live's positionInvalidation.ts). Reuses the same
+   * value live journal entries already use for this (see tradeJournal.ts's
+   * JournalCloseReason), so no downstream consumer needs a new case. */
+  reason: "take_profit" | "stop_loss" | "still_open_at_end" | "invalidation";
   /** -1 on stop_loss, the real R-multiple on take_profit, 0 on still_open_at_end (the
    * window ran out before either was touched -- expected near the end of any requested
    * range, not an error). */
@@ -97,11 +105,23 @@ export interface RealisticSimConfig {
  * retroactively "rescues" a stop this same candle also hit, since OHLC alone can't
  * reveal real intrabar order.
  */
-export function simulateRealisticOutcome(signal: Signal, future: Candle[], config: RealisticSimConfig): OutcomeSim {
+export function simulateRealisticOutcome(
+  signal: Signal,
+  future: Candle[],
+  config: RealisticSimConfig,
+  /** The firing candle's own broker-reported spread, in points (see historyLoader.ts's
+   * Candle.spread) -- when present and positive, used instead of the fixed
+   * spreadFractionOfStop estimate, converted to a price delta via symbols.ts's
+   * pointSize. Falls back to the estimate when missing/zero (older cached history
+   * fetched before spread-plumbing existed, or a broker that genuinely reports 0 on
+   * that candle) -- never fabricated as a real reading either way. */
+  realSpreadPoints?: number
+): OutcomeSim {
   const isLong = signal.direction === "long";
   const stopDistance = Math.abs(signal.entry - signal.stopLoss);
 
-  const spreadCost = config.spreadFractionOfStop * stopDistance;
+  const spreadCost =
+    realSpreadPoints && realSpreadPoints > 0 ? realSpreadPoints * pointSize(signal.pair) : config.spreadFractionOfStop * stopDistance;
   const effectiveEntry = isLong ? signal.entry + spreadCost : signal.entry - spreadCost;
 
   const pseudoTrade: ExecutedTrade = {
@@ -201,6 +221,13 @@ export interface RunBacktestInput {
    * Omitted entirely (not just a boolean) keeps the idealized path's call site
    * byte-identical to before this feature existed. */
   realistic?: RealisticSimConfig;
+  /** Real historical closes for the 5 majors currency-strength tracks (see
+   * currencyStrength.ts's TRACKED_CURRENCIES), keyed by pair -- when supplied, each
+   * bar's usdStrength override is computed for real via computeHistoricalUsdStrength
+   * instead of the hardcoded "unavailable". Omitted entirely keeps prior behavior
+   * (Signer B's currency-strength vote reads as unavailable, same as before this
+   * feature existed). */
+  currencyStrengthCloses?: Partial<Record<Pair, Candle[]>>;
   onBar?: (done: number, total: number) => void;
   /** Defaults to SMC's own evaluateSignal -- overridable so other engines (e.g.
    * rangeEngine.ts's mean-reversion evaluator, via its own evaluateSignal-shaped
@@ -242,8 +269,12 @@ export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
       d1: closedAsOf(d1, barCloseTime, "1d"),
     };
 
+    const usdStrength = input.currencyStrengthCloses
+      ? computeHistoricalUsdStrength(input.currencyStrengthCloses, barCloseTime)
+      : ({ status: "unavailable" } as const);
+
     const evaluation = evaluate(priorSeries, pair, timeframe, higherTimeframes, {
-      usdStrength: { status: "unavailable" },
+      usdStrength,
       newsStatus: { status: "clear" },
     });
     const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), { status: "clear" });
@@ -251,7 +282,7 @@ export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
     const outcome =
       evaluation.status === "signal"
         ? input.realistic
-          ? simulateRealisticOutcome(evaluation.signal, primary.slice(i + 1), input.realistic)
+          ? simulateRealisticOutcome(evaluation.signal, primary.slice(i + 1), input.realistic, bar.spread)
           : simulateOutcome(evaluation.signal, primary.slice(i + 1))
         : null;
     results.push({ barTime: bar.time, evaluation, outcome, regime });

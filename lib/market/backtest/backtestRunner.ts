@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import type { JournalEntry } from "../tradeJournal";
 import { getPerformanceStats, type PerformanceStats } from "../tradeJournal";
-import type { Pair, Timeframe } from "../types";
+import type { Candle, Pair, Timeframe } from "../types";
 import { PAIRS } from "../types";
 import { loadExecutionConfig } from "../executionConfig";
 import { getBacktestAccount, loadHistoricalRange, loadSymbolSpecs } from "./historyLoader";
 import { runBacktest, type BacktestBarResult, type RealisticSimConfig } from "./backtestEngine";
+import { applyEarlyInvalidation } from "./backtestInvalidation";
 import { BACKTEST_TIMEFRAMES, DEFAULT_REALISTIC_SPREAD_FRACTION, MAX_LOOKBACK_DAYS } from "./constants";
 import {
   computeProfitFactor,
@@ -36,6 +37,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // signal count. Lead-in bars are context-only -- never individually scored, see
 // backtestEngine.ts's windowStart handling.
 const LEAD_IN_DAYS = { d1: 220, h4: 40, h1: 10, primary: 3 };
+
+// The 5 majors currencyStrength.ts's own TRACKED_CURRENCIES basket is built from --
+// fetched once per run regardless of which pairs are under test, since currency
+// strength needs all 5 (see computeHistoricalUsdStrength). Reuses loadHistoricalRange's
+// same H1 series shape currencyStrength.ts's own live poll cadence assumes.
+const CURRENCY_STRENGTH_PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"];
 
 export interface BacktestRequest {
   pairs: Pair[];
@@ -184,6 +191,20 @@ class BacktestRunner {
       const allResults: BacktestBarResult[] = [];
       const perPairResults: { pair: Pair; results: BacktestBarResult[] }[] = [];
 
+      // Fetched once for the whole run, independent of job.request.pairs -- currency
+      // strength always needs all 5 majors regardless of which pairs are being tested.
+      const currencyStrengthCloses: Partial<Record<Pair, Candle[]>> = {};
+      for (const csPair of CURRENCY_STRENGTH_PAIRS) {
+        if (readStatus(job) === "cancelled") break;
+        currencyStrengthCloses[csPair] = await loadHistoricalRange(
+          account,
+          csPair,
+          "1h",
+          new Date(windowStart - LEAD_IN_DAYS.h1 * DAY_MS),
+          new Date(windowEnd)
+        );
+      }
+
       // Fetched once for the whole run, not per pair -- a single short-lived RPC
       // connection (see historyLoader.ts's loadSymbolSpecs) covering every requested
       // pair, rather than opening/closing one per pair.
@@ -227,7 +248,7 @@ class BacktestRunner {
         const h4 = await loadHistoricalRange(account, pair, "4h", new Date(windowStart - LEAD_IN_DAYS.h4 * DAY_MS), new Date(windowEnd));
         const d1 = await loadHistoricalRange(account, pair, "1d", new Date(windowStart - LEAD_IN_DAYS.d1 * DAY_MS), new Date(windowEnd));
 
-        const results = runBacktest({
+        const rawResults = runBacktest({
           pair,
           timeframe: job.request.timeframe,
           primary,
@@ -237,11 +258,13 @@ class BacktestRunner {
           windowStart,
           windowEnd,
           realistic: realisticSim,
+          currencyStrengthCloses,
           onBar: (done, total) => {
             job.progress.barsEvaluated = done;
             job.progress.barsTotal = total;
           },
         });
+        const results = applyEarlyInvalidation(rawResults);
 
         allResults.push(...results);
         perPairResults.push({ pair, results });
