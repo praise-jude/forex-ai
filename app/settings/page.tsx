@@ -201,7 +201,7 @@ export default function SettingsPage() {
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Risk &amp; execution config <span className="normal-case text-zinc-600">(env vars — see README)</span>
           </h2>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className={`grid gap-3 ${demoConfig ? "md:grid-cols-2" : ""}`}>
             <ExecutionConfigTable account="Live" config={liveConfig} />
             {demoConfig && <ExecutionConfigTable account="Demo" config={demoConfig} />}
           </div>

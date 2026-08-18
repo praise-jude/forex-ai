@@ -83,12 +83,11 @@ export function EngineModeControl() {
         </button>
       )}
 
-      {data.mode !== "demo" && (
+      {data.demoConfigured && data.mode !== "demo" && (
         <button
           type="button"
           onClick={() => setMode("demo")}
-          disabled={busy || !data.demoConfigured}
-          title={data.demoConfigured ? undefined : "Set METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID to enable DEMO mode"}
+          disabled={busy}
           className="rounded-md border border-sky-700 bg-sky-600/80 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Enable Demo

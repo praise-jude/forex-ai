@@ -103,7 +103,7 @@ export function SystemHealthPanel() {
   if (!data) return <div className="text-sm text-zinc-500">Loading…</div>;
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className={`grid gap-3 ${data.demo ? "md:grid-cols-2" : ""}`}>
       <AccountHealthBlock health={data.live} />
       {data.demo && <AccountHealthBlock health={data.demo} />}
     </div>
