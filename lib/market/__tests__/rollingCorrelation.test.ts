@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { candleStore } from "../candleStore";
-import { CORRELATION_THRESHOLD, correlationMatrixAge, getCorrelation, isCorrelated, listCorrelations, recomputeCorrelationMatrix } from "../rollingCorrelation";
+import {
+  CORRELATION_THRESHOLD,
+  correlationMatrixAge,
+  correlationTier,
+  getCorrelation,
+  isCorrelated,
+  listCorrelations,
+  recomputeCorrelationMatrix,
+} from "../rollingCorrelation";
 import type { Candle, Pair } from "../types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -157,5 +165,77 @@ describe("isCorrelated", () => {
     const entry = getCorrelation("XAU/USD", "BTC/USD");
     if (entry) expect(Math.abs(entry.correlation)).toBeLessThan(CORRELATION_THRESHOLD);
     expect(isCorrelated("XAU/USD", "long", "BTC/USD", "long")).toBe(false);
+  });
+});
+
+describe("correlationTier", () => {
+  beforeEach(() => {
+    clearAllCandles();
+    recomputeCorrelationMatrix();
+  });
+
+  // XAU/USD and BTC/USD have no static-model correlation partner with each other at all
+  // (see pairCorrelation.ts) -- a clean pair to exercise the real-correlation-only tiers
+  // without the static grouping's own always-extreme floor interfering.
+  const independent = (n: number) => Array.from({ length: n }, (_, i) => 0.01 * Math.sin(i * 2.9) + 0.003 * Math.cos(i * 0.4));
+  function blend(a: number[], b: number[], weight: number): number[] {
+    return a.map((v, i) => weight * v + (1 - weight) * b[i]);
+  }
+
+  it("is 'none' below the base threshold, even on a compounding direction", () => {
+    const returns = sampleReturns(60);
+    seedDaily("XAU/USD", closesFromReturns(1, returns));
+    seedDaily("BTC/USD", closesFromReturns(1, blend(returns, independent(60), 0.3))); // ~0.38 real correlation
+    recomputeCorrelationMatrix();
+
+    expect(correlationTier("XAU/USD", "long", "BTC/USD", "long")).toBe("none");
+  });
+
+  it("is 'moderate' in the 0.70-0.79 band", () => {
+    const returns = sampleReturns(60);
+    seedDaily("XAU/USD", closesFromReturns(1, returns));
+    seedDaily("BTC/USD", closesFromReturns(1, blend(returns, independent(60), 0.55))); // ~0.76 real correlation
+    recomputeCorrelationMatrix();
+
+    const entry = getCorrelation("XAU/USD", "BTC/USD")!;
+    expect(entry.correlation).toBeGreaterThanOrEqual(0.7);
+    expect(entry.correlation).toBeLessThan(0.8);
+    expect(correlationTier("XAU/USD", "long", "BTC/USD", "long")).toBe("moderate");
+  });
+
+  it("is 'strong' in the 0.80-0.89 band", () => {
+    const returns = sampleReturns(60);
+    seedDaily("XAU/USD", closesFromReturns(1, returns));
+    seedDaily("BTC/USD", closesFromReturns(1, blend(returns, independent(60), 0.65))); // ~0.85 real correlation (compounded through price levels)
+    recomputeCorrelationMatrix();
+
+    const entry = getCorrelation("XAU/USD", "BTC/USD")!;
+    expect(entry.correlation).toBeGreaterThanOrEqual(0.8);
+    expect(entry.correlation).toBeLessThan(0.9);
+    expect(correlationTier("XAU/USD", "long", "BTC/USD", "long")).toBe("strong");
+  });
+
+  it("is 'extreme' at 0.90+ real correlation, same as a static-model match", () => {
+    const returns = sampleReturns(60);
+    seedDaily("XAU/USD", closesFromReturns(1, returns));
+    seedDaily("BTC/USD", closesFromReturns(1, blend(returns, independent(60), 0.75))); // ~0.94 real correlation
+    recomputeCorrelationMatrix();
+
+    const entry = getCorrelation("XAU/USD", "BTC/USD")!;
+    expect(entry.correlation).toBeGreaterThanOrEqual(0.9);
+    expect(correlationTier("XAU/USD", "long", "BTC/USD", "long")).toBe("extreme");
+  });
+
+  it("a static-model match is always 'extreme', even with zero real data", () => {
+    expect(correlationTier("EUR/USD", "long", "GBP/USD", "long")).toBe("extreme");
+  });
+
+  it("the opposite direction on a positive real correlation is a hedge, not a compounding bet -- 'none'", () => {
+    const returns = sampleReturns(60);
+    seedDaily("XAU/USD", closesFromReturns(1, returns));
+    seedDaily("BTC/USD", closesFromReturns(1, blend(returns, independent(60), 0.75))); // ~0.94 real correlation
+    recomputeCorrelationMatrix();
+
+    expect(correlationTier("XAU/USD", "long", "BTC/USD", "short")).toBe("none");
   });
 });

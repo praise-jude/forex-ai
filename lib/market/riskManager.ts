@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import type { Pair } from "./types";
-import { isCorrelated } from "./rollingCorrelation";
+import { correlationTier, type CorrelationTier } from "./rollingCorrelation";
 
 export interface RiskCheckInput {
   killSwitchActive: boolean;
@@ -99,26 +99,59 @@ export interface CorrelatedExposureInput {
   maxCorrelatedPositions: number;
 }
 
+export type CorrelatedExposureResult =
+  | { allowed: true; sizeMultiplier: number; tier: CorrelationTier; reason: string | null }
+  | { allowed: false; code: "correlated_exposure"; reason: string; tier: "extreme" };
+
+const TIER_RANK: Record<CorrelationTier, number> = { none: 0, moderate: 1, strong: 2, extreme: 3 };
+// Position-size multiplier applied when allowed at each tier -- documented starting
+// points to tune, same posture as CORRELATION_STRONG_THRESHOLD/CORRELATION_EXTREME_
+// THRESHOLD in rollingCorrelation.ts. "extreme" only ever reaches this table when it's
+// under the maxCorrelatedPositions count cap below (otherwise it's blocked outright) --
+// still sized down hard even though it wasn't blocked, since 0.90+ correlation is a
+// near-duplicate bet regardless of how many correlated positions are already open.
+const SIZE_MULTIPLIER_BY_TIER: Record<CorrelationTier, number> = { none: 1, moderate: 0.5, strong: 0.25, extreme: 0.1 };
+
 /**
- * Blocks a new position from stacking the same directional bet an already-open one
- * represents -- e.g. EUR/USD long opened, then a GBP/USD long signal fires: both are a
- * bet that USD weakens, not two diversified trades. See rollingCorrelation.ts for the
- * grouping this counts against -- a union of a static USD-direction/commodity-complex
- * grouping and a real rolling Pearson correlation computed from D1 candle history. A
- * bug here can only make execution MORE conservative (block a trade it shouldn't),
- * never less -- it has no way to permit a trade that every other check would have
- * blocked anyway.
+ * Graduated correlation-aware sizing, not a flat allow/block: a new position that
+ * shares the same directional bet as an already-open one (e.g. EUR/USD long opened,
+ * then a GBP/USD long signal fires -- both a bet that USD weakens, not two diversified
+ * trades) gets its position size reduced in proportion to how strongly correlated it
+ * is, and is only blocked outright once enough EXTREME-tier (0.90+ real correlation, or
+ * a static-model match with no real magnitude behind it -- see rollingCorrelation.ts's
+ * correlationTier) positions are already open to hit maxCorrelatedPositions. Sizing for
+ * the moderate/strong tiers is never gated by that count at all -- a correlated
+ * position is still allowed, just smaller, however many others are already open.
+ *
+ * Uses the WORST (most-correlated) tier across every open position, not an average --
+ * one 0.92-correlated position should size the new trade down hard even if three other
+ * open positions are entirely uncorrelated. A bug here can only make execution MORE
+ * conservative (smaller size or an outright block), never less.
  */
-export function checkCorrelatedExposure(input: CorrelatedExposureInput): RiskCheckResult {
-  const correlatedCount = input.openPositions.filter((p) => isCorrelated(input.pair, input.direction, p.pair, p.direction)).length;
-  if (correlatedCount >= input.maxCorrelatedPositions) {
+export function checkCorrelatedExposure(input: CorrelatedExposureInput): CorrelatedExposureResult {
+  const tiers = input.openPositions.map((p) => correlationTier(input.pair, input.direction, p.pair, p.direction));
+
+  const extremeCount = tiers.filter((t) => t === "extreme").length;
+  if (extremeCount >= input.maxCorrelatedPositions) {
     return {
       allowed: false,
       code: "correlated_exposure",
-      reason: `${correlatedCount} correlated position(s) already open (max ${input.maxCorrelatedPositions}) -- ${input.pair} ${input.direction} would stack the same directional bet`,
+      tier: "extreme",
+      reason: `${extremeCount} tightly correlated position(s) already open (max ${input.maxCorrelatedPositions}) -- ${input.pair} ${input.direction} would stack the same directional bet`,
     };
   }
-  return { allowed: true };
+
+  const worstTier = tiers.reduce((worst, t) => (TIER_RANK[t] > TIER_RANK[worst] ? t : worst), "none" as CorrelationTier);
+  const sizeMultiplier = SIZE_MULTIPLIER_BY_TIER[worstTier];
+  return {
+    allowed: true,
+    sizeMultiplier,
+    tier: worstTier,
+    reason:
+      sizeMultiplier < 1
+        ? `position size reduced to ${(sizeMultiplier * 100).toFixed(0)}% -- ${worstTier} correlated exposure with an open position`
+        : null,
+  };
 }
 
 export interface PriceDriftInput {

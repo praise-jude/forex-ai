@@ -183,29 +183,36 @@ function buildCorrelationInput(overrides: Partial<CorrelatedExposureInput> = {})
 }
 
 describe("checkCorrelatedExposure", () => {
-  it("allows when there are no open positions", () => {
-    expect(checkCorrelatedExposure(buildCorrelationInput())).toEqual({ allowed: true });
+  it("allows when there are no open positions, at full size", () => {
+    expect(checkCorrelatedExposure(buildCorrelationInput())).toEqual({ allowed: true, sizeMultiplier: 1, tier: "none", reason: null });
   });
 
-  it("allows an uncorrelated open position", () => {
+  it("allows an uncorrelated open position, at full size", () => {
     // EUR/USD long is a short-USD bet; BTC/USD has no correlation partner in this model.
     const input = buildCorrelationInput({ openPositions: [{ pair: "BTC/USD", direction: "long" }] });
-    expect(checkCorrelatedExposure(input).allowed).toBe(true);
+    expect(checkCorrelatedExposure(input)).toEqual({ allowed: true, sizeMultiplier: 1, tier: "none", reason: null });
   });
 
-  it("blocks a second correlated position once the cap (default 1) is reached", () => {
+  it("blocks a second EXTREME-tier (static-model match) correlated position once the cap (default 1) is reached", () => {
+    // GBP/USD is a static-model match for EUR/USD (both a short-USD bet) -- no real
+    // correlation data seeded here, so this exercises the static-match-is-always-extreme
+    // path, same as before this feature's graduated sizing existed.
     const input = buildCorrelationInput({ openPositions: [{ pair: "GBP/USD", direction: "long" }] });
     const result = checkCorrelatedExposure(input);
     expect(result.allowed).toBe(false);
     expect((result as { code: string }).code).toBe("correlated_exposure");
+    expect((result as { tier: string }).tier).toBe("extreme");
   });
 
-  it("respects a higher configured cap", () => {
+  it("respects a higher configured cap -- allowed, but still sized down hard (extreme tier isn't gated by the cap for sizing)", () => {
     const input = buildCorrelationInput({ openPositions: [{ pair: "GBP/USD", direction: "long" }], maxCorrelatedPositions: 2 });
-    expect(checkCorrelatedExposure(input).allowed).toBe(true);
+    const result = checkCorrelatedExposure(input);
+    expect(result.allowed).toBe(true);
+    expect((result as { sizeMultiplier: number }).sizeMultiplier).toBe(0.1);
+    expect((result as { tier: string }).tier).toBe("extreme");
   });
 
-  it("counts multiple correlated positions against the cap", () => {
+  it("counts multiple EXTREME-tier positions against the cap", () => {
     const input = buildCorrelationInput({
       openPositions: [
         { pair: "GBP/USD", direction: "long" },
@@ -214,6 +221,23 @@ describe("checkCorrelatedExposure", () => {
       maxCorrelatedPositions: 2,
     });
     expect(checkCorrelatedExposure(input).allowed).toBe(false);
+  });
+
+  it("uses the worst (most-correlated) tier across multiple open positions, not an average", () => {
+    // BTC/USD is genuinely uncorrelated in the static model; GBP/USD is a static match.
+    // The worst tier (extreme, from GBP/USD) must drive the result even with a
+    // comfortably-diversified position also open.
+    const input = buildCorrelationInput({
+      openPositions: [
+        { pair: "BTC/USD", direction: "long" },
+        { pair: "GBP/USD", direction: "long" },
+      ],
+      maxCorrelatedPositions: 2,
+    });
+    const result = checkCorrelatedExposure(input);
+    expect(result.allowed).toBe(true);
+    expect((result as { tier: string }).tier).toBe("extreme");
+    expect((result as { sizeMultiplier: number }).sizeMultiplier).toBe(0.1);
   });
 });
 

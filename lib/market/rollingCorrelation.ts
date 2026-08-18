@@ -13,10 +13,22 @@ const CORRELATION_WINDOW_DAYS = 30;
 // signal -- reported as "no data" (excluded from the matrix) rather than a
 // misleadingly-precise number from a handful of days.
 const MIN_PAIRED_OBSERVATIONS = 15;
-// |correlation| at or above this counts as "strongly correlated" for the risk gate --
-// a common real-world FX threshold, not a statistically derived cutoff. Below it, two
-// pairs are treated as genuinely diversified even if not perfectly independent.
+// |correlation| at or above this counts as correlated at all for the risk gate -- a
+// common real-world FX threshold, not a statistically derived cutoff. Below it, two
+// pairs are treated as genuinely diversified even if not perfectly independent. This is
+// the bottom edge of the graduated tiers below (CORRELATION_STRONG_THRESHOLD,
+// CORRELATION_EXTREME_THRESHOLD) -- "correlated at all" starts here, "how much" is what
+// those decide.
 export const CORRELATION_THRESHOLD = 0.7;
+// Documented starting points to tune, not claimed-optimal cutoffs, same posture as
+// CORRELATION_THRESHOLD itself -- three graduated bands instead of a single cliff, so a
+// 0.72 correlation and a 0.95 correlation don't get treated identically (see
+// checkCorrelatedExposure in riskManager.ts, which turns these into a position-size
+// reduction instead of a flat allow/block).
+export const CORRELATION_STRONG_THRESHOLD = 0.8;
+export const CORRELATION_EXTREME_THRESHOLD = 0.9;
+
+export type CorrelationTier = "none" | "moderate" | "strong" | "extreme";
 // Correlation is a slow-moving statistical property (it only meaningfully shifts as
 // new daily candles close), but this recompute is pure local computation over data
 // already in memory -- microseconds of CPU, no external API cost -- so there's no
@@ -151,6 +163,32 @@ export function correlationMatrixAge(): number | null {
 }
 
 /**
+ * The real correlation magnitude (0-1) that counts toward exposure for this specific
+ * pairA/directionA vs pairB/directionB combination -- 0 when there's no real data, or
+ * when the direction combination is actually a hedge, not a compounding bet.
+ *
+ * Sign matters: two pairs with POSITIVE correlation move together, so the same
+ * direction (both long, or both short) is the compounding bet; two pairs with NEGATIVE
+ * correlation move oppositely, so OPPOSITE directions are the compounding bet (a long
+ * on one and a short on the other is really the same underlying view).
+ */
+function realCorrelationExposureMagnitude(pairA: Pair, directionA: "long" | "short", pairB: Pair, directionB: "long" | "short"): number {
+  const entry = getCorrelation(pairA, pairB);
+  if (!entry) return 0;
+
+  const sameDirection = directionA === directionB;
+  const compounding = entry.correlation >= 0 ? sameDirection : !sameDirection;
+  return compounding ? Math.abs(entry.correlation) : 0;
+}
+
+function tierForMagnitude(magnitude: number): CorrelationTier {
+  if (magnitude >= CORRELATION_EXTREME_THRESHOLD) return "extreme";
+  if (magnitude >= CORRELATION_STRONG_THRESHOLD) return "strong";
+  if (magnitude >= CORRELATION_THRESHOLD) return "moderate";
+  return "none";
+}
+
+/**
  * Union of the real rolling correlation (when available) and the original static USD-
  * direction/commodity-complex grouping (pairCorrelation.ts) -- deliberately never
  * subtracts from the static model's own conservative floor, only adds cases real data
@@ -159,19 +197,17 @@ export function correlationMatrixAge(): number | null {
  * what checkCorrelatedExposure in riskManager.ts actually calls; a bug here can only
  * make execution MORE conservative, matching that function's own existing invariant.
  *
- * Sign matters: two pairs with POSITIVE correlation move together, so the same
- * direction (both long, or both short) is the compounding bet; two pairs with NEGATIVE
- * correlation move oppositely, so OPPOSITE directions are the compounding bet (a long
- * on one and a short on the other is really the same underlying view). Below
- * CORRELATION_THRESHOLD in magnitude, the pairs are treated as genuinely diversified.
+ * A static-model match has no real magnitude behind it (it's a structural/definitional
+ * grouping, not a measured coefficient), so it's always treated as "extreme" -- the
+ * same "can only be MORE conservative" reasoning as the union itself.
  */
+export function correlationTier(pairA: Pair, directionA: "long" | "short", pairB: Pair, directionB: "long" | "short"): CorrelationTier {
+  if (isStaticallyCorrelated(pairA, directionA, pairB, directionB)) return "extreme";
+  return tierForMagnitude(realCorrelationExposureMagnitude(pairA, directionA, pairB, directionB));
+}
+
+/** Backward-compatible boolean view of correlationTier -- "correlated at all" is exactly
+ * "tier isn't none", identical semantics to this function's original implementation. */
 export function isCorrelated(pairA: Pair, directionA: "long" | "short", pairB: Pair, directionB: "long" | "short"): boolean {
-  if (isStaticallyCorrelated(pairA, directionA, pairB, directionB)) return true;
-
-  const entry = getCorrelation(pairA, pairB);
-  if (!entry) return false;
-
-  if (entry.correlation >= CORRELATION_THRESHOLD) return directionA === directionB;
-  if (entry.correlation <= -CORRELATION_THRESHOLD) return directionA !== directionB;
-  return false;
+  return correlationTier(pairA, directionA, pairB, directionB) !== "none";
 }

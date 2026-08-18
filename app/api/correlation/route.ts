@@ -1,4 +1,10 @@
-import { CORRELATION_THRESHOLD, correlationMatrixAge, listCorrelations } from "@/lib/market/rollingCorrelation";
+import {
+  CORRELATION_EXTREME_THRESHOLD,
+  CORRELATION_STRONG_THRESHOLD,
+  CORRELATION_THRESHOLD,
+  correlationMatrixAge,
+  listCorrelations,
+} from "@/lib/market/rollingCorrelation";
 
 export const runtime = "nodejs";
 
@@ -12,5 +18,7 @@ export async function GET() {
     entries: listCorrelations(),
     computedAtAgeMs: correlationMatrixAge(),
     threshold: CORRELATION_THRESHOLD,
+    strongThreshold: CORRELATION_STRONG_THRESHOLD,
+    extremeThreshold: CORRELATION_EXTREME_THRESHOLD,
   });
 }

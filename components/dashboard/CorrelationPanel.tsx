@@ -7,6 +7,8 @@ interface CorrelationResponse {
   entries: CorrelationEntry[];
   computedAtAgeMs: number | null;
   threshold: number;
+  strongThreshold: number;
+  extremeThreshold: number;
 }
 
 const POLL_INTERVAL_MS = 30000;
@@ -21,6 +23,17 @@ function formatAge(ms: number | null): string {
   const minutes = Math.round(ms / 60000);
   if (minutes < 60) return `${minutes}m ago`;
   return `${(minutes / 60).toFixed(1)}h ago`;
+}
+
+/** Mirrors rollingCorrelation.ts's own tierForMagnitude -- a diagnostic-only re-read of
+ * the exact same bands checkCorrelatedExposure (riskManager.ts) sizes trades against,
+ * not a second source of truth (the actual gate always computes its own tier from live
+ * open positions, this just labels each matrix row for display). */
+function tierLabel(magnitude: number, thresholds: { strong: number; extreme: number; base: number }): { label: string; className: string } | null {
+  if (magnitude >= thresholds.extreme) return { label: "extreme — new trades blocked", className: "text-rose-400" };
+  if (magnitude >= thresholds.strong) return { label: "strong — size cut to 25%", className: "text-orange-400" };
+  if (magnitude >= thresholds.base) return { label: "moderate — size cut to 50%", className: "text-amber-400" };
+  return null;
 }
 
 /**
@@ -46,12 +59,17 @@ export function CorrelationPanel() {
     );
   }
 
+  const thresholds = { base: data.threshold, strong: data.strongThreshold, extreme: data.extremeThreshold };
+
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-zinc-500">
         Computed {formatAge(data.computedAtAgeMs)} from {data.entries[0]?.sampleSize ?? "?"}-day daily returns. Positive
         correlation (same-direction positions compound risk) and negative correlation (opposite-direction positions compound
-        risk) both count toward the risk gate once |correlation| ≥ {data.threshold.toFixed(2)} — highlighted below.
+        risk) both count toward the risk gate. This isn&apos;t a flat block anymore — a correlated new position gets its size
+        reduced in proportion to how strong the correlation is ({data.threshold.toFixed(2)}–{data.strongThreshold.toFixed(2)}:
+        50% size, {data.strongThreshold.toFixed(2)}–{data.extremeThreshold.toFixed(2)}: 25% size), and is only blocked outright
+        at {data.extremeThreshold.toFixed(2)}+ — highlighted below.
       </p>
       <div className="overflow-hidden rounded-xl border border-white/10 bg-zinc-900">
         <table className="w-full text-xs">
@@ -60,22 +78,23 @@ export function CorrelationPanel() {
               <th className="px-3 py-2 font-medium">Pairs</th>
               <th className="px-3 py-2 font-medium">Correlation</th>
               <th className="px-3 py-2 font-medium">Sample</th>
+              <th className="px-3 py-2 font-medium">Risk gate</th>
             </tr>
           </thead>
           <tbody>
             {data.entries.map((entry) => {
-              const flagged = Math.abs(entry.correlation) >= data.threshold;
+              const tier = tierLabel(Math.abs(entry.correlation), thresholds);
               return (
                 <tr key={`${entry.pairA}-${entry.pairB}`} className="border-b border-white/5 last:border-0">
                   <td className="px-3 py-2 font-medium text-zinc-200">
                     {entry.pairA} / {entry.pairB}
                   </td>
-                  <td className={`px-3 py-2 tabular-nums ${flagged ? "font-semibold text-amber-400" : "text-zinc-300"}`}>
+                  <td className={`px-3 py-2 tabular-nums ${tier ? "font-semibold " + tier.className : "text-zinc-300"}`}>
                     {entry.correlation >= 0 ? "+" : ""}
                     {entry.correlation.toFixed(2)}
-                    {flagged && <span className="ml-1.5 text-[10px] font-normal text-amber-500">flagged</span>}
                   </td>
                   <td className="px-3 py-2 tabular-nums text-zinc-400">{entry.sampleSize}d</td>
+                  <td className={`px-3 py-2 text-[11px] ${tier ? tier.className : "text-zinc-600"}`}>{tier ? tier.label : "normal size"}</td>
                 </tr>
               );
             })}

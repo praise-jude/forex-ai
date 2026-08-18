@@ -114,6 +114,9 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${correlationCheck.reason}`);
     return { status: "blocked", code: correlationCheck.code, reason: correlationCheck.reason };
   }
+  if (correlationCheck.reason) {
+    console.log(`[execution] ${signal.pair} ${signal.id} (${accountKey}): ${correlationCheck.reason}`);
+  }
 
   // Applies to every execution path (button and voice alike), not just voice -- but
   // matters most there, since a spoken confirmation round trip leaves more time for the
@@ -153,13 +156,14 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   }
 
   // An explicit per-trade override (the Trade Proposal card's "Edit Risk" field) is a
-  // human decision for this one trade specifically -- never further scaled by tier, same
-  // way it already bypasses config.riskPerTradePct entirely. Only the configured base %
-  // goes through confidence sizing (see positionSizing.ts's own doc comment).
+  // human decision for this one trade specifically -- never further scaled by tier or
+  // correlation, same way it already bypasses config.riskPerTradePct entirely. Only the
+  // configured base % goes through confidence sizing and correlation-aware sizing (see
+  // positionSizing.ts's own doc comment and checkCorrelatedExposure above).
   const riskPct =
     riskPctOverride !== undefined && Number.isFinite(riskPctOverride) && riskPctOverride > 0
       ? riskPctOverride
-      : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config);
+      : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config) * correlationCheck.sizeMultiplier;
   const sizing = computeLotSize(signal, account.equity, riskPct, spec);
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);
