@@ -40,25 +40,23 @@ export interface RealisticSizingConfig {
  * skips (e.g. the risk-correct size would round to zero lots), same "log and degrade
  * gracefully, never fabricate" posture the rest of this app already follows.
  *
- * Disclosed, narrow imprecision: computeLotSize's own internal pip-value conversion for
- * USD-base pairs (USD/JPY, USD/CAD) reads pipValue.ts's live priceStore, not a
- * historical price -- since this app's live streaming connection runs continuously in
- * the same process a backtest executes in, that call succeeds rather than failing, but
- * with TODAY's real exchange rate, not the rate at the historical signal's own time.
- * Reworking computeLotSize itself to accept a historical override would touch tested
- * live-execution code for this alone, so this is disclosed (see BacktestPanel.tsx's
- * banner) rather than silently accepted or worked around by duplicating its logic.
- * riskDollars itself (below) is NOT affected -- it's computed against the real
- * historical entry price regardless of pair.
+ * For USD-base pairs (USD/JPY, USD/CAD, USD/CHF), computeLotSize is given this same
+ * historical pip value as an explicit override instead of letting it fall back to
+ * pipValue.ts's live priceStore read -- lots are now sized off the real exchange rate
+ * at the historical signal's own time, not today's. Previously these two used different
+ * rates (lots sized off today's live rate, but the resulting dollar figure below
+ * recomputed with the historical one), which meant the reported risk didn't actually
+ * equal the requested risk % for these three pairs specifically -- fixed by sizing and
+ * pricing off the same historical rate throughout.
  */
 function realisticRiskDollars(signal: Signal, sizing: RealisticSizingConfig): number | null {
   const spec = sizing.specs.get(signal.pair);
   if (!spec) return null;
-  const sizeResult = computeLotSize(signal, sizing.equity, sizing.riskPct, spec);
+  const pipValue = historicalPipValuePerLot(signal.pair, spec.contractSize, signal.entry);
+  const sizeResult = computeLotSize(signal, sizing.equity, sizing.riskPct, spec, pipValue);
   if ("skipped" in sizeResult) return null;
 
   const pips = Math.abs(signal.entry - signal.stopLoss) / pipSize(signal.pair);
-  const pipValue = historicalPipValuePerLot(signal.pair, spec.contractSize, signal.entry);
   return Number((pips * pipValue * sizeResult.lots).toFixed(2));
 }
 

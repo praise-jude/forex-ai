@@ -50,7 +50,7 @@ function DisclosureBanner({ realistic }: { realistic: boolean }) {
         {realistic ? (
           <>
             <li>Position management <strong>is</strong> simulated (break-even, trailing stop, using this account&apos;s real configured triggers). Partial take-profit isn&apos;t simulated, even if enabled on the account.</li>
-            <li>Sizing uses real lot-size math against a fixed hypothetical starting equity (not compounding across trades). For USD/JPY, USD/CAD, and USD/CHF specifically, the pip-value conversion uses <strong>today&apos;s</strong> live exchange rate, not the historical rate at signal time — a bounded imprecision, not a fabrication.</li>
+            <li>Sizing uses real lot-size math against a fixed hypothetical starting equity (not compounding across trades).</li>
             <li>Spread cost uses each candle&apos;s real broker-reported spread when available, falling back to a fixed fraction of the trade&apos;s own stop distance only when it isn&apos;t.</li>
           </>
         ) : (

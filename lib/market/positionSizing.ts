@@ -89,13 +89,19 @@ export function confidenceAdjustedRiskPct(
  * rounding up to the broker minimum) when the risk-correct size would fall
  * below what the broker allows, since forcing a minimum-size trade there
  * would silently risk more than the configured percentage.
+ *
+ * `pipValueOverride`, when supplied, replaces the live-price-derived pip value below --
+ * used only by the backtester (see backtestStats.ts's realisticRiskDollars), which needs
+ * lots sized off the pair's real HISTORICAL exchange rate for USD-base pairs
+ * (USD/JPY, USD/CAD, USD/CHF), not today's live one. Every live call site omits this
+ * argument entirely, so live execution's own behavior is completely unchanged.
  */
-export function computeLotSize(signal: Signal, equity: number, riskPct: number, spec: SymbolSpec): LotSizeResult {
+export function computeLotSize(signal: Signal, equity: number, riskPct: number, spec: SymbolSpec, pipValueOverride?: number): LotSizeResult {
   const riskAmount = equity * (riskPct / 100);
   const pips = Math.abs(signal.entry - signal.stopLoss) / pipSize(signal.pair);
   if (pips <= 0) return { skipped: true, reason: "entry and stop loss are equal (zero pip distance)" };
 
-  const pipValue = pipValuePerLot(signal.pair, spec.contractSize);
+  const pipValue = pipValueOverride ?? pipValuePerLot(signal.pair, spec.contractSize);
   if (pipValue === undefined || pipValue <= 0) {
     return { skipped: true, reason: "no live price available to compute pip value" };
   }

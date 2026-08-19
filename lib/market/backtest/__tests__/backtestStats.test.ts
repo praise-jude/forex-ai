@@ -127,6 +127,30 @@ describe("toJournalEntries", () => {
       expect(entries[0].riskDollars).toBe(250);
       expect(entries[0].profit).toBe(500);
     });
+
+    it("sizes a USD-base pair (USD/JPY) off the real historical entry price -- riskDollars matches the requested risk % exactly, with no live price needed at all", () => {
+      // pipSize("USD/JPY") = 0.01, so entry 150.00 / stop 149.80 is a 20-pip risk.
+      // historicalPipValuePerLot = (0.01 * 100000) / 150.00 = 6.6667 USD/pip/lot.
+      // rawLots = ($10,000 * 1%) / (20 * 6.6667) = 100 / 133.33 = 0.75 -- a clean step,
+      // so riskDollars = 20 * 6.6667 * 0.75 = exactly $100, the full requested risk.
+      // Before this fix, computeLotSize would have sized lots off pipValuePerLot's live
+      // priceStore read instead -- which returns undefined with no live price feed
+      // running (as in this test), skipping the trade entirely and silently falling
+      // back to the flat hypothetical stake instead of real lot-size math.
+      const signal = buildSignal({ id: "jpy1", pair: "USD/JPY", entry: 150.0, stopLoss: 149.8, takeProfit: 150.4 });
+      const results: BacktestBarResult[] = [
+        {
+          barTime: 1,
+          evaluation: { status: "signal", signal },
+          outcome: { exitPrice: 150.4, exitTime: 5000, reason: "take_profit", rMultiple: 2, tp2Reached: false },
+          regime: "strong_uptrend",
+        },
+      ];
+      const sizing: RealisticSizingConfig = { specs: new Map([["USD/JPY", buildSpec()]]), equity: 10000, riskPct: 1 };
+      const { entries } = toJournalEntries(results, 999 /* would-be flat stake, must be ignored */, sizing);
+      expect(entries[0].riskDollars).toBeCloseTo(100, 1);
+      expect(entries[0].profit).toBeCloseTo(200, 1); // 2R * $100
+    });
   });
 });
 
