@@ -6,8 +6,14 @@ const CURRENCYLAYER_URL = "http://apilayer.net/api/live";
 // refreshing often enough that a currency-strength lean reflects the current day, not a
 // stale one (strength trends this app cares about persist over many hours, not minutes).
 const REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
-const TRACKED_CURRENCIES = ["EUR", "GBP", "JPY", "AUD", "CAD"] as const;
-const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD"]);
+const TRACKED_CURRENCIES = ["EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"] as const;
+const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD", "USD/CHF"]);
+// Pairs with no USD leg at all -- EUR/JPY is EUR vs JPY, USD isn't in it either way.
+// USD strength is genuinely inapplicable here (not merely "weakly correlated" the way
+// gold/oil/crypto's own USD-quote fallback is), so usdStrengthSupports reports
+// "unavailable" honestly for these rather than silently reusing the USD-quote branch's
+// logic on a pair that was never a USD pair to begin with.
+const NOT_A_USD_PAIR: ReadonlySet<Pair> = new Set(["EUR/JPY"]);
 // A move smaller than this (as a fraction, e.g. 0.0005 = 0.05%) between polls is too
 // small to call a meaningful directional lean either way -- avoids treating quote noise
 // as a confirmed currency-strength signal.
@@ -91,11 +97,13 @@ export function startCurrencyStrength(): void {
 
 /**
  * A USD strength index derived from real currencylayer.com FX rates (source=USD) across
- * 5 tracked majors -- not a true 8-currency cross-pair meter (this app doesn't track
- * CHF/NZD pairs at all), just USD's aggregate lean against the 5 majors it does trade.
- * Computed as the average % change in each currency's USDxxx rate between the two most
- * recent polls -- never fabricated: "unavailable" until at least two successful polls
- * have landed (immediately after boot, or if the API key/plan stops working).
+ * the 7 tracked majors -- USD's aggregate lean against every currency this app trades a
+ * direct USD pair for (EUR/JPY is the one traded pair with no USD leg at all, and is
+ * excluded from usdStrengthSupports entirely rather than folded into this basket -- see
+ * NOT_A_USD_PAIR). Computed as the average % change in each currency's USDxxx rate
+ * between the two most recent polls -- never fabricated: "unavailable" until at least
+ * two successful polls have landed (immediately after boot, or if the API key/plan
+ * stops working).
  */
 export function computeUsdStrength(): UsdStrength {
   if (state.lastFetchOk !== true || state.snapshots.length < 2) return { status: "unavailable" };
@@ -122,6 +130,7 @@ export function computeUsdStrength(): UsdStrength {
  */
 export function usdStrengthSupports(strength: UsdStrength, pair: Pair, direction: "long" | "short"): boolean | "unavailable" {
   if (strength.status === "unavailable") return "unavailable";
+  if (NOT_A_USD_PAIR.has(pair)) return "unavailable";
   if (Math.abs(strength.index) < NEUTRAL_DEADBAND) return false;
 
   const usdIsBase = USD_BASE_PAIRS.has(pair);
@@ -155,6 +164,8 @@ const STRENGTH_TRACKING_PAIRS: Record<(typeof TRACKED_CURRENCIES)[number], Pair>
   JPY: "USD/JPY",
   AUD: "AUD/USD",
   CAD: "USD/CAD",
+  CHF: "USD/CHF",
+  NZD: "NZD/USD",
 };
 
 /** Index of the last candle at or before `atMs`, or -1 if none qualify -- `series` must

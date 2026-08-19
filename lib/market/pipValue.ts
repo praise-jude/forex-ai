@@ -5,7 +5,7 @@ import { priceStore } from "./priceStore";
 // USD is the base currency (first symbol) for these pairs, so pip value needs
 // converting from the quote currency into USD via the pair's own live price.
 // The other pairs already quote directly in USD, so no conversion is needed.
-const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD"]);
+const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD", "USD/CHF"]);
 
 /**
  * Pip value in USD per 1.0 lot, for a USD-denominated account. Returns

@@ -46,16 +46,16 @@ function DisclosureBanner({ realistic }: { realistic: boolean }) {
       <p className="font-semibold text-amber-300">Backtest limitations — read before trusting these numbers</p>
       <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-200/90">
         <li>Historical news blackout is <strong>not</strong> simulated — the news filter always reads &quot;clear&quot; for past dates (no historical archive exists to check against).</li>
-        <li>Currency-strength confirmation is excluded from Signer B&apos;s vote for the same reason.</li>
+        <li>Currency-strength confirmation and early invalidation exit (an opposite-direction signal closing an open position early) <strong>are</strong> simulated from real historical data, in both modes below.</li>
         {realistic ? (
           <>
-            <li>Position management <strong>is</strong> simulated (break-even, trailing stop, using this account&apos;s real configured triggers) — early invalidation exit still isn&apos;t. Partial take-profit isn&apos;t simulated either, even if enabled on the account.</li>
-            <li>Sizing uses real lot-size math against a fixed hypothetical starting equity (not compounding across trades). For USD/JPY and USD/CAD specifically, the pip-value conversion uses <strong>today&apos;s</strong> live exchange rate, not the historical rate at signal time — a bounded imprecision, not a fabrication.</li>
-            <li>Spread cost is simulated as a fixed fraction of each trade&apos;s own stop distance — an approximation, not each pair&apos;s real historical spread.</li>
+            <li>Position management <strong>is</strong> simulated (break-even, trailing stop, using this account&apos;s real configured triggers). Partial take-profit isn&apos;t simulated, even if enabled on the account.</li>
+            <li>Sizing uses real lot-size math against a fixed hypothetical starting equity (not compounding across trades). For USD/JPY, USD/CAD, and USD/CHF specifically, the pip-value conversion uses <strong>today&apos;s</strong> live exchange rate, not the historical rate at signal time — a bounded imprecision, not a fabrication.</li>
+            <li>Spread cost uses each candle&apos;s real broker-reported spread when available, falling back to a fixed fraction of the trade&apos;s own stop distance only when it isn&apos;t.</li>
           </>
         ) : (
           <>
-            <li>Position management (break-even, trailing stop, early invalidation exit) is <strong>not</strong> simulated — only a fixed stop-loss vs. take-profit-1.</li>
+            <li>Break-even and trailing stop are <strong>not</strong> simulated — only a fixed stop-loss vs. take-profit-1 (early invalidation still is, see above).</li>
             <li>Sizing uses a fixed hypothetical stake, not real lot sizing, spread, commission, or compounding.</li>
           </>
         )}

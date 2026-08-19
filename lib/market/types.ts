@@ -12,7 +12,10 @@ export type Pair =
   | "XAG/USD"
   | "USOIL"
   | "UKOIL"
-  | "BTC/USD";
+  | "BTC/USD"
+  | "USD/CHF"
+  | "NZD/USD"
+  | "EUR/JPY";
 
 export const PAIRS: Pair[] = [
   "EUR/USD",
@@ -25,6 +28,9 @@ export const PAIRS: Pair[] = [
   "USOIL",
   "UKOIL",
   "BTC/USD",
+  "USD/CHF",
+  "NZD/USD",
+  "EUR/JPY",
 ];
 
 export interface Candle {

@@ -24,8 +24,15 @@ const FOREX_MAJOR_ROLE: Partial<Record<Pair, ImpliedUsdRole>> = {
   "EUR/USD": "usd_quote",
   "GBP/USD": "usd_quote",
   "AUD/USD": "usd_quote",
+  "NZD/USD": "usd_quote",
   "USD/CAD": "usd_base",
   "USD/JPY": "usd_base",
+  "USD/CHF": "usd_base",
+  // EUR/JPY has no USD leg at all -- deliberately absent from this USD-only static
+  // model, not an oversight. Its real correlation with EUR/USD and USD/JPY is still
+  // caught by rollingCorrelation.ts's own live Pearson correlation matrix (computed
+  // across every pair in PAIRS, this static grouping is only ever a floor on top of
+  // it) -- see that file's own doc comment on the union between the two.
 };
 
 const COMMODITY_GROUP: Partial<Record<Pair, string>> = {

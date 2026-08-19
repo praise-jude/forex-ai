@@ -38,11 +38,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // backtestEngine.ts's windowStart handling.
 const LEAD_IN_DAYS = { d1: 220, h4: 40, h1: 10, primary: 3 };
 
-// The 5 majors currencyStrength.ts's own TRACKED_CURRENCIES basket is built from --
+// The 7 majors currencyStrength.ts's own TRACKED_CURRENCIES basket is built from --
 // fetched once per run regardless of which pairs are under test, since currency
-// strength needs all 5 (see computeHistoricalUsdStrength). Reuses loadHistoricalRange's
+// strength needs all 7 (see computeHistoricalUsdStrength). Reuses loadHistoricalRange's
 // same H1 series shape currencyStrength.ts's own live poll cadence assumes.
-const CURRENCY_STRENGTH_PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"];
+const CURRENCY_STRENGTH_PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD"];
 
 export interface BacktestRequest {
   pairs: Pair[];

@@ -293,8 +293,8 @@ describe("evaluateSignal", () => {
     try {
       setCurrencyStrengthStateForTests(
         [
-          { atMs: 1000, rates: { EUR: 0.91, GBP: 0.77, JPY: 150, AUD: 1.5, CAD: 1.35 } },
-          { atMs: 2000, rates: { EUR: 0.92, GBP: 0.78, JPY: 151, AUD: 1.52, CAD: 1.36 } },
+          { atMs: 1000, rates: { EUR: 0.91, GBP: 0.77, JPY: 150, AUD: 1.5, CAD: 1.35, CHF: 0.88, NZD: 1.64 } },
+          { atMs: 2000, rates: { EUR: 0.92, GBP: 0.78, JPY: 151, AUD: 1.52, CAD: 1.36, CHF: 0.89, NZD: 1.66 } },
         ],
         true
       );

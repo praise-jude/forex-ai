@@ -5,7 +5,7 @@ import { pipSize } from "../symbols";
 import type { Pair, Signal, SymbolSpec } from "../types";
 import type { BacktestBarResult } from "./backtestEngine";
 
-const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD"]);
+const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD", "USD/CHF"]);
 
 /**
  * Mirrors pipValue.ts's own pipValuePerLot, but takes an explicit historical reference

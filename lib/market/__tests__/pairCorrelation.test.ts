@@ -58,4 +58,20 @@ describe("isCorrelated", () => {
   it("is symmetric", () => {
     expect(isCorrelated("EUR/USD", "long", "GBP/USD", "long")).toBe(isCorrelated("GBP/USD", "long", "EUR/USD", "long"));
   });
+
+  it("USD/CHF behaves as a USD-base major, like USD/CAD and USD/JPY", () => {
+    expect(isCorrelated("USD/CHF", "long", "USD/JPY", "long")).toBe(true);
+    expect(isCorrelated("USD/CHF", "long", "EUR/USD", "short")).toBe(true); // both long USD
+    expect(isCorrelated("USD/CHF", "long", "EUR/USD", "long")).toBe(false); // opposite USD bets
+  });
+
+  it("NZD/USD behaves as a USD-quote major, like EUR/USD and GBP/USD", () => {
+    expect(isCorrelated("NZD/USD", "long", "EUR/USD", "long")).toBe(true);
+    expect(isCorrelated("NZD/USD", "long", "USD/CAD", "short")).toBe(true); // both short USD
+  });
+
+  it("EUR/JPY has no USD leg, so the static model has nothing to say about it either way -- a documented gap the real rolling correlation matrix (rollingCorrelation.ts) backstops instead", () => {
+    expect(isCorrelated("EUR/JPY", "long", "EUR/USD", "long")).toBe(false);
+    expect(isCorrelated("EUR/JPY", "long", "USD/JPY", "long")).toBe(false);
+  });
 });
