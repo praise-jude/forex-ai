@@ -31,8 +31,8 @@ function formatAge(ms: number | null): string {
  * open positions, this just labels each matrix row for display). */
 function tierLabel(magnitude: number, thresholds: { strong: number; extreme: number; base: number }): { label: string; className: string } | null {
   if (magnitude >= thresholds.extreme) return { label: "extreme — new trades blocked", className: "text-rose-400" };
-  if (magnitude >= thresholds.strong) return { label: "strong — size cut to 25%", className: "text-orange-400" };
-  if (magnitude >= thresholds.base) return { label: "moderate — size cut to 50%", className: "text-amber-400" };
+  if (magnitude >= thresholds.strong) return { label: "strong — size cut to 60%", className: "text-orange-400" };
+  if (magnitude >= thresholds.base) return { label: "moderate — size cut to 70%", className: "text-amber-400" };
   return null;
 }
 
@@ -68,7 +68,7 @@ export function CorrelationPanel() {
         correlation (same-direction positions compound risk) and negative correlation (opposite-direction positions compound
         risk) both count toward the risk gate. This isn&apos;t a flat block anymore — a correlated new position gets its size
         reduced in proportion to how strong the correlation is ({data.threshold.toFixed(2)}–{data.strongThreshold.toFixed(2)}:
-        50% size, {data.strongThreshold.toFixed(2)}–{data.extremeThreshold.toFixed(2)}: 25% size), and is only blocked outright
+        70% size, {data.strongThreshold.toFixed(2)}–{data.extremeThreshold.toFixed(2)}: 60% size), and is only blocked outright
         at {data.extremeThreshold.toFixed(2)}+ — highlighted below.
       </p>
       <div className="overflow-hidden rounded-xl border border-white/10 bg-zinc-900">

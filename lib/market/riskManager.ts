@@ -110,7 +110,7 @@ const TIER_RANK: Record<CorrelationTier, number> = { none: 0, moderate: 1, stron
 // under the maxCorrelatedPositions count cap below (otherwise it's blocked outright) --
 // still sized down hard even though it wasn't blocked, since 0.90+ correlation is a
 // near-duplicate bet regardless of how many correlated positions are already open.
-const SIZE_MULTIPLIER_BY_TIER: Record<CorrelationTier, number> = { none: 1, moderate: 0.5, strong: 0.25, extreme: 0.1 };
+const SIZE_MULTIPLIER_BY_TIER: Record<CorrelationTier, number> = { none: 1, moderate: 0.7, strong: 0.6, extreme: 0.1 };
 
 /**
  * Graduated correlation-aware sizing, not a flat allow/block: a new position that
