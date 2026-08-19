@@ -10,12 +10,14 @@ import { CorrelationPanel } from "@/components/dashboard/CorrelationPanel";
 import { ProgressBar } from "@/components/dashboard/ProgressBar";
 import { loadExecutionConfig, type ExecutionConfig } from "@/lib/market/executionConfig";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
+import { calibratedMultiplier } from "@/lib/market/positionSizing";
 import {
   tradeJournal,
   getConfidenceCalibration,
   getSignerBCalibration,
   defaultCalibrationMinSamples,
   type CalibrationStatus,
+  type ConfidenceCalibrationBucket,
   type SignerBCalibrationBucket,
 } from "@/lib/market/tradeJournal";
 import type { DimensionTier } from "@/lib/market/confidenceScore";
@@ -39,7 +41,25 @@ function ConfigRow({ label, value, hint }: { label: string; value: string; hint?
  * live-editable is a separate, larger change; this section exists so an operator can
  * actually see the account's real configured risk/sizing behavior in one place instead
  * of having to read .env.local or Railway's variable list. */
-function ExecutionConfigTable({ account, config }: { account: string; config: ExecutionConfig }) {
+/** Same calibratedMultiplier function executionEngine.ts actually sizes trades with --
+ * this is a read of the real effective multiplier, never a second, drift-prone
+ * reimplementation of the formula. */
+function effectiveMultiplierLabel(tier: "buy" | "strong_buy", config: ExecutionConfig, calibration: ConfidenceCalibrationBucket[]): string {
+  const manual = tier === "strong_buy" ? config.riskMultiplierStrongBuy : config.riskMultiplierBuy;
+  const bucket = calibration.find((b) => b.tier === tier);
+  const calibrated = calibratedMultiplier(bucket);
+  return calibrated === null ? `${manual}x` : `${calibrated.toFixed(2)}x (calibrated from ${bucket!.sampleSize} real trades)`;
+}
+
+function ExecutionConfigTable({
+  account,
+  config,
+  calibration,
+}: {
+  account: string;
+  config: ExecutionConfig;
+  calibration: ConfidenceCalibrationBucket[];
+}) {
   return (
     <div className="rounded-lg border border-white/10 bg-zinc-800/60 p-3">
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">{account}</h3>
@@ -64,7 +84,7 @@ function ExecutionConfigTable({ account, config }: { account: string; config: Ex
         label="Confidence-weighted sizing"
         value={
           config.confidenceSizingEnabled
-            ? `Enabled (buy ${config.riskMultiplierBuy}x, strong_buy ${config.riskMultiplierStrongBuy}x)`
+            ? `Enabled (buy ${effectiveMultiplierLabel("buy", config, calibration)}, strong_buy ${effectiveMultiplierLabel("strong_buy", config, calibration)})`
             : "Disabled"
         }
       />
@@ -202,8 +222,8 @@ export default function SettingsPage() {
             Risk &amp; execution config <span className="normal-case text-zinc-600">(env vars — see README)</span>
           </h2>
           <div className={`grid gap-3 ${demoConfig ? "md:grid-cols-2" : ""}`}>
-            <ExecutionConfigTable account="Live" config={liveConfig} />
-            {demoConfig && <ExecutionConfigTable account="Demo" config={demoConfig} />}
+            <ExecutionConfigTable account="Live" config={liveConfig} calibration={calibration} />
+            {demoConfig && <ExecutionConfigTable account="Demo" config={demoConfig} calibration={calibration} />}
           </div>
         </section>
 

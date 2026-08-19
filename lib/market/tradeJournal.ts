@@ -481,10 +481,11 @@ export interface ConfidenceCalibrationBucket {
  * CONTEXT_RETENTION_MS) are excluded -- there's no confidence to bucket them by, and
  * guessing one would defeat the entire point of calibrating against real data.
  *
- * Read-only measurement -- reuses getPerformanceStats' own win-rate/average-R math over
- * each bucket rather than reimplementing it. Never wired into position sizing or
- * execution; that's a deliberately separate, later change once this produces real
- * numbers to build on.
+ * Reuses getPerformanceStats' own win-rate/average-R math over each bucket rather than
+ * reimplementing it. Feeds positionSizing.ts's confidenceAdjustedRiskPct once a tier
+ * clears the sample-size bar (real measured expectancy replaces the manual
+ * riskMultiplierBuy/riskMultiplierStrongBuy config value for that tier specifically) --
+ * before that, "insufficient_data" is exactly what keeps sizing on the manual value.
  */
 export function getConfidenceCalibration(entries: JournalEntry[], minSamples: number): ConfidenceCalibrationBucket[] {
   const withContext = entries.filter((e): e is JournalEntry & { context: SignalContext } => e.context !== null);

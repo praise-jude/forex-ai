@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeLotSize, confidenceAdjustedRiskPct } from "../positionSizing";
+import { calibratedMultiplier, computeLotSize, confidenceAdjustedRiskPct } from "../positionSizing";
 import { buildSignal, buildSpec } from "./fixtures";
+import type { ConfidenceCalibrationBucket } from "../tradeJournal";
 
 const BASE_CONFIG = { confidenceSizingEnabled: true, riskMultiplierBuy: 1.0, riskMultiplierStrongBuy: 1.5 };
 
@@ -63,5 +64,59 @@ describe("confidenceAdjustedRiskPct", () => {
 
   it("defaults to no scaling (1.0x) when both multipliers are left at their defaults", () => {
     expect(confidenceAdjustedRiskPct(0.25, "buy", BASE_CONFIG)).toBeCloseTo(0.25);
+  });
+
+  function buildBucket(overrides: Partial<ConfidenceCalibrationBucket> = {}): ConfidenceCalibrationBucket {
+    return { tier: "buy", sampleSize: 30, status: "calibrated", winRate: 60, averageR: 0.4, expectancy: 0.4, ...overrides };
+  }
+
+  it("falls back to the manual multiplier when no calibration data is supplied at all (every pre-existing call site)", () => {
+    expect(confidenceAdjustedRiskPct(1, "strong_buy", { ...BASE_CONFIG, riskMultiplierStrongBuy: 1.5 })).toBeCloseTo(1.5);
+  });
+
+  it("falls back to the manual multiplier when the tier's bucket is still insufficient_data", () => {
+    const calibration = [buildBucket({ tier: "buy", status: "insufficient_data", sampleSize: 12, expectancy: null })];
+    expect(confidenceAdjustedRiskPct(1, "buy", { ...BASE_CONFIG, riskMultiplierBuy: 1.2 }, calibration)).toBeCloseTo(1.2);
+  });
+
+  it("uses the real calibrated multiplier once a tier has enough samples, overriding the manual one", () => {
+    // expectancy +0.4R -> calibrated multiplier 1.4x, not the manual 1.2x.
+    const calibration = [buildBucket({ tier: "buy", expectancy: 0.4 })];
+    expect(confidenceAdjustedRiskPct(1, "buy", { ...BASE_CONFIG, riskMultiplierBuy: 1.2 }, calibration)).toBeCloseTo(1.4);
+  });
+
+  it("a tier with real negative expectancy sizes DOWN, even with confidence sizing enabled", () => {
+    const calibration = [buildBucket({ tier: "strong_buy", expectancy: -0.3 })];
+    expect(confidenceAdjustedRiskPct(1, "strong_buy", BASE_CONFIG, calibration)).toBeCloseTo(0.7);
+  });
+
+  it("only affects the tier it has real data for -- the other tier still falls back to its own manual multiplier", () => {
+    const calibration = [buildBucket({ tier: "buy", expectancy: 0.4 })];
+    expect(confidenceAdjustedRiskPct(1, "strong_buy", { ...BASE_CONFIG, riskMultiplierStrongBuy: 1.5 }, calibration)).toBeCloseTo(1.5);
+  });
+});
+
+describe("calibratedMultiplier", () => {
+  function buildBucket(overrides: Partial<ConfidenceCalibrationBucket> = {}): ConfidenceCalibrationBucket {
+    return { tier: "buy", sampleSize: 30, status: "calibrated", winRate: 60, averageR: 0.4, expectancy: 0.4, ...overrides };
+  }
+
+  it("is null when there's no bucket at all", () => {
+    expect(calibratedMultiplier(undefined)).toBeNull();
+  });
+
+  it("is null when the bucket is still insufficient_data", () => {
+    expect(calibratedMultiplier(buildBucket({ status: "insufficient_data", expectancy: null }))).toBeNull();
+  });
+
+  it("is 1 + expectancy once calibrated", () => {
+    expect(calibratedMultiplier(buildBucket({ expectancy: 0.4 }))).toBeCloseTo(1.4);
+    expect(calibratedMultiplier(buildBucket({ expectancy: 0 }))).toBeCloseTo(1.0);
+    expect(calibratedMultiplier(buildBucket({ expectancy: -0.4 }))).toBeCloseTo(0.6);
+  });
+
+  it("clamps to the [0.5, 2.0] safety band even with an extreme real expectancy", () => {
+    expect(calibratedMultiplier(buildBucket({ expectancy: 5 }))).toBe(2.0);
+    expect(calibratedMultiplier(buildBucket({ expectancy: -5 }))).toBe(0.5);
   });
 });
