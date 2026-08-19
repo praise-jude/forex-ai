@@ -6,6 +6,7 @@ import { calculateAdx } from "../indicators/adx";
 import { calculateAtr } from "../indicators/atr";
 import { evaluatePositionForManagement, type PositionManagementConfig, type PositionManagementState } from "../positionManager";
 import { computeHistoricalUsdStrength } from "../currencyStrength";
+import { checkHistoricalNews, type EconomicEvent } from "../newsFilter";
 
 export interface OutcomeSim {
   exitPrice: number;
@@ -237,6 +238,14 @@ export interface RunBacktestInput {
    * (Signer B's currency-strength vote reads as unavailable, same as before this
    * feature existed). */
   currencyStrengthCloses?: Partial<Record<Pair, Candle[]>>;
+  /** Real historical high-impact economic events for the whole backtest window (see
+   * newsFilter.ts's fetchHistoricalEconomicEvents, a paid FMP subscription -- separate
+   * from TickAtlas, which powers the live news_blackout gate but has no historical
+   * archive at all) -- when supplied, each bar's newsStatus override is computed for
+   * real via checkHistoricalNews instead of the hardcoded "clear". Omitted entirely
+   * (no FMP_API_KEY configured) keeps prior behavior exactly -- every bar reads "clear",
+   * same as before this feature existed. */
+  historicalNewsEvents?: EconomicEvent[];
   onBar?: (done: number, total: number) => void;
   /** Defaults to SMC's own evaluateSignal -- overridable so other engines (e.g.
    * rangeEngine.ts's mean-reversion evaluator, via its own evaluateSignal-shaped
@@ -248,10 +257,12 @@ export interface RunBacktestInput {
 /**
  * Walks `primary` bar by bar across the requested window, replaying evaluateSignal
  * exactly as metaApiConnection.ts does live -- same function, same gates, same
- * scoring -- with two deterministic overrides (see evaluateSignal's own doc comment)
- * standing in for the two live-only data sources (news calendar, currency-strength
- * cache) that have no historical archive behind them. On a fired signal, forward-scans
- * the bars after it via simulateOutcome.
+ * scoring. usdStrength/newsStatus (see evaluateSignal's own doc comment) are computed
+ * for real from historical data when currencyStrengthCloses/historicalNewsEvents are
+ * supplied, or fall back to the same deterministic "unavailable"/"clear" defaults as
+ * before either existed when they aren't (no live connection or subscription
+ * configured to source them from). On a fired signal, forward-scans the bars after it
+ * via simulateOutcome.
  */
 export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
   const { pair, timeframe, primary, h1, h4, d1, windowStart, windowEnd } = input;
@@ -281,12 +292,12 @@ export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
     const usdStrength = input.currencyStrengthCloses
       ? computeHistoricalUsdStrength(input.currencyStrengthCloses, barCloseTime)
       : ({ status: "unavailable" } as const);
+    const newsStatus = input.historicalNewsEvents
+      ? checkHistoricalNews(input.historicalNewsEvents, pair, barCloseTime)
+      : ({ status: "clear" } as const);
 
-    const evaluation = evaluate(priorSeries, pair, timeframe, higherTimeframes, {
-      usdStrength,
-      newsStatus: { status: "clear" },
-    });
-    const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), { status: "clear" });
+    const evaluation = evaluate(priorSeries, pair, timeframe, higherTimeframes, { usdStrength, newsStatus });
+    const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), newsStatus);
 
     const outcome =
       evaluation.status === "signal"

@@ -98,11 +98,13 @@ export function evaluateSignal(
   higherTimeframes: HigherTimeframeCandles,
   // Only ever passed by the backtester (see lib/market/backtest/) -- undefined at every
   // live call site, so live behavior is unchanged. checkNews/computeUsdStrength are both
-  // live-cache reads with no historical archive behind them; the backtester supplies
-  // explicit, deterministic values instead of letting either silently read today's real
-  // data while replaying a candle from weeks or months ago (computeUsdStrength in
+  // live-cache reads with no per-bar timestamp of their own (computeUsdStrength in
   // particular takes no timestamp at all, so left alone it would feed today's real
-  // currency-strength reading into every single historical bar's Signer B vote).
+  // currency-strength reading into every single historical bar's Signer B vote) -- the
+  // backtester supplies an explicit value per bar instead, computed for real from
+  // historical data (currencyStrength.ts's computeHistoricalUsdStrength,
+  // newsFilter.ts's checkHistoricalNews) when a historical source is configured, or a
+  // deterministic "unavailable"/"clear" default otherwise.
   overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
 ): SignalEvaluation {
   const noTrade = (reason: NoTradeReason): SignalEvaluation => ({ status: "no_trade", reason });

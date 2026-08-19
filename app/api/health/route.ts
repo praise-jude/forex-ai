@@ -1,7 +1,7 @@
 import { getConnectionStatus, isAccountConfigured } from "@/lib/market/metaApiConnection";
 import { deviceStore } from "@/lib/market/deviceStore";
 import { currencyStrengthStatus } from "@/lib/market/currencyStrength";
-import { newsFilterStatus } from "@/lib/market/newsFilter";
+import { newsFilterStatus, historicalNewsFilterStatus } from "@/lib/market/newsFilter";
 
 export const runtime = "nodejs";
 
@@ -25,6 +25,7 @@ export async function GET() {
     voice: Boolean(process.env.OPENAI_API_KEY),
     currencyStrength: currencyStrengthStatus(),
     news: newsFilterStatus(),
+    historicalNews: historicalNewsFilterStatus(),
     push: {
       registeredDevices: deviceStore.all().length,
     },

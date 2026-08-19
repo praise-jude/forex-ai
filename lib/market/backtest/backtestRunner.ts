@@ -8,6 +8,7 @@ import { loadExecutionConfig } from "../executionConfig";
 import { getBacktestAccount, loadHistoricalRange, loadSymbolSpecs } from "./historyLoader";
 import { runBacktest, type BacktestBarResult, type RealisticSimConfig } from "./backtestEngine";
 import { applyEarlyInvalidation } from "./backtestInvalidation";
+import { fetchHistoricalEconomicEvents, type EconomicEvent } from "../newsFilter";
 import { BACKTEST_TIMEFRAMES, DEFAULT_REALISTIC_SPREAD_FRACTION, MAX_LOOKBACK_DAYS } from "./constants";
 import {
   computeProfitFactor,
@@ -248,6 +249,16 @@ class BacktestRunner {
         );
       }
 
+      // A paid, separate subscription from TickAtlas (see newsFilter.ts's own
+      // FMP_CALENDAR_URL comment) -- an empty FMP_API_KEY makes this resolve to an
+      // empty array, and runBacktest already falls back to the same "clear" default it
+      // always has when historicalNewsEvents is empty/omitted, so this degrades
+      // gracefully for anyone who hasn't configured it.
+      const historicalNewsEvents: EconomicEvent[] = await fetchHistoricalEconomicEvents(
+        new Date(windowStart - LEAD_IN_DAYS.primary * DAY_MS),
+        new Date(windowEnd)
+      );
+
       // Fetched once for the whole run, not per pair -- a single short-lived RPC
       // connection (see historyLoader.ts's loadSymbolSpecs) covering every requested
       // pair, rather than opening/closing one per pair.
@@ -300,6 +311,7 @@ class BacktestRunner {
           windowEnd,
           realistic: realisticSim,
           currencyStrengthCloses,
+          historicalNewsEvents,
           onBar: (done, total) => {
             job.progress.barsEvaluated = done;
             job.progress.barsTotal = total;
