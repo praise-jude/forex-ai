@@ -90,8 +90,35 @@ export interface BacktestJob {
   result: BacktestResult | null;
 }
 
-interface OnDisk {
+export interface OnDisk {
   history: BacktestJob[];
+  /** The job actively queued/running as of the last write -- null once a job finishes
+   * normally (it moves into history instead, see run()'s own finally block). If this is
+   * still non-null the next time this module loads, the process was killed mid-run
+   * (e.g. a redeploy) before it could finish -- see recoverInterruptedJob below, which
+   * is what turns a silently-vanished job into an honestly-labeled "failed: interrupted
+   * by a restart" history entry instead. */
+  current: BacktestJob | null;
+}
+
+/**
+ * Pure transformation, exported standalone so this recovery logic is unit-testable
+ * without mocking the filesystem or constructing a real BacktestRunner: given the
+ * on-disk state as of the process's last write, turns any still-queued/running job into
+ * an honest "failed" history entry (a job that was actively running when the process
+ * died -- most often a redeploy -- has no way to finish, and previously just vanished
+ * with no trace at all). Returns `disk` unchanged (same reference) when there's nothing
+ * to recover, so a caller can cheaply check whether anything actually changed.
+ */
+export function recoverInterruptedJob(disk: OnDisk): OnDisk {
+  if (!disk.current || (disk.current.status !== "running" && disk.current.status !== "queued")) return disk;
+
+  const interrupted: BacktestJob = {
+    ...disk.current,
+    status: "failed",
+    error: "Interrupted by a server restart (e.g. a redeploy) before it finished -- re-run to try again.",
+  };
+  return { history: [interrupted, ...disk.history].slice(0, MAX_HISTORY), current: null };
 }
 
 // A plain property read (even through an intermediate annotated local) still gets
@@ -108,15 +135,28 @@ function readFromDisk(): OnDisk {
   try {
     const raw = fs.readFileSync(/* turbopackIgnore: true */ STORE_FILE, "utf-8");
     const parsed = JSON.parse(raw) as Partial<OnDisk>;
-    return { history: parsed.history ?? [] };
+    return { history: parsed.history ?? [], current: parsed.current ?? null };
   } catch {
-    return { history: [] };
+    return { history: [], current: null };
   }
 }
 
 class BacktestRunner {
   private diskState: OnDisk | null = null;
   private current: BacktestJob | null = null;
+
+  /** Runs once, at module load (when the singleton below is first constructed) -- see
+   * recoverInterruptedJob's own doc comment. this.current itself deliberately stays
+   * null either way (a genuinely fresh process has no job actively running in memory,
+   * even if disk still says otherwise). */
+  constructor() {
+    const disk = this.loadDisk();
+    const recovered = recoverInterruptedJob(disk);
+    if (recovered !== disk) {
+      this.diskState = recovered;
+      this.persist();
+    }
+  }
 
   private loadDisk(): OnDisk {
     if (!this.diskState) this.diskState = readFromDisk();
@@ -167,6 +207,8 @@ class BacktestRunner {
       result: null,
     };
     this.current = job;
+    this.loadDisk().current = job;
+    this.persist();
     void this.run(job); // fire-and-forget -- the API route handler never awaits this
     return job;
   }
@@ -183,6 +225,7 @@ class BacktestRunner {
 
   private async run(job: BacktestJob): Promise<void> {
     job.status = "running";
+    this.persist(); // flush the queued->running transition -- see the constructor's own recovery logic
     try {
       const account = await getBacktestAccount();
 
@@ -267,6 +310,9 @@ class BacktestRunner {
         allResults.push(...results);
         perPairResults.push({ pair, results });
         job.progress.pairsDone++;
+        // A bounded-frequency checkpoint (once per pair, not per bar) -- if the process
+        // dies before the next one, the recovery logic at least knows how far it got.
+        this.persist();
       }
 
       const converted = toJournalEntries(allResults, undefined, realisticSizing);
@@ -293,6 +339,7 @@ class BacktestRunner {
       const state = this.loadDisk();
       state.history.unshift(job);
       state.history = state.history.slice(0, MAX_HISTORY);
+      state.current = null;
       this.persist();
     }
   }
