@@ -1,4 +1,4 @@
-import { doublePrecision, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 import type { NotificationPrefs } from "../market/types";
 
 // Durability/audit persistence for two of lib/market/*.ts's in-memory stores --
@@ -129,6 +129,26 @@ export const pushDevices = pgTable("push_devices", {
   notificationPrefs: jsonb("notification_prefs").notNull().$type<NotificationPrefs>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+// Durability backstop for riskState.ts's daily risk-guardian state (the daily-loss
+// halt, revenge-trading cooldown, and their acknowledgement gate) -- like pushDevices
+// above, this used to be pure in-memory with no persistence at all, so every redeploy
+// silently reset it: a halt tripped by a real daily-loss breach would clear itself the
+// moment the app restarted, with a fresh startOfDayEquity baseline computed from
+// whatever the equity happened to be at that redeploy -- discovered when two live
+// trades fired hours into a day that should have stayed halted. One row per account
+// (live/demo), keyed by account rather than a single singleton row.
+export const riskDailyState = pgTable("risk_daily_state", {
+  account: text("account").primaryKey(),
+  dayKey: text("day_key").notNull(),
+  startOfDayEquity: doublePrecision("start_of_day_equity").notNull(),
+  tradesOpenedToday: integer("trades_opened_today").notNull(),
+  haltedForToday: boolean("halted_for_today").notNull(),
+  consecutiveLosses: integer("consecutive_losses").notNull(),
+  cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
+  acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
 });
 
 // Tiny durability backstop for engineMode.ts's own in-memory mode -- NOT read back to

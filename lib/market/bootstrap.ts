@@ -14,6 +14,7 @@ import { signalStore } from "./signalStore";
 import { positionStore } from "./positionStore";
 import { tradeJournal } from "./tradeJournal";
 import { deviceStore } from "./deviceStore";
+import { riskState } from "./riskState";
 
 let started = false;
 
@@ -33,17 +34,21 @@ export function startMarketEngine(): void {
   started = true;
 
   // Fire-and-forget, same as ensureMetaApiConnection below -- reloads recent
-  // signals/execution/journal/device history from the DB (see signalStore.ts/
-  // positionStore.ts/tradeJournal.ts/deviceStore.ts's own hydrate()) so a restart doesn't
-  // blank the dashboard, reopen hasExecuted()'s idempotency window, lose the trade
-  // journal, or silently unregister every phone from push notifications (all four used to
-  // persist to a local JSON file, which doesn't survive a Railway redeploy the way a real
-  // database does). No-ops (and logs once) when DATABASE_URL isn't set -- the engine
-  // itself doesn't wait on this, since the first real signal/execution is always much
-  // further off than a DB round trip.
-  Promise.all([signalStore.hydrate(), positionStore.hydrate(), tradeJournal.hydrate(), deviceStore.hydrate()]).catch((error: unknown) => {
-    console.error("[market] failed to hydrate signal/execution/journal/device history from the database:", error);
-  });
+  // signals/execution/journal/device/risk-guardian state from the DB (see
+  // signalStore.ts/positionStore.ts/tradeJournal.ts/deviceStore.ts/riskState.ts's own
+  // hydrate()) so a restart doesn't blank the dashboard, reopen hasExecuted()'s
+  // idempotency window, lose the trade journal, silently unregister every phone from
+  // push notifications, or silently clear a daily-loss halt/cooldown that's still
+  // genuinely in effect (all five used to be pure in-memory or a local JSON file,
+  // neither of which survives a Railway redeploy the way a real database does). No-ops
+  // (and logs once) when DATABASE_URL isn't set -- the engine itself doesn't wait on
+  // this, since the first real signal/execution is always much further off than a DB
+  // round trip.
+  Promise.all([signalStore.hydrate(), positionStore.hydrate(), tradeJournal.hydrate(), deviceStore.hydrate(), riskState.hydrate()]).catch(
+    (error: unknown) => {
+      console.error("[market] failed to hydrate signal/execution/journal/device/risk-state history from the database:", error);
+    }
+  );
 
   // Fire-and-forget, same reasoning as above -- if this restart silently dropped engine
   // mode out of LIVE/DEMO back to its safe ANALYSIS default (see engineMode.ts), sends a
