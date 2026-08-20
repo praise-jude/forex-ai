@@ -1,4 +1,5 @@
 import { doublePrecision, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import type { NotificationPrefs } from "../market/types";
 
 // Durability/audit persistence for two of lib/market/*.ts's in-memory stores --
 // signalStore.ts (every fired signal) and positionStore.ts (the execution ledger, "which
@@ -109,6 +110,25 @@ export const journalSignalOutcomes = pgTable("journal_signal_outcomes", {
   outcome: text("outcome").notNull(),
   reason: text("reason"),
   timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
+});
+
+// Durability backstop for deviceStore.ts's registered push devices -- replaces that
+// module's old plain-JSON-file-on-disk store (".device-tokens.json"), which lived on the
+// app service's own container filesystem. Unlike the Postgres volume, that filesystem is
+// NOT persistent across a Railway redeploy, so every deploy silently wiped every
+// registered phone until it was reopened. Same pattern as executedTrades above: the
+// in-memory Map stays the real, synchronous source of truth; this table is a best-effort
+// durability backstop, hydrated back into memory at boot.
+export const pushDevices = pgTable("push_devices", {
+  deviceId: text("device_id").primaryKey(),
+  pushToken: text("push_token").notNull(),
+  platform: text("platform").notNull(),
+  appVersion: text("app_version"),
+  // NotificationPrefs (lib/market/types.ts) -- jsonb rather than one column per pref since
+  // it's never queried by an individual field, only ever read back whole per device.
+  notificationPrefs: jsonb("notification_prefs").notNull().$type<NotificationPrefs>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
 
 // Tiny durability backstop for engineMode.ts's own in-memory mode -- NOT read back to

@@ -29,6 +29,13 @@
       "when": 1786958006754,
       "tag": "0003_cool_princess_powerful",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787212609522,
+      "tag": "0004_faulty_hellion",
+      "breakpoints": true
     }
   ]
 }

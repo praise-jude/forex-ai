@@ -8,14 +8,13 @@ export interface DeviceStoreModule {
 const globalKey = Symbol.for("forex-ai.deviceStore");
 
 /**
- * Loads a fresh deviceStore module instance pointed at `storeFile`. Clears the
- * globalThis-keyed singleton (see deviceStore.ts's own comment on why that pattern
- * exists) between loads -- otherwise a second "reload" in the same test process would
- * just hand back the first load's in-memory instance instead of genuinely re-reading
- * from disk, defeating the point of testing restart persistence.
+ * Loads a fresh deviceStore module instance with an empty in-memory store. Clears the
+ * globalThis-keyed singleton between loads so each test gets its own state -- DB
+ * persistence (see deviceStore.ts's hydrate()) is a best-effort backstop that no-ops
+ * without DATABASE_URL (never set in tests), same as positionStore.ts/signalStore.ts/
+ * tradeJournal.ts's own tests, which don't exercise their DB path either.
  */
-export async function loadDeviceStoreModule(storeFile: string): Promise<DeviceStoreModule> {
-  process.env.DEVICE_STORE_FILE = storeFile;
+export async function loadDeviceStoreModule(): Promise<DeviceStoreModule> {
   delete (globalThis as Record<symbol, unknown>)[globalKey];
   vi.resetModules();
   return import("../deviceStore");

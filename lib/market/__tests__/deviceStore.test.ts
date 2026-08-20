@@ -1,21 +1,12 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { DeviceStoreModule } from "./deviceStoreTestHelper";
 import { loadDeviceStoreModule } from "./deviceStoreTestHelper";
 
 describe("deviceStore", () => {
-  let storeFile: string;
   let mod: DeviceStoreModule;
 
   beforeEach(async () => {
-    storeFile = path.join(os.tmpdir(), `forex-ai-device-store-${Date.now()}-${Math.random()}.json`);
-    mod = await loadDeviceStoreModule(storeFile);
-  });
-
-  afterEach(() => {
-    fs.rmSync(storeFile, { force: true });
+    mod = await loadDeviceStoreModule();
   });
 
   it("registers a new device with default notification prefs", () => {
@@ -23,13 +14,6 @@ describe("deviceStore", () => {
     expect(device.notificationPrefs.buySignals).toBe(true);
     expect(device.notificationPrefs.minConfidence).toBe(80);
     expect(mod.deviceStore.get("device-1")).toMatchObject({ pushToken: "ExponentPushToken[abc]" });
-  });
-
-  it("persists registration across a fresh module load (survives a restart)", async () => {
-    mod.deviceStore.register({ deviceId: "device-1", pushToken: "ExponentPushToken[abc]", platform: "ios" });
-
-    const reloaded = await loadDeviceStoreModule(storeFile);
-    expect(reloaded.deviceStore.get("device-1")).toMatchObject({ pushToken: "ExponentPushToken[abc]" });
   });
 
   it("upserts by deviceId, keeping prior prefs when a token refreshes", () => {
@@ -69,7 +53,7 @@ describe("deviceStore", () => {
     expect(mod.deviceStore.get("device-2")).toBeDefined();
   });
 
-  it("starts empty when the store file doesn't exist yet", () => {
+  it("starts empty before any device registers", () => {
     expect(mod.deviceStore.all()).toEqual([]);
   });
 });
