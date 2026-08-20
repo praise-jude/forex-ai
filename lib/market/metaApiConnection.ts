@@ -409,7 +409,17 @@ async function connect(accountKey: AccountKey): Promise<void> {
   await connection.connect();
   await connection.waitSynchronized();
 
-  for (const pair of PAIRS) {
+  // MetaApi rate-limits subscribeToMarketData bursts (see the "5m" comment below,
+  // dropped for exactly this reason) -- firing all 13 pairs' subscription requests back
+  // to back at connect time re-triggers the same "candle subscriptions downgraded due
+  // to rate limits" degradation that fix was for, just from having more pairs to
+  // subscribe now (13, up from the 10 the fix was originally tuned against) rather than
+  // an unused timeframe. Spacing consecutive pairs out keeps every pair/timeframe
+  // subscribed rather than dropping more of them.
+  const SUBSCRIBE_STAGGER_MS = 300;
+
+  for (const [index, pair] of PAIRS.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
     await connection.subscribeToMarketData(
       brokerSymbol(pair),
       accountKey === "live"
