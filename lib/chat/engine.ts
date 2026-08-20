@@ -1,51 +1,95 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
+import type { Content, Part } from "@google/genai";
 import { chatStore } from "./chatStore";
 import { JUDE_SYSTEM_PROMPT } from "./systemPrompt";
 import { buildTools, type ToolContext } from "./tools";
 
-const MODEL = "claude-opus-5";
-const MAX_TOKENS = 4096;
+// Flash rather than Pro -- the free tier's rate limits are far more generous on Flash,
+// and JUDE's tool-calling/short-reply use case doesn't need Pro's extra reasoning depth.
+// Confirmed against the real API (gemini-2.5-flash 404s: "no longer available to new
+// users") rather than assumed from training data -- verify this again if it ever 404s.
+const MODEL = "gemini-3.6-flash";
+// A hard ceiling on the call-tool -> feed-result -> call-model-again loop below, so a
+// model stuck calling tools forever can't hang a request indefinitely -- see the loop's
+// own comment. No real JUDE turn should ever need more than a handful of tool calls.
+const MAX_TOOL_ROUNDS = 8;
 
-let client: Anthropic | null = null;
+let client: GoogleGenAI | null = null;
 
-function getClient(): Anthropic {
+function getClient(): GoogleGenAI {
   // Lazy so a missing key only breaks /api/chat (mirrors the OPENAI_API_KEY pattern in
   // app/api/voice/transcribe/route.ts), not module load / every other route.
-  if (!client) client = new Anthropic();
+  if (!client) client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   return client;
 }
 
+function toGeminiRole(role: "user" | "assistant"): "user" | "model" {
+  return role === "assistant" ? "model" : "user";
+}
+
 /**
- * Runs one chat turn: loads persisted history, appends the user's message, lets Claude
- * call tools (built fresh, closed over the raw message -- see tools.ts), then persists
- * both turns and returns the assistant's reply text.
+ * Runs one chat turn: loads persisted history, appends the user's message, lets Gemini
+ * call tools (built fresh, closed over the raw message -- see tools.ts) via a manual
+ * call/respond loop (the Gemini SDK has no equivalent of Anthropic's toolRunner
+ * convenience helper), then persists both turns and returns the assistant's reply text.
  */
 export async function runChatTurn(rawUserMessage: string, requestOrigin: string, authHeader: string | null): Promise<string> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set on the server.");
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not set on the server.");
   }
 
   const history = chatStore.all();
   const ctx: ToolContext = { rawUserMessage, origin: requestOrigin, authHeader };
   const tools = buildTools(ctx);
+  const toolsByName = new Map(tools.map((t) => [t.name, t]));
 
-  const finalMessage = await getClient().beta.messages.toolRunner({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    thinking: { type: "adaptive" },
-    system: JUDE_SYSTEM_PROMPT,
-    tools,
-    messages: [
-      ...history.map((m) => ({ role: m.role, content: m.content }) as Anthropic.Beta.BetaMessageParam),
-      { role: "user", content: rawUserMessage },
-    ],
-  });
+  const functionDeclarations = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parametersJsonSchema: t.parameters,
+  }));
 
-  const replyText = finalMessage.content
-    .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
+  const contents: Content[] = [
+    ...history.map((m): Content => ({ role: toGeminiRole(m.role), parts: [{ text: m.content }] })),
+    { role: "user", parts: [{ text: rawUserMessage }] },
+  ];
+
+  let replyText = "";
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const response = await getClient().models.generateContent({
+      model: MODEL,
+      contents,
+      config: {
+        systemInstruction: JUDE_SYSTEM_PROMPT,
+        tools: [{ functionDeclarations }],
+      },
+    });
+
+    // Read the real parts array (not just the .functionCalls convenience getter) so any
+    // text the model produced alongside a tool call is preserved when echoing this turn
+    // back as conversation history below.
+    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    const calls = parts.filter((p): p is Part & { functionCall: NonNullable<Part["functionCall"]> } => Boolean(p.functionCall));
+
+    if (calls.length === 0) {
+      replyText = response.text ?? "";
+      break;
+    }
+
+    contents.push({ role: "model", parts });
+
+    const responseParts: Part[] = [];
+    for (const { functionCall: call } of calls) {
+      const tool = call.name ? toolsByName.get(call.name) : undefined;
+      const resultText = tool ? await tool.run(call.args ?? {}) : JSON.stringify({ ok: false, error: "unknown_tool", message: `No tool named "${call.name}".` });
+      responseParts.push({ functionResponse: { name: call.name, response: { result: resultText } } });
+    }
+    contents.push({ role: "user", parts: responseParts });
+  }
+
+  if (!replyText) {
+    replyText = "I wasn't able to finish that within the allowed number of steps -- try rephrasing or asking a narrower question.";
+  }
 
   const now = Date.now();
   chatStore.append({ role: "user", content: rawUserMessage, time: now });

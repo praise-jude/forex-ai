@@ -1,5 +1,3 @@
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { z } from "zod";
 import { predictionStore } from "../market/predictionStore";
 import { signalStore } from "../market/signalStore";
 import { getEngineMode, manualExecutionAccount, LIVE_CONFIRMATION_PHRASE } from "../market/engineMode";
@@ -32,17 +30,18 @@ const REGIMES: MarketRegime[] = [
   "range",
 ];
 
-// The model's tool-call arguments are free-text strings, not guaranteed to be one of
-// this app's real enum values -- validated the same way the /api/trade-journal route
-// validates its own query params, rather than an unchecked cast. An unrecognized value
-// is simply dropped from the filter (never guessed into the nearest real one).
-function tradeJournalFilterFrom(input: { pair?: string; timeframe?: string; session?: string; regime?: string; signerBAgreement?: boolean }): PerformanceFilter {
+// The model's tool-call arguments are an untrusted, loosely-typed JSON object -- not
+// guaranteed to be one of this app's real enum values or even the right JS type -- so
+// every field is typeof-checked before use, same discipline the /api/trade-journal route
+// already applies to its own query params. An unrecognized/wrong-typed value is simply
+// dropped from the filter (never guessed into the nearest real one).
+function tradeJournalFilterFrom(input: Record<string, unknown>): PerformanceFilter {
   const filter: PerformanceFilter = {};
-  if (input.pair && PAIRS.includes(input.pair as Pair)) filter.pair = input.pair as Pair;
-  if (input.timeframe && TIMEFRAMES.includes(input.timeframe as Timeframe)) filter.timeframe = input.timeframe as Timeframe;
-  if (input.session && SESSIONS.includes(input.session as Session)) filter.session = input.session as Session;
-  if (input.regime && REGIMES.includes(input.regime as MarketRegime)) filter.regime = input.regime as MarketRegime;
-  if (input.signerBAgreement !== undefined) filter.signerBAgreement = input.signerBAgreement;
+  if (typeof input.pair === "string" && PAIRS.includes(input.pair as Pair)) filter.pair = input.pair as Pair;
+  if (typeof input.timeframe === "string" && TIMEFRAMES.includes(input.timeframe as Timeframe)) filter.timeframe = input.timeframe as Timeframe;
+  if (typeof input.session === "string" && SESSIONS.includes(input.session as Session)) filter.session = input.session as Session;
+  if (typeof input.regime === "string" && REGIMES.includes(input.regime as MarketRegime)) filter.regime = input.regime as MarketRegime;
+  if (typeof input.signerBAgreement === "boolean") filter.signerBAgreement = input.signerBAgreement;
   return filter;
 }
 
@@ -84,6 +83,21 @@ export interface ToolContext {
   authHeader: string | null;
 }
 
+/** A plain, provider-agnostic tool definition -- `parameters` is a raw JSON Schema object
+ * (not a Zod schema tied to one SDK's own conversion), so the same definitions work
+ * whichever model provider is wired up in engine.ts. `run` always receives a loosely-typed
+ * args object (the model's own JSON output, never guaranteed to match `parameters`) and is
+ * responsible for validating it defensively -- see tradeJournalFilterFrom above for the
+ * pattern every tool below follows. */
+export interface ToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  run: (args: Record<string, unknown>) => Promise<string>;
+}
+
+const NO_PARAMS = { type: "object", properties: {} } as const;
+
 /**
  * Builds this turn's tool set fresh, closed over the current turn's raw user message.
  * Tool inputs are LLM-controlled and therefore untrusted for anything safety-relevant --
@@ -91,12 +105,12 @@ export interface ToolContext {
  * boolean as an argument; they check ctx.rawUserMessage themselves, independently of
  * whatever the model's tool call claims.
  */
-export function buildTools(ctx: ToolContext) {
-  const get_predictions = betaZodTool({
+export function buildTools(ctx: ToolContext): ToolDef[] {
+  const get_predictions: ToolDef = {
     name: "get_predictions",
     description:
       "Get the current SMC signal engine evaluation for every watched pair -- headline (e.g. STRONG BUY, NEUTRAL, NO TRADE), a short reason, and confidence. Use this to answer any question about current market read/outlook.",
-    inputSchema: z.object({}),
+    parameters: NO_PARAMS,
     run: async () => {
       const updates = predictionStore.all();
       return JSON.stringify(
@@ -113,13 +127,13 @@ export function buildTools(ctx: ToolContext) {
         }))
       );
     },
-  });
+  };
 
-  const get_signals = betaZodTool({
+  const get_signals: ToolDef = {
     name: "get_signals",
     description:
       "List recent executable trade signals (buy/strong_buy tier, not watch-tier) with their id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (SMC's own direction/entry sub-scores and confluence tags, plus Signer B's independent direction/confidence and its own EMA trend/Supertrend/RSI divergence/currency strength/news reads), the current market regime for that pair/timeframe, a transparent 7-category setup quality breakdown (NOT a win probability), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X' or 'why is this setup only scored N'.",
-    inputSchema: z.object({}),
+    parameters: NO_PARAMS,
     run: async () => {
       return JSON.stringify(
         signalStore
@@ -161,22 +175,25 @@ export function buildTools(ctx: ToolContext) {
           })
       );
     },
-  });
+  };
 
-  const get_trade_journal = betaZodTool({
+  const get_trade_journal: ToolDef = {
     name: "get_trade_journal",
     description:
       "Get real, closed-trade performance history for trades THIS app opened and closed -- count, win rate, average R-multiple, and max drawdown (in R), optionally filtered by pair/timeframe/session/regime/whether Signer B agreed with the trade's direction. This is the ONLY source of a real win rate or accuracy figure in this system -- always call this rather than estimating or recalling one from earlier in the conversation. An empty or low-count result is an honest 'not enough closed trades yet', not a sign of a broken system.",
-    inputSchema: z.object({
-      pair: z.string().optional().describe("Filter to one pair, e.g. 'EUR/USD'. Omit for all pairs."),
-      timeframe: z.string().optional().describe("Filter to one timeframe, e.g. '15m'. Omit for all timeframes."),
-      session: z.string().optional().describe("Filter to one session: asia, london, newyork, off-session."),
-      regime: z.string().optional().describe("Filter to trades that fired during one market regime, e.g. 'strong_uptrend'."),
-      signerBAgreement: z
-        .boolean()
-        .optional()
-        .describe("true = only trades where Signer B agreed with the direction at signal time; false = only trades where it didn't."),
-    }),
+    parameters: {
+      type: "object",
+      properties: {
+        pair: { type: "string", description: "Filter to one pair, e.g. 'EUR/USD'. Omit for all pairs." },
+        timeframe: { type: "string", description: "Filter to one timeframe, e.g. '15m'. Omit for all timeframes." },
+        session: { type: "string", description: "Filter to one session: asia, london, newyork, off-session." },
+        regime: { type: "string", description: "Filter to trades that fired during one market regime, e.g. 'strong_uptrend'." },
+        signerBAgreement: {
+          type: "boolean",
+          description: "true = only trades where Signer B agreed with the direction at signal time; false = only trades where it didn't.",
+        },
+      },
+    },
     run: async (input) => {
       const entries = tradeJournal.all();
       const stats = getPerformanceStats(entries, tradeJournalFilterFrom(input));
@@ -193,13 +210,13 @@ export function buildTools(ctx: ToolContext) {
         })),
       });
     },
-  });
+  };
 
-  const get_positions = betaZodTool({
+  const get_positions: ToolDef = {
     name: "get_positions",
     description:
       "Get currently open broker positions and today's trade count, for whichever account a manual trade action would currently target (same resolution the dashboard uses).",
-    inputSchema: z.object({}),
+    parameters: NO_PARAMS,
     run: async () => {
       const accountKey = manualExecutionAccount(getEngineMode());
       return JSON.stringify({
@@ -208,13 +225,13 @@ export function buildTools(ctx: ToolContext) {
         tradesToday: positionStore.tradesOnDay(dayKeyFor(Date.now()), accountKey).length,
       });
     },
-  });
+  };
 
-  const get_risk_status = betaZodTool({
+  const get_risk_status: ToolDef = {
     name: "get_risk_status",
     description:
       "Get today's risk-guardian status: whether trading is halted for the day, any active cooldown, consecutive losses, and the configured limits. Use this before discussing whether a trade could execute right now.",
-    inputSchema: z.object({}),
+    parameters: NO_PARAMS,
     run: async () => {
       const accountKey = manualExecutionAccount(getEngineMode());
       const config = loadExecutionConfig(accountKey);
@@ -230,12 +247,12 @@ export function buildTools(ctx: ToolContext) {
         maxDailyLossPct: config.maxDailyLossPct,
       });
     },
-  });
+  };
 
-  const get_engine_mode = betaZodTool({
+  const get_engine_mode: ToolDef = {
     name: "get_engine_mode",
     description: "Get the current Autopilot engine mode (analysis, demo, or live) and whether demo is configured.",
-    inputSchema: z.object({}),
+    parameters: NO_PARAMS,
     run: async () => {
       const mode = getEngineMode();
       return JSON.stringify({
@@ -244,42 +261,58 @@ export function buildTools(ctx: ToolContext) {
         riskPerTradePct: loadExecutionConfig(manualExecutionAccount(mode)).riskPerTradePct,
       });
     },
-  });
+  };
 
-  const pause_trading = betaZodTool({
+  const accountParam = (input: Record<string, unknown>): "live" | "demo" => (input.account === "demo" ? "demo" : "live");
+
+  const pause_trading: ToolDef = {
     name: "pause_trading",
     description: "Pause auto-execution (kill switch ON) for an account. No confirmation phrase needed -- pausing is always the safe direction.",
-    inputSchema: z.object({ account: z.enum(["live", "demo"]).default("live") }),
+    parameters: {
+      type: "object",
+      properties: { account: { type: "string", enum: ["live", "demo"], description: "Defaults to 'live' if omitted." } },
+    },
     run: async (input) => {
       const { status, json } = await callOwnApi(ctx.origin, ctx.authHeader, "/api/kill-switch", {
         method: "POST",
-        body: { action: "pause", account: input.account },
+        body: { action: "pause", account: accountParam(input) },
       });
       return JSON.stringify({ status, result: json });
     },
-  });
+  };
 
-  const resume_trading = betaZodTool({
+  const resume_trading: ToolDef = {
     name: "resume_trading",
     description:
       "Resume auto-execution (kill switch OFF) for an account. This re-arms auto-trading -- only call this when the user has clearly asked to resume, not as a side effect of another request.",
-    inputSchema: z.object({ account: z.enum(["live", "demo"]).default("live") }),
+    parameters: {
+      type: "object",
+      properties: { account: { type: "string", enum: ["live", "demo"], description: "Defaults to 'live' if omitted." } },
+    },
     run: async (input) => {
       const { status, json } = await callOwnApi(ctx.origin, ctx.authHeader, "/api/kill-switch", {
         method: "POST",
-        body: { action: "resume", account: input.account },
+        body: { action: "resume", account: accountParam(input) },
       });
       return JSON.stringify({ status, result: json });
     },
-  });
+  };
 
-  const set_engine_mode = betaZodTool({
+  const set_engine_mode: ToolDef = {
     name: "set_engine_mode",
     description:
       "Switch the Autopilot engine mode. 'analysis' and 'demo' apply immediately, no confirmation needed. 'live' enables real-money auto-execution and REQUIRES the user to have typed or said the exact phrase 'ENABLE LIVE TRADING' as their own message -- if they have not, this tool refuses and tells you the exact phrase to relay back to them. Never claim live mode is enabled unless this tool's result says ok:true.",
-    inputSchema: z.object({ mode: z.enum(["analysis", "demo", "live"]) }),
+    parameters: {
+      type: "object",
+      properties: { mode: { type: "string", enum: ["analysis", "demo", "live"] } },
+      required: ["mode"],
+    },
     run: async (input) => {
-      if (input.mode === "live") {
+      const mode = input.mode;
+      if (mode !== "analysis" && mode !== "demo" && mode !== "live") {
+        return JSON.stringify({ ok: false, error: "invalid_mode", message: "mode must be one of analysis, demo, live." });
+      }
+      if (mode === "live") {
         // Independent, tool-side check against the RAW user message -- never the LLM's
         // own claim -- mirroring exactly how parseVoiceCommand only ever recognizes
         // hard_confirm on an exact match. enableLiveMode() re-checks this again itself
@@ -295,19 +328,27 @@ export function buildTools(ctx: ToolContext) {
       }
       const { status, json } = await callOwnApi(ctx.origin, ctx.authHeader, "/api/engine-mode", {
         method: "POST",
-        body: { mode: input.mode, confirmationPhrase: ctx.rawUserMessage },
+        body: { mode, confirmationPhrase: ctx.rawUserMessage },
       });
       return JSON.stringify({ status, result: json });
     },
-  });
+  };
 
-  const execute_trade = betaZodTool({
+  const execute_trade: ToolDef = {
     name: "execute_trade",
     description:
       "Execute a specific trade signal by id. REQUIRES the user to have typed or said the exact confirmation phrase for that signal (from get_signals' confirmPhraseRequiredToExecute, e.g. 'CONFIRM BUY EURUSD') as their own message -- if they have not, this tool refuses and tells you the exact phrase to relay back to them. Never claim a trade was placed unless this tool's result says status:'filled'.",
-    inputSchema: z.object({ signalId: z.string() }),
+    parameters: {
+      type: "object",
+      properties: { signalId: { type: "string" } },
+      required: ["signalId"],
+    },
     run: async (input) => {
-      const signal = signalStore.get(input.signalId);
+      const signalId = input.signalId;
+      if (typeof signalId !== "string" || !signalId) {
+        return JSON.stringify({ ok: false, error: "invalid_input", message: "signalId (string) is required." });
+      }
+      const signal = signalStore.get(signalId);
       if (!signal) {
         return JSON.stringify({ ok: false, error: "not_found", message: "That signal id was not found or has expired." });
       }
@@ -323,7 +364,7 @@ export function buildTools(ctx: ToolContext) {
         });
       }
 
-      const { json } = await callOwnApi(ctx.origin, ctx.authHeader, `/api/signals/${input.signalId}/execute`, {
+      const { json } = await callOwnApi(ctx.origin, ctx.authHeader, `/api/signals/${signalId}/execute`, {
         method: "POST",
         // The execute route now requires this itself (confirmationMode.ts's gate) --
         // already computed and verified above against the user's own raw message, so
@@ -333,7 +374,7 @@ export function buildTools(ctx: ToolContext) {
       const result = json as ExecuteResponse;
       return JSON.stringify({ ok: true, result, spoken: buildResultAnnouncement(signal, result) });
     },
-  });
+  };
 
   return [
     get_predictions,
