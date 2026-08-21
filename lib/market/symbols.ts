@@ -37,6 +37,11 @@ const BASE_CONFIG: Record<Pair, { symbol: string; pip: number; decimals: number 
   // Confirmed against a real getSymbolSpecification call on this account's own
   // ETHUSDm symbol (digits: 2, pipSize: 0.01) -- identical shape to BTC/USD above.
   "ETH/USD": { symbol: "ETHUSD", pip: 0.01, decimals: 2 },
+  // Confirmed against a real getSymbolSpecification call on this account's own
+  // NFLXm/MSFTm/SPCXm symbols: pipSize 1, digits 2, point 0.01 for all three.
+  NFLX: { symbol: "NFLX", pip: 1, decimals: 2 },
+  MSFT: { symbol: "MSFT", pip: 1, decimals: 2 },
+  SPCX: { symbol: "SPCX", pip: 1, decimals: 2 },
 };
 
 // Crypto trades 24/7 with no ICT-style institutional session structure the killzone
@@ -46,6 +51,23 @@ const CRYPTO_PAIRS: ReadonlySet<Pair> = new Set(["BTC/USD", "ETH/USD"]);
 
 export function isCrypto(pair: Pair): boolean {
   return CRYPTO_PAIRS.has(pair);
+}
+
+// Individual stocks trade on their own daily window (confirmed via real
+// quoteSessions/tradeSessions data: NFLX/MSFT ~10:00-19:44, SPCX ~08:01-23:58, both
+// Mon-Fri only) -- neither the forex killzone window nor crypto's 24/7 pattern. Rather
+// than hardcoding a converted UTC window here (broker "server time" commonly drifts on
+// its own DST schedule through the year, so a conversion verified today isn't
+// guaranteed to stay correct), signalEngine.ts exempts these from the killzone gate the
+// same way crypto is exempted: the real candle stream itself only ever produces bars
+// during actual trading hours (brokers don't backfill closed-market candles), so both
+// live (candle-close events) and backtest (iterating the real fetched array) already
+// naturally enforce real hours with zero special-casing -- see
+// backtestEngine.ts's own comment on this.
+const STOCK_PAIRS: ReadonlySet<Pair> = new Set(["NFLX", "MSFT", "SPCX"]);
+
+export function isStock(pair: Pair): boolean {
+  return STOCK_PAIRS.has(pair);
 }
 
 const BY_PLAIN_SYMBOL: Map<string, Pair> = new Map(

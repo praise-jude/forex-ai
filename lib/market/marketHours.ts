@@ -1,5 +1,6 @@
 import type { Pair } from "./types";
-import { isCrypto } from "./symbols";
+import { isCrypto, isStock } from "./symbols";
+import { isTickStale } from "./marketHealth";
 
 // Standard forex/metals/oil weekly session: opens Sunday 5pm New York time, closes
 // Friday 5pm New York time -- the same convention every major broker uses (tied to
@@ -35,10 +36,18 @@ function isForexWeeklyClose(utcMs: number): boolean {
   return false;
 }
 
-/** Whether `pair` should be treated as closed right now. Crypto is exempt (trades
- * 24/7, see isCrypto) -- every other pair here (forex, metals, oil) follows the same
- * standard weekly session. */
-export function isMarketClosed(pair: Pair, utcMs: number): boolean {
+/**
+ * Whether `pair` should be treated as closed right now. Crypto is exempt (trades 24/7,
+ * see isCrypto) -- forex/metals/oil follow the standard weekly session above. Stocks
+ * (NFLX/MSFT/SPCX) get neither rule -- their own daily window has no relationship to
+ * the forex week, and hardcoding a broker-server-time conversion here isn't reliable
+ * (see symbols.ts's isStock() doc comment) -- so this falls back to the same honest
+ * "hasn't ticked in a while" inference isPriceStale already uses elsewhere, driven by
+ * the caller's own last-seen tick time for that pair since this function has no direct
+ * price-store access itself. `lastTickMs` is ignored for every other pair.
+ */
+export function isMarketClosed(pair: Pair, utcMs: number, lastTickMs?: number | null): boolean {
   if (isCrypto(pair)) return false;
+  if (isStock(pair)) return isTickStale(lastTickMs, utcMs);
   return isForexWeeklyClose(utcMs);
 }

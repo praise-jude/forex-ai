@@ -8,7 +8,7 @@ import { detectLiquiditySweeps } from "./detectors/liquiditySweeps";
 import { marketStructureTrend } from "./detectors/marketStructure";
 import { detectCandlestickPattern } from "./detectors/candlestickPatterns";
 import { getActiveSession, isKillzone } from "./sessions";
-import { isCrypto } from "./symbols";
+import { isCrypto, isStock } from "./symbols";
 import { calculateRsi } from "./indicators/rsi";
 import { calculateMacd } from "./indicators/macd";
 import { calculateAdx } from "./indicators/adx";
@@ -115,8 +115,12 @@ export function evaluateSignal(
 
   // Crypto trades 24/7 with no ICT-style institutional session structure the killzone
   // gate was built around, so it's exempted here rather than arbitrarily restricted to
-  // forex trading hours — every other pre-gate below still fully applies.
-  if (!isCrypto(pair) && !isKillzone(lastCandle.time)) return noTrade({ code: "outside_killzone" });
+  // forex trading hours. Stocks (NFLX/MSFT/SPCX) get the same exemption for a different
+  // reason: their own real trading hours have no relationship to the forex London/NY
+  // killzone, and the broker's candle stream already only ever produces bars during
+  // their actual open hours (see symbols.ts's isStock() doc comment) -- every other
+  // pre-gate below still fully applies to both.
+  if (!isCrypto(pair) && !isStock(pair) && !isKillzone(lastCandle.time)) return noTrade({ code: "outside_killzone" });
 
   // Hoisted ahead of sweep detection: the sweep tolerance below needs it, and it's a
   // pure function of `candles` with no dependency on anything computed in between, so

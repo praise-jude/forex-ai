@@ -279,6 +279,13 @@ export function runBacktest(input: RunBacktestInput): BacktestBarResult[] {
   const total = endIndex - startIndex + 1;
   let done = 0;
 
+  // Iterates the real fetched candle array directly, not a synthesized fixed-interval
+  // clock -- this is what already makes weekend gaps a non-issue for every forex pair
+  // (no candle exists for Saturday, so none gets evaluated), and is exactly why stocks
+  // (NFLX/MSFT/SPCX, open only ~10-16h/day, 5 days/week) need no special gap-handling
+  // here either: the broker simply never produced a candle for their closed hours in
+  // the first place. See symbols.ts's isStock() doc comment for the live-side half of
+  // this same reasoning.
   for (let i = startIndex; i <= endIndex; i++) {
     const bar = primary[i];
     const barCloseTime = bar.time + TIMEFRAME_MS[timeframe];

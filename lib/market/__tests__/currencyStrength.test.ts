@@ -121,6 +121,14 @@ describe("usdStrengthSupports", () => {
     expect(usdStrengthSupports({ status: "available", index: -0.01 }, "AUD/JPY", "short")).toBe("unavailable");
     expect(usdStrengthSupports({ status: "unavailable" }, "AUD/JPY", "long")).toBe("unavailable");
   });
+
+  it("individual stocks (NFLX/MSFT/SPCX) get the same honest unavailable treatment -- no real dollar-correlation logic applies to a single equity", () => {
+    for (const pair of ["NFLX", "MSFT", "SPCX"] as const) {
+      expect(usdStrengthSupports({ status: "available", index: 0.01 }, pair, "long")).toBe("unavailable");
+      expect(usdStrengthSupports({ status: "available", index: -0.01 }, pair, "short")).toBe("unavailable");
+      expect(usdStrengthSupports({ status: "unavailable" }, pair, "long")).toBe("unavailable");
+    }
+  });
 });
 
 describe("computeHistoricalUsdStrength", () => {

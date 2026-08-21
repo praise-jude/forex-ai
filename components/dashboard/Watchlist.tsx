@@ -60,7 +60,7 @@ export const Watchlist = memo(function Watchlist({ entries, selectedPair, onSele
       <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">Pairs</h2>
       <ul className="space-y-0.5">
         {entries.map((entry) => {
-          const closed = isMarketClosed(entry.pair, now);
+          const closed = isMarketClosed(entry.pair, now, entry.time);
           return (
             <li key={entry.pair}>
               <button

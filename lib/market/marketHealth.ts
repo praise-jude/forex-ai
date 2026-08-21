@@ -17,5 +17,12 @@ export const DEFAULT_STALE_THRESHOLD_MS = 5 * 60 * 1000;
  */
 export function isPriceStale(price: Price | undefined, now: number, thresholdMs = DEFAULT_STALE_THRESHOLD_MS): boolean {
   if (!price) return true;
-  return now - price.time > thresholdMs;
+  return isTickStale(price.time, now, thresholdMs);
+}
+
+/** Same inference as isPriceStale, for callers that only have a bare last-tick
+ * timestamp on hand (e.g. marketHours.ts's stock-hours check) rather than a full Price. */
+export function isTickStale(lastTickMs: number | null | undefined, now: number, thresholdMs = DEFAULT_STALE_THRESHOLD_MS): boolean {
+  if (lastTickMs == null) return true;
+  return now - lastTickMs > thresholdMs;
 }

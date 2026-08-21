@@ -13,7 +13,12 @@ const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD", "USD/CH
 // gold/oil/crypto's own USD-quote fallback is), so usdStrengthSupports reports
 // "unavailable" honestly for these rather than silently reusing the USD-quote branch's
 // logic on a pair that was never a USD pair to begin with.
-const NOT_A_USD_PAIR: ReadonlySet<Pair> = new Set(["EUR/JPY", "AUD/JPY"]);
+// Individual stocks (NFLX/MSFT/SPCX) are here too, for a different reason than the JPY
+// crosses: unlike even gold/oil/crypto (which get a debatable inverse-dollar-correlation
+// approximation via the generic branch below), a single equity's price genuinely isn't
+// driven by USD currency strength in any comparable way -- honestly "unavailable" is the
+// more defensible default than asserting a made-up correlation.
+const NOT_A_USD_PAIR: ReadonlySet<Pair> = new Set(["EUR/JPY", "AUD/JPY", "NFLX", "MSFT", "SPCX"]);
 // A move smaller than this (as a fraction, e.g. 0.0005 = 0.05%) between polls is too
 // small to call a meaningful directional lean either way -- avoids treating quote noise
 // as a confirmed currency-strength signal.

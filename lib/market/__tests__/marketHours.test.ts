@@ -41,4 +41,31 @@ describe("isMarketClosed", () => {
     const sat = Date.UTC(2024, 0, 6, 12, 0);
     expect(isMarketClosed("BTC/USD", sat)).toBe(false);
   });
+
+  // Stocks ignore the forex weekly rule entirely -- their own daily hours have no
+  // relationship to it (see marketHours.ts's own doc comment) -- and fall back to the
+  // caller's own last-tick staleness instead.
+  describe("stocks (NFLX/MSFT/SPCX) -- staleness-based, not the forex weekly rule", () => {
+    it("is open when the last tick is recent", () => {
+      const now = Date.UTC(2024, 0, 3, 12, 0);
+      expect(isMarketClosed("NFLX", now, now - 60_000)).toBe(false);
+    });
+
+    it("is closed when the last tick is stale", () => {
+      const now = Date.UTC(2024, 0, 3, 12, 0);
+      expect(isMarketClosed("MSFT", now, now - 10 * 60_000)).toBe(true);
+    });
+
+    it("is closed when no tick time is known at all", () => {
+      const now = Date.UTC(2024, 0, 3, 12, 0);
+      expect(isMarketClosed("SPCX", now, null)).toBe(true);
+      expect(isMarketClosed("SPCX", now)).toBe(true);
+    });
+
+    it("is treated as stale-closed even on an ordinary weekday, unlike forex/metals/oil", () => {
+      // Same instant marketHours.test.ts already proved open for EUR/USD/XAU/USD/USOIL above.
+      const wednesday = Date.UTC(2024, 0, 3, 12, 0);
+      expect(isMarketClosed("NFLX", wednesday, null)).toBe(true);
+    });
+  });
 });

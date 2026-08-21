@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_STALE_THRESHOLD_MS, isPriceStale } from "../marketHealth";
+import { DEFAULT_STALE_THRESHOLD_MS, isPriceStale, isTickStale } from "../marketHealth";
 import type { Price } from "../types";
 
 function price(overrides: Partial<Price> = {}): Price {
@@ -29,5 +29,17 @@ describe("isPriceStale", () => {
   it("respects a custom threshold", () => {
     expect(isPriceStale(price({ time: 1000 }), 1500, 1000)).toBe(false);
     expect(isPriceStale(price({ time: 1000 }), 2500, 1000)).toBe(true);
+  });
+});
+
+describe("isTickStale", () => {
+  it("mirrors isPriceStale's threshold logic for a bare timestamp", () => {
+    expect(isTickStale(1000, 1000 + DEFAULT_STALE_THRESHOLD_MS - 1)).toBe(false);
+    expect(isTickStale(1000, 1000 + DEFAULT_STALE_THRESHOLD_MS + 1)).toBe(true);
+  });
+
+  it("is stale when there's no timestamp at all (null or undefined)", () => {
+    expect(isTickStale(null, 1000)).toBe(true);
+    expect(isTickStale(undefined, 1000)).toBe(true);
   });
 });
