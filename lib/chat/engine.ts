@@ -4,11 +4,16 @@ import { chatStore } from "./chatStore";
 import { JUDE_SYSTEM_PROMPT } from "./systemPrompt";
 import { buildTools, type ToolContext } from "./tools";
 
-// Flash rather than Pro -- the free tier's rate limits are far more generous on Flash,
-// and JUDE's tool-calling/short-reply use case doesn't need Pro's extra reasoning depth.
-// Confirmed against the real API (gemini-2.5-flash 404s: "no longer available to new
-// users") rather than assumed from training data -- verify this again if it ever 404s.
-const MODEL = "gemini-3.6-flash";
+// Flash-Lite rather than plain Flash or Pro -- the free tier's daily request quota is
+// tracked separately per model, and Flash's own quota turned out to be only 20
+// requests/day (confirmed live: a real chat session hit a RESOURCE_EXHAUSTED 429 well
+// within a single day of normal use). Flash-Lite's tool-calling round trip was verified
+// working identically before switching. The "-latest" alias (rather than a pinned
+// version like "gemini-3.6-flash") also means this never needs updating again as Google
+// rotates model versions -- confirmed live that it currently resolves to
+// gemini-3.5-flash-lite. Re-verify against the real API if this ever 404s or the quota
+// error reappears.
+const MODEL = "gemini-flash-lite-latest";
 // A hard ceiling on the call-tool -> feed-result -> call-model-again loop below, so a
 // model stuck calling tools forever can't hang a request indefinitely -- see the loop's
 // own comment. No real JUDE turn should ever need more than a handful of tool calls.

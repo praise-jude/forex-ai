@@ -9,6 +9,21 @@ export async function GET() {
 }
 
 /**
+ * Never surface a raw provider error (a Gemini SDK error's own `.message` can be the
+ * entire raw JSON response body, including internal quota/project details) directly to
+ * the chat UI -- the full error is still logged server-side for diagnosis, this is only
+ * what reaches the user. Recognizes the one error shape worth explaining specifically
+ * (the free-tier daily request quota); everything else gets a plain, honest fallback.
+ */
+function friendlyChatErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/RESOURCE_EXHAUSTED|quota/i.test(raw)) {
+    return "JUDE has hit its free daily message limit for today. It resets on its own -- try again later or tomorrow.";
+  }
+  return "JUDE couldn't respond just now. Try again in a moment.";
+}
+
+/**
  * POST /api/chat {message} -> {reply}. Gated by the existing proxy.ts password
  * middleware like every other route (not in PUBLIC_PATHS) -- no special-casing needed.
  * The Authorization header on this same request is forwarded to any self-referential
@@ -29,9 +44,6 @@ export async function POST(request: Request) {
     return Response.json({ reply });
   } catch (error) {
     console.error("[chat] turn failed:", error);
-    return Response.json(
-      { error: "chat_failed", message: error instanceof Error ? error.message : "chat turn failed" },
-      { status: 502 }
-    );
+    return Response.json({ error: "chat_failed", message: friendlyChatErrorMessage(error) }, { status: 502 });
   }
 }
