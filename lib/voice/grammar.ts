@@ -21,6 +21,7 @@ const PAIR_SPOKEN_NAMES: Record<Pair, string> = {
   "NZD/USD": "New Zealand Dollar against the US Dollar, N Z D U S D",
   "EUR/JPY": "Euro against the Japanese Yen, E U R J P Y",
   "AUD/JPY": "Australian Dollar against the Japanese Yen, A U D J P Y",
+  "ETH/USD": "Ethereum against the US Dollar, E T H U S D",
 };
 
 // Three independent signal engines (15m/30m/1h, see SIGNAL_TIMEFRAMES in
