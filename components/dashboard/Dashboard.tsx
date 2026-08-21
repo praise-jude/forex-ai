@@ -13,6 +13,7 @@ import { TimeframeSelector } from "./TimeframeSelector";
 import { PositionsPanel } from "./PositionsPanel";
 import { RiskGuardianBanner } from "./RiskGuardianBanner";
 import { MarketClosedBanner } from "./MarketClosedBanner";
+import { MarketSessionsPanel } from "./MarketSessionsPanel";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
 import { useVoiceAssistant } from "./useVoiceAssistant";
 import { SignalToastStack, type ToastEntry } from "./SignalToast";
@@ -220,6 +221,7 @@ export function Dashboard() {
     <div className="flex flex-col gap-4 p-5">
       <RiskGuardianBanner />
       <MarketClosedBanner />
+      <MarketSessionsPanel />
       <VoiceAssistantPanel {...voice} />
       <AutopilotStatus predictions={flatPredictions} signals={signals} marketsMonitored={PAIRS.length} />
 
