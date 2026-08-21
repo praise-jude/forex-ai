@@ -13,7 +13,7 @@ const USD_BASE_PAIRS: ReadonlySet<Pair> = new Set(["USD/JPY", "USD/CAD", "USD/CH
 // gold/oil/crypto's own USD-quote fallback is), so usdStrengthSupports reports
 // "unavailable" honestly for these rather than silently reusing the USD-quote branch's
 // logic on a pair that was never a USD pair to begin with.
-const NOT_A_USD_PAIR: ReadonlySet<Pair> = new Set(["EUR/JPY"]);
+const NOT_A_USD_PAIR: ReadonlySet<Pair> = new Set(["EUR/JPY", "AUD/JPY"]);
 // A move smaller than this (as a fraction, e.g. 0.0005 = 0.05%) between polls is too
 // small to call a meaningful directional lean either way -- avoids treating quote noise
 // as a confirmed currency-strength signal.

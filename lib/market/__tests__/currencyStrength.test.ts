@@ -115,6 +115,12 @@ describe("usdStrengthSupports", () => {
     // not two different codepaths landing on the same string by coincidence.
     expect(usdStrengthSupports({ status: "unavailable" }, "EUR/JPY", "long")).toBe("unavailable");
   });
+
+  it("AUD/JPY has no USD leg at all either -- same honest unavailable treatment as EUR/JPY", () => {
+    expect(usdStrengthSupports({ status: "available", index: 0.01 }, "AUD/JPY", "long")).toBe("unavailable");
+    expect(usdStrengthSupports({ status: "available", index: -0.01 }, "AUD/JPY", "short")).toBe("unavailable");
+    expect(usdStrengthSupports({ status: "unavailable" }, "AUD/JPY", "long")).toBe("unavailable");
+  });
 });
 
 describe("computeHistoricalUsdStrength", () => {

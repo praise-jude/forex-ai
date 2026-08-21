@@ -31,6 +31,9 @@ const BASE_CONFIG: Record<Pair, { symbol: string; pip: number; decimals: number 
   "USD/CHF": { symbol: "USDCHF", pip: 0.0001, decimals: 5 },
   "NZD/USD": { symbol: "NZDUSD", pip: 0.0001, decimals: 5 },
   "EUR/JPY": { symbol: "EURJPY", pip: 0.01, decimals: 3 },
+  // Confirmed against a real getSymbolSpecification call on this account's own
+  // AUDJPYm symbol (digits: 3, pipSize: 0.01), same discipline as every other row above.
+  "AUD/JPY": { symbol: "AUDJPY", pip: 0.01, decimals: 3 },
 };
 
 // Crypto trades 24/7 with no ICT-style institutional session structure the killzone

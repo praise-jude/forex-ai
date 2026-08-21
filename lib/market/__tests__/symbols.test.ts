@@ -31,5 +31,6 @@ describe("pairForPlainSymbol", () => {
     expect(pairForPlainSymbol("USDCHF")).toBe("USD/CHF");
     expect(pairForPlainSymbol("NZDUSD")).toBe("NZD/USD");
     expect(pairForPlainSymbol("EURJPY")).toBe("EUR/JPY");
+    expect(pairForPlainSymbol("AUDJPY")).toBe("AUD/JPY");
   });
 });
