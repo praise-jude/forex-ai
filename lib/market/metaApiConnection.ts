@@ -3,6 +3,8 @@
 // explicit Node build instead — see https://github.com/metaapi/metaapi-javascript-sdk.
 import MetaApi, { SynchronizationListener } from "metaapi.cloud-sdk/node";
 import type {
+  MarketDataSubscription,
+  MarketDataUnsubscription,
   MetatraderAccount,
   MetatraderCandle,
   MetatraderDeal,
@@ -57,9 +59,72 @@ const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 // its own terminalState (for getAccountInformation/getSymbolSpecification/position count
 // when executing against it), which the SDK maintains internally regardless of what this
 // listener does with the events.
+// Shared between the initial per-pair subscribe loop and onSubscriptionDowngraded's own
+// recovery re-subscribe below, so the two can never silently drift apart. No "5m" here
+// on purpose -- it's the one Timeframe value that's neither a SIGNAL_TIMEFRAMES entry
+// (no signal engine ever evaluates it) nor part of higherTimeframes (h1/h4/d1), nor
+// selectable on the dashboard chart (see TimeframeSelector.tsx's own comment) -- a live
+// subscription for it was pure unused cost. Dropping it was the direct fix for MetaApi
+// repeatedly downgrading (removing candle subscriptions from) XAUUSDm/XAGUSDm/USOILm/
+// UKOILm due to rate limits, seen continuously in production logs -- those symbols
+// stopped receiving live candle updates at all while downgraded, which is what
+// "candlesticks not moving" actually was. /api/candles still answers a "5m" request
+// from seedHistory.ts's one-time REST-fetched snapshot, it just won't tick live. M5
+// entry confirmation (see fetchRecentCandles below) deliberately does NOT change this --
+// it fetches on demand via REST only at the rare moment a signal is about to fire, never
+// a live stream, so it can't reintroduce the same problem.
+const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
+  { type: "quotes" },
+  { type: "candles", timeframe: "15m" },
+  { type: "candles", timeframe: "30m" },
+  { type: "candles", timeframe: "1h" },
+  { type: "candles", timeframe: "4h" },
+  { type: "candles", timeframe: "1d" },
+];
+
 class MarketSyncListener extends SynchronizationListener {
-  constructor(private accountKey: AccountKey) {
+  // Only set for the "live" account (see connect() below) -- needed so
+  // onSubscriptionDowngraded can re-subscribe a downgraded symbol itself, rather than
+  // just logging and leaving it broken until the next full reconnect.
+  constructor(
+    private accountKey: AccountKey,
+    private connection?: StreamingMetaApiConnectionInstance
+  ) {
     super();
+  }
+
+  /**
+   * Belt-and-suspenders on top of the paced subscribe loop below: if a symbol still
+   * gets downgraded anyway (a temporary tighter limit, a MetaApi-side policy change,
+   * anything not anticipated by today's pacing), this is what actually recovers it,
+   * instead of it silently staying broken until the next full reconnect -- which is
+   * what "candlesticks not moving" has been three times now. Waits well past a full
+   * rate-limit window (60s) before retrying, with jitter so several symbols downgraded
+   * in the same burst don't all retry in lockstep and immediately re-trip the same
+   * limit that caused this.
+   */
+  async onSubscriptionDowngraded(
+    _instanceIndex: string,
+    symbol: string,
+    _updates: MarketDataSubscription[],
+    unsubscriptions: MarketDataUnsubscription[]
+  ): Promise<void> {
+    if (this.accountKey !== "live" || !this.connection) return;
+    // Defensive, not just typed loosely -- a real production log from this exact event
+    // showed the SDK's own "updates" argument as undefined despite its declared type
+    // promising an array, so "unsubscriptions" isn't trusted to always be one either.
+    const lostCandles = Array.isArray(unsubscriptions) && unsubscriptions.some((u) => u.type === "candles");
+    if (!lostCandles) return;
+
+    const pair = pairForBrokerSymbol(symbol);
+    console.error(`[market] ${symbol}${pair ? ` (${pair})` : ""} candle subscription downgraded -- scheduling recovery`);
+
+    const delayMs = 65_000 + Math.random() * 30_000;
+    setTimeout(() => {
+      void this.connection!.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS).catch((error: unknown) => {
+        console.error(`[market] ${symbol} recovery re-subscribe failed:`, error);
+      });
+    }, delayMs);
   }
 
   async onSymbolPricesUpdated(_instanceIndex: string, prices: MetatraderSymbolPrice[]): Promise<void> {
@@ -404,7 +469,7 @@ async function connect(accountKey: AccountKey): Promise<void> {
   }
 
   const connection = account.getStreamingConnection();
-  connection.addSynchronizationListener(new MarketSyncListener(accountKey));
+  connection.addSynchronizationListener(new MarketSyncListener(accountKey, accountKey === "live" ? connection : undefined));
 
   await connection.connect();
   await connection.waitSynchronized();
@@ -428,30 +493,10 @@ async function connect(accountKey: AccountKey): Promise<void> {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
     await connection.subscribeToMarketData(
       brokerSymbol(pair),
-      accountKey === "live"
-        ? [
-            { type: "quotes" },
-            // No "5m" here on purpose -- it's the one Timeframe value that's neither a
-            // SIGNAL_TIMEFRAMES entry (no signal engine ever evaluates it) nor part of
-            // higherTimeframes (h1/h4/d1), nor selectable on the dashboard chart (see
-            // TimeframeSelector.tsx's own comment) -- a live subscription for it was
-            // pure unused cost. Dropping it was the direct fix for MetaApi repeatedly
-            // downgrading (removing candle subscriptions from) XAUUSDm/XAGUSDm/
-            // USOILm/UKOILm due to rate limits, seen continuously in production logs --
-            // those symbols stopped receiving live candle updates at all while
-            // downgraded, which is what "candlesticks not moving" actually was.
-            // /api/candles still answers a "5m" request from seedHistory.ts's one-time
-            // REST-fetched snapshot, it just won't tick live. M5 entry confirmation
-            // (see fetchRecentCandles below) deliberately does NOT change this -- it
-            // fetches on demand via REST only at the rare moment a signal is about to
-            // fire, never a live stream, so it can't reintroduce the same problem.
-            { type: "candles", timeframe: "15m" },
-            { type: "candles", timeframe: "30m" },
-            { type: "candles", timeframe: "1h" },
-            { type: "candles", timeframe: "4h" },
-            { type: "candles", timeframe: "1d" },
-          ]
-        : [{ type: "quotes" }] // enough for terminalState.accountInformation/specification/positions
+      // "demo" only ever needs quotes -- enough for terminalState.accountInformation/
+      // specification/positions, never candles (it's purely an execution target, no
+      // second signal engine, see MarketSyncListener's own doc comment above).
+      accountKey === "live" ? LIVE_MARKET_DATA_SUBSCRIPTIONS : [{ type: "quotes" }]
     );
   }
 
