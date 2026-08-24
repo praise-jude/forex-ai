@@ -409,16 +409,20 @@ async function connect(accountKey: AccountKey): Promise<void> {
   await connection.connect();
   await connection.waitSynchronized();
 
-  // MetaApi rate-limits subscribeToMarketData bursts (see the "5m" comment below,
-  // dropped for exactly this reason) -- firing all pairs' subscription requests back to
-  // back at connect time re-triggers the same "candle subscriptions downgraded due to
-  // rate limits" degradation that fix was for, just from having more pairs to subscribe
-  // now rather than an unused timeframe. 300ms was tuned against 13 pairs; confirmed via
-  // live logs that it stopped being enough once the pair count grew to 18 (459 downgrade
-  // messages reappeared) -- raised with headroom for further growth rather than tuning
-  // to the exact current count again. Spacing consecutive pairs out keeps every
-  // pair/timeframe subscribed rather than dropping more of them.
-  const SUBSCRIBE_STAGGER_MS = 750;
+  // MetaApi's real documented limit (https://metaapi.cloud/docs/client/rateLimiting/)
+  // for the subscribeToMarketData call itself is 10 requests per account per 60
+  // seconds -- a much stricter, separate limit from the data-streaming credit budget
+  // (126,000 credits/minute) this was originally tuned against by guessing at flat
+  // delays (300ms, then 750ms). Neither guess could ever actually work for more than
+  // 10 pairs: no amount of *short* staggering avoids exceeding "10 calls in any 60s
+  // window" once there are more than 10 pairs to subscribe, since even spreading N>10
+  // calls across a few seconds still lands all of them inside the same 60s window.
+  // Spacing every call 6.5s apart (just past the mathematical minimum of 60/10=6s, for
+  // margin) is what actually respects this for any pair count, not just today's 18 --
+  // slower to finish subscribing at boot/reconnect (~2 minutes for 18 pairs) in
+  // exchange for candle subscriptions that don't get silently downgraded partway
+  // through, which is what "candlesticks not moving" has actually been three times now.
+  const SUBSCRIBE_STAGGER_MS = 6500;
 
   for (const [index, pair] of PAIRS.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
