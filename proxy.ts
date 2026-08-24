@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { isAuthorized, unauthorizedResponse } from "@/lib/market/basicAuth";
+import { recordFailedDashboardAuth } from "@/lib/market/authAttempts";
+import { sendNotification } from "@/lib/market/pushNotifier";
 
 // Non-sensitive static/PWA plumbing -- no trading data, and keeping these reachable
 // without a prompt avoids install-flow/service-worker edge cases. Everything else
@@ -60,6 +62,17 @@ export function proxy(request: NextRequest) {
 
   if (isAuthorized(request.headers.get("authorization"), password)) {
     return NextResponse.next();
+  }
+
+  // Alerts rather than blocks -- see authAttempts.ts's doc comment for why a hard
+  // lockout on a single shared-password gate is the wrong tradeoff for a solo operator.
+  const ip = request.headers.get("x-forwarded-for") ?? "unknown";
+  if (recordFailedDashboardAuth(ip)) {
+    void sendNotification({
+      category: "risk_alert",
+      title: "JUDE AI — repeated failed dashboard logins",
+      body: `Several wrong-password attempts hit your dashboard in the last few minutes (from ${ip}). If that wasn't you, consider changing DASHBOARD_ACCESS_PASSWORD in Railway.`,
+    });
   }
 
   return unauthorizedResponse();
