@@ -19,6 +19,7 @@ import { useVoiceAssistant } from "./useVoiceAssistant";
 import { SignalToastStack, type ToastEntry } from "./SignalToast";
 import { AutopilotStatus } from "./AutopilotStatus";
 import { RecentAnalysis } from "./RecentAnalysis";
+import { OnDemandSignalWidget } from "./OnDemandSignalWidget";
 
 // A plain animated block instead of a blank box while the chart's own chunk (which
 // bundles lightweight-charts, deliberately kept out of the main bundle) downloads and
@@ -224,6 +225,7 @@ export function Dashboard() {
       <MarketSessionsPanel />
       <VoiceAssistantPanel {...voice} />
       <AutopilotStatus predictions={flatPredictions} signals={signals} marketsMonitored={PAIRS.length} />
+      <OnDemandSignalWidget />
 
       <div className="grid gap-4 lg:grid-cols-[220px_1fr_260px]">
         <Watchlist entries={watchlist} selectedPair={selectedPair} onSelect={selectPair} />
