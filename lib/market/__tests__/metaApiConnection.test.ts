@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isAccountConfigured } from "../metaApiConnection";
+import { isAccountConfigured, retryDelayFromError } from "../metaApiConnection";
+
+// Deliberately a plain object shape, not an SDK class instance -- retryDelayFromError
+// duck-types on { metadata: { recommendedRetryTime } } rather than `instanceof
+// TooManyRequestsError` (see its own doc comment for why: that class isn't actually a
+// real export of "metaapi.cloud-sdk/node" at runtime despite the .d.ts claiming it is).
+function rateLimitError(recommendedRetryTime: string | Date): unknown {
+  return { status: 429, metadata: { recommendedRetryTime } };
+}
 
 const ENV_VARS = ["METAAPI_TOKEN", "METAAPI_ACCOUNT_ID", "METAAPI_DEMO_TOKEN", "METAAPI_DEMO_ACCOUNT_ID"];
 
@@ -38,5 +46,33 @@ describe("isAccountConfigured", () => {
     process.env.METAAPI_DEMO_ACCOUNT_ID = "demo-account-id";
     expect(isAccountConfigured("demo")).toBe(true);
     expect(isAccountConfigured("live")).toBe(false);
+  });
+});
+
+describe("retryDelayFromError", () => {
+  it("returns the fallback for an error with no rate-limit shape", () => {
+    expect(retryDelayFromError(new Error("boom"), 12_345)).toBe(12_345);
+  });
+
+  it("returns the fallback when recommendedRetryTime doesn't parse", () => {
+    const error = rateLimitError("not-a-date");
+    expect(retryDelayFromError(error, 12_345)).toBe(12_345);
+  });
+
+  it("clamps to a 10s floor for a retry time already in the past", () => {
+    const error = rateLimitError(new Date(Date.now() - 60_000));
+    expect(retryDelayFromError(error, 0)).toBe(10_000);
+  });
+
+  it("clamps to a 20min ceiling for a far-future retry time", () => {
+    const error = rateLimitError(new Date(Date.now() + 60 * 60 * 1000));
+    expect(retryDelayFromError(error, 0)).toBe(20 * 60 * 1000);
+  });
+
+  it("uses the real recommended delay when it falls within bounds", () => {
+    const error = rateLimitError(new Date(Date.now() + 90_000));
+    const delay = retryDelayFromError(error, 0);
+    expect(delay).toBeGreaterThan(85_000);
+    expect(delay).toBeLessThanOrEqual(90_000);
   });
 });

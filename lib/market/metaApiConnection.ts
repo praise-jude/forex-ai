@@ -82,7 +82,48 @@ const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
   { type: "candles", timeframe: "1d" },
 ];
 
+// Duck-typed, NOT `instanceof TooManyRequestsError` -- verified directly (require() the
+// package the same way webpack/Next.js's CJS interop does, not a Node ESM dynamic
+// import(), which gives a misleadingly different export set) that this package's own
+// .d.ts LIES about that class being reachable from the "metaapi.cloud-sdk/node" entry
+// point actually used here: `typeof require("metaapi.cloud-sdk/node").TooManyRequestsError`
+// is really `undefined` at runtime. `instanceof undefined` throws, so that check would
+// have taken down every single recovery attempt's error handling in production. This
+// shape (status 429 + a metadata.recommendedRetryTime) is instead copied directly from a
+// real caught error logged in production, so it's guaranteed to match what's actually
+// thrown, independent of which module instance constructed it.
+function rateLimitRetryTime(error: unknown): string | Date | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const metadata = (error as { metadata?: unknown }).metadata;
+  if (typeof metadata !== "object" || metadata === null) return undefined;
+  const retryTime = (metadata as { recommendedRetryTime?: unknown }).recommendedRetryTime;
+  return typeof retryTime === "string" || retryTime instanceof Date ? retryTime : undefined;
+}
+
+// Applies MetaApi's own recommended retry time with sane bounds -- a real production
+// incident hit an entirely different limit than subscribeToMarketData's per-minute cap:
+// an hourly per-server CPU-credit budget (ws:subscribeToMarketData, 180000 credits/1h,
+// exceededConfig "perServer"), exhausted by a full day of repeated reconnect storms each
+// re-subscribing all 18 pairs. A fixed jittered retry (the old behavior) can't know about
+// that budget at all and just keeps re-attempting into it. Clamped to [10s, 20min]: never
+// so short it re-trips instantly, never so long a single bad reading leaves a symbol dark
+// for the rest of the day.
+export function retryDelayFromError(error: unknown, fallbackMs: number): number {
+  const retryTime = rateLimitRetryTime(error);
+  if (retryTime === undefined) return fallbackMs;
+  const retryAt = new Date(retryTime).getTime();
+  if (Number.isNaN(retryAt)) return fallbackMs;
+  return Math.min(Math.max(retryAt - Date.now(), 10_000), 20 * 60 * 1000);
+}
+
 class MarketSyncListener extends SynchronizationListener {
+  // Symbols with a recovery already scheduled or in flight -- without this, the SAME
+  // symbol getting downgraded again before its first recovery has even fired (seen
+  // repeatedly during today's reconnect storms) stacks a second, third, fourth
+  // independent setTimeout on top, each burning its own subscribeToMarketData call
+  // against the same hourly credit budget described below for no added benefit.
+  private pendingRecovery = new Set<string>();
+
   // Only set for the "live" account (see connect() below) -- needed so
   // onSubscriptionDowngraded can re-subscribe a downgraded symbol itself, rather than
   // just logging and leaving it broken until the next full reconnect.
@@ -116,15 +157,33 @@ class MarketSyncListener extends SynchronizationListener {
     const lostCandles = Array.isArray(unsubscriptions) && unsubscriptions.some((u) => u.type === "candles");
     if (!lostCandles) return;
 
+    if (this.pendingRecovery.has(symbol)) return;
+    this.pendingRecovery.add(symbol);
+
     const pair = pairForBrokerSymbol(symbol);
     console.error(`[market] ${symbol}${pair ? ` (${pair})` : ""} candle subscription downgraded -- scheduling recovery`);
 
-    const delayMs = 65_000 + Math.random() * 30_000;
-    setTimeout(() => {
-      void this.connection!.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS).catch((error: unknown) => {
-        console.error(`[market] ${symbol} recovery re-subscribe failed:`, error);
-      });
-    }, delayMs);
+    // At most 2 attempts total -- a bounded retry, not a loop. Past that, give up; the
+    // next real downgrade event (or the initial paced subscribe loop on the next
+    // reconnect) will pick it back up.
+    const attempt = (delayMs: number, isRetry: boolean) => {
+      setTimeout(() => {
+        void this.connection!.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS)
+          .then(() => {
+            this.pendingRecovery.delete(symbol);
+          })
+          .catch((error: unknown) => {
+            console.error(`[market] ${symbol} recovery re-subscribe failed:`, error);
+            if (!isRetry && rateLimitRetryTime(error) !== undefined) {
+              attempt(retryDelayFromError(error, 0), true);
+            } else {
+              this.pendingRecovery.delete(symbol);
+            }
+          });
+      }, delayMs);
+    };
+
+    attempt(65_000 + Math.random() * 30_000, false);
   }
 
   async onSymbolPricesUpdated(_instanceIndex: string, prices: MetatraderSymbolPrice[]): Promise<void> {
