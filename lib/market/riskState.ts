@@ -140,6 +140,31 @@ class RiskStateStore {
     });
   }
 
+  /**
+   * Explicit human override -- unlike acknowledge() below (which only lifts the
+   * "auto-execution stays paused" gate once a halt/cooldown has ALREADY cleared on its
+   * own), this force-clears an active haltedForToday halt the SAME day it tripped,
+   * before its own condition would otherwise have lifted it. There is deliberately no
+   * button for this in the UI's normal flow -- see RiskGuardianBanner.tsx's own
+   * "force resume" control, which requires its own explicit confirmation, separate from
+   * the routine "Resume trading" acknowledge button.
+   *
+   * Deliberately narrow: flips only haltedForToday/pausedAt/acknowledgedAt back to their
+   * untripped shape. startOfDayEquity, tradesOpenedToday, and consecutiveLosses are left
+   * untouched -- this un-blocks new trades, it does NOT widen today's loss budget or
+   * reset the trade-count/consecutive-loss counters, so a further loss today can still
+   * re-trip haltedForToday against the same original startOfDayEquity anchor.
+   */
+  forceResetHaltedForToday(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
+    const state = this.current(nowMs, currentEquity, account);
+    state.haltedForToday = false;
+    state.pausedAt = null;
+    state.acknowledgedAt = null;
+    void persistState(account, state).catch((error: unknown) => {
+      console.error(`[riskState] failed to persist force-reset for ${account}:`, error);
+    });
+  }
+
   /** Explicit human action -- the only thing that lets DEMO/LIVE auto-execution resume
    * after a halt/cooldown, see requiresAcknowledgement's own doc comment. */
   acknowledge(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {

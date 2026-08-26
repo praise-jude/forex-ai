@@ -130,3 +130,28 @@ describe("requiresAcknowledgement / riskState.acknowledge", () => {
     expect(requiresAcknowledgement(riskState.current(day, 9950, account))).toBe(true);
   });
 });
+
+describe("riskState.forceResetHaltedForToday", () => {
+  it("clears an active halt the same day, without waiting for it to lift on its own", () => {
+    const day = Date.UTC(2024, 4, 5, 10, 0, 0);
+    riskState.setHaltedForToday(day, 9700, "live");
+    expect(riskState.current(day, 9700, "live").haltedForToday).toBe(true);
+
+    riskState.forceResetHaltedForToday(day, 9700, "live");
+    const state = riskState.current(day, 9700, "live");
+    expect(state.haltedForToday).toBe(false);
+    expect(requiresAcknowledgement(state)).toBe(false);
+  });
+
+  it("leaves tradesOpenedToday, consecutiveLosses, and startOfDayEquity untouched -- it un-blocks trading, it doesn't widen the day's loss budget", () => {
+    const day = Date.UTC(2024, 4, 6, 10, 0, 0);
+    riskState.current(day, 10000, "live"); // anchors startOfDayEquity
+    riskState.recordTradeOpened(day, 9700, "live");
+    riskState.setHaltedForToday(day, 9700, "live");
+
+    riskState.forceResetHaltedForToday(day, 9700, "live");
+    const state = riskState.current(day, 9700, "live");
+    expect(state.startOfDayEquity).toBe(10000);
+    expect(state.tradesOpenedToday).toBe(1);
+  });
+});

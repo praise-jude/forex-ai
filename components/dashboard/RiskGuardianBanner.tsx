@@ -34,6 +34,7 @@ export function RiskGuardianBanner() {
   );
   const [now, setNow] = useState(() => Date.now());
   const [acknowledging, setAcknowledging] = useState(false);
+  const [forceResuming, setForceResuming] = useState(false);
 
   async function acknowledge() {
     setAcknowledging(true);
@@ -42,6 +43,22 @@ export function RiskGuardianBanner() {
       if (res.ok && data) setData({ ...data, requiresAcknowledgement: false });
     } finally {
       setAcknowledging(false);
+    }
+  }
+
+  // A deliberate override of an ACTIVE daily-loss halt, not the routine "condition
+  // already cleared" acknowledge() above -- confirmed separately since this re-arms
+  // trading on the exact account/day that just tripped the limit.
+  async function forceResume() {
+    if (!window.confirm("Force-resume trading today? The daily loss limit already tripped -- this re-arms new trades on the same day, same account, before it would normally clear.")) {
+      return;
+    }
+    setForceResuming(true);
+    try {
+      const res = await fetch("/api/risk-status/force-resume", { method: "POST" });
+      if (res.ok && data) setData({ ...data, haltedForToday: false, requiresAcknowledgement: false });
+    } finally {
+      setForceResuming(false);
     }
   }
 
@@ -60,11 +77,21 @@ export function RiskGuardianBanner() {
     // EXECUTION LOCKED" instead, precisely to avoid being confused with this one) --
     // this one is the automatic daily-loss guardian tripping, not an operator toggle.
     return (
-      <div className="rounded-lg border border-rose-800 bg-rose-950/40 px-3.5 py-2 text-sm">
-        <span className="font-bold text-rose-400">AUTOPILOT LOCKED</span>
-        <span className="ml-2 text-rose-300">
-          Daily loss limit ({data.maxDailyLossPct}%) reached on {data.account}. No new trades until the next trading day.
+      <div className="flex items-center justify-between rounded-lg border border-rose-800 bg-rose-950/40 px-3.5 py-2 text-sm">
+        <span>
+          <span className="font-bold text-rose-400">AUTOPILOT LOCKED</span>
+          <span className="ml-2 text-rose-300">
+            Daily loss limit ({data.maxDailyLossPct}%) reached on {data.account}. No new trades until the next trading day.
+          </span>
         </span>
+        <button
+          type="button"
+          onClick={forceResume}
+          disabled={forceResuming}
+          className="ml-3 shrink-0 rounded-md border border-rose-700 bg-rose-900/60 px-2.5 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {forceResuming ? "Resuming…" : "Force resume today"}
+        </button>
       </div>
     );
   }
