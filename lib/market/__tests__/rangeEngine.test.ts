@@ -119,8 +119,14 @@ describe("evaluateRangeSignal", () => {
 
   it("reports no_boundary_touch when the range is real but price hasn't reached either boundary", () => {
     const base = buildRangeCandles();
-    // Stop right after the warmup/cycle, before the descent -- last candle sits mid-range.
-    const candles = base.slice(0, 42);
+    // Stop a few candles before the descent actually reaches support -- confirmed
+    // (empirically, same "debug-script-and-iterate" approach as this file's other
+    // fixtures) to be the first point where a real range has actually been established
+    // (wide enough, swings detected) AND the last close still sits short of either
+    // boundary. Earlier truncation points land on no_range_detected instead -- no range
+    // has been established yet at all, a genuinely different case (see that reason
+    // code's own doc comment in types.ts).
+    const candles = base.slice(0, 60);
 
     const evaluation = evaluateRangeSignal(candles, "EUR/USD", "15m", CLEAR_NEWS);
     expect(evaluation.status).toBe("no_trade");
@@ -161,9 +167,34 @@ describe("evaluateRangeSignal", () => {
     expect(risk).toBeCloseTo(atr * 0.5, 5);
   });
 
-  it("returns no_boundary_touch on too little history to evaluate at all", () => {
+  it("returns no_range_detected on too little history to evaluate at all -- distinct from no_boundary_touch, since no range has even been established yet", () => {
     const candles = buildRangeCandles().slice(0, 10);
     const evaluation = evaluateRangeSignal(candles, "EUR/USD", "15m", CLEAR_NEWS);
-    expect(evaluation).toEqual({ status: "no_trade", reason: { code: "no_boundary_touch" } });
+    expect(evaluation).toEqual({ status: "no_trade", reason: { code: "no_range_detected" } });
+  });
+
+  it("never awards the near-boundary confluence to a candle that closed clean through the boundary (a breakdown, not a bounce)", () => {
+    const base = buildRangeCandles();
+    // Wicks below support (a genuine touch) but closes well BELOW support too -- no
+    // bounce at all, the opposite of buildTouchCandle's rejection fixture. Before the
+    // fix, distanceFromBoundary (close - support) here is negative, and a negative
+    // number is always <= atr*0.5, so nearBoundary incorrectly scored true regardless of
+    // how far the close actually broke through.
+    const breakdown = candle(base.length * STEP, SUPPORT - 0.0005, SUPPORT + 0.0001, SUPPORT - 0.003, SUPPORT - 0.0028);
+    const candles = [...base, breakdown];
+
+    const evaluation = evaluateRangeSignal(candles, "EUR/USD", "15m", CLEAR_NEWS);
+    expect(evaluation.status).toBe("no_trade");
+    if (evaluation.status !== "no_trade") return;
+    expect(evaluation.reason.code).toBe("range_below_threshold");
+    if (evaluation.reason.code !== "range_below_threshold") return;
+    // rejection is also false here (closed near its own low, not back up toward the
+    // boundary) -- only rsiExtreme (30, a genuine oversold read after the sustained
+    // decline) and cleanRange (20) fire, landing at exactly 50. Before the fix this
+    // would have been 65 (nearBoundary's unearned +15 included), still short of the 70
+    // floor for this particular fixture -- so the bug's real danger was on a marginal
+    // signal already close to qualifying, not visible from this total alone, hence
+    // asserting the exact number rather than just "still no_trade".
+    expect(evaluation.reason.total).toBe(50);
   });
 });

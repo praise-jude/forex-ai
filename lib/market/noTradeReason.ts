@@ -100,6 +100,8 @@ function describeReason(reason: NoTradeReason): string {
     }
     case "not_ranging":
       return `Market regime is ${REGIME_LABEL[reason.regime]} -- the range engine only looks for setups when the market is genuinely ranging or consolidating, not trending or breaking out.`;
+    case "no_range_detected":
+      return "Market regime is genuinely ranging, but no clear, wide-enough support/resistance range has formed yet -- nothing established to react to.";
     case "no_boundary_touch":
       return "A recent support/resistance range exists, but the last closed candle hasn't touched either boundary yet -- nothing to react to right now.";
     case "range_below_threshold": {

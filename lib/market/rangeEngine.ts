@@ -73,7 +73,7 @@ function noTrade(reason: NoTradeReason): SignalEvaluation {
  * by default.
  */
 export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Timeframe, overrides?: { newsStatus?: NewsStatus }): SignalEvaluation {
-  if (candles.length < MIN_CANDLES) return noTrade({ code: "no_boundary_touch" });
+  if (candles.length < MIN_CANDLES) return noTrade({ code: "no_range_detected" });
 
   const lastIndex = candles.length - 1;
   const lastCandle = candles[lastIndex];
@@ -92,17 +92,17 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
   }
 
   const atr = atrSeries[lastIndex];
-  if (Number.isNaN(atr) || atr <= 0) return noTrade({ code: "no_boundary_touch" });
+  if (Number.isNaN(atr) || atr <= 0) return noTrade({ code: "no_range_detected" });
 
   const windowStart = Math.max(0, lastIndex - RANGE_LOOKBACK_CANDLES);
   const swings = detectSwingPoints(candles.slice(windowStart, lastIndex + 1), SWING_LOOKBACK);
   const highs = swings.filter((s) => s.type === "high");
   const lows = swings.filter((s) => s.type === "low");
-  if (highs.length === 0 || lows.length === 0) return noTrade({ code: "no_boundary_touch" });
+  if (highs.length === 0 || lows.length === 0) return noTrade({ code: "no_range_detected" });
 
   const resistance = Math.max(...highs.map((s) => s.price));
   const support = Math.min(...lows.map((s) => s.price));
-  if (resistance - support < atr * MIN_RANGE_ATR_MULTIPLE) return noTrade({ code: "no_boundary_touch" });
+  if (resistance - support < atr * MIN_RANGE_ATR_MULTIPLE) return noTrade({ code: "no_range_detected" });
 
   const touchTolerance = atr * BOUNDARY_TOUCH_ATR_FRACTION;
   const touchedSupport = lastCandle.low <= support + touchTolerance;
@@ -127,9 +127,15 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
   const cleanRange = !Number.isNaN(adx) && adx < ADX_RANGE_CEILING;
 
   // Entry proximity: still reasonably close to the touched boundary, not chasing a
-  // bounce already well underway.
+  // bounce already well underway. Requires distanceFromBoundary >= 0 -- a negative value
+  // means the close is on the WRONG side of the boundary (price broke clean through it
+  // rather than bouncing), which must never score as "near" no matter how small the
+  // magnitude. Without this guard, a straight breakdown/breakout candle (close far past
+  // the boundary, no bounce at all) would still pass here every time, since a negative
+  // number is always <= a positive ATR fraction -- silently awarding this confluence to
+  // exactly the candles that most clearly disprove the bounce thesis.
   const distanceFromBoundary = wantsBullish ? lastCandle.close - support : resistance - lastCandle.close;
-  const nearBoundary = distanceFromBoundary <= atr * 0.5;
+  const nearBoundary = distanceFromBoundary >= 0 && distanceFromBoundary <= atr * 0.5;
 
   let total = 0;
   const confluences: Confluence[] = ["range_regime", "boundary_touch"];
@@ -166,7 +172,7 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
   }
   const takeProfit = wantsBullish ? resistance : support; // the opposite boundary
   const risk = Math.abs(entry - stopLoss);
-  if (risk <= 0) return noTrade({ code: "no_boundary_touch" });
+  if (risk <= 0) return noTrade({ code: "no_range_detected" });
 
   const riskReward = Math.abs(takeProfit - entry) / risk;
   if (riskReward < MIN_RISK_REWARD) {

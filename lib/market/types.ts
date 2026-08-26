@@ -259,6 +259,14 @@ export type NoTradeReason =
   // breakout regime is exactly the condition a mean-reversion setup needs to avoid, not
   // an arbitrary filter the way SMC's killzone gate is.
   | { code: "not_ranging"; regime: MarketRegime }
+  // The regime read itself is "range"/"consolidation", but there isn't yet enough
+  // history, a valid ATR reading, detectable swing highs/lows, or a wide-enough gap
+  // between them to call this a real, tradeable range at all -- distinct from
+  // no_boundary_touch below (a real range DOES exist, it just hasn't been touched yet).
+  // Collapsing these into no_boundary_touch was its own bug (see rangeEngine.ts's own
+  // comment) -- it made the dashboard claim a specific range existed in cases where none
+  // had actually been established.
+  | { code: "no_range_detected" }
   // A support/resistance range exists, but the most recently closed candle didn't
   // actually touch either boundary -- there's nothing to react to yet.
   | { code: "no_boundary_touch" }
