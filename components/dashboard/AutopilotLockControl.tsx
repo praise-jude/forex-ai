@@ -15,6 +15,11 @@ const POLL_INTERVAL_MS = 7000;
  * (analysis/demo/live): locking here only stops autoExecutionListener.ts from opening a
  * NEW trade on its own. Manual clicks, TradingView, and managing positions already open
  * (break-even/trailing/invalidation-close) all keep working while locked.
+ *
+ * Deliberately labeled "AUTO-EXECUTION LOCKED" here, not "AUTOPILOT LOCKED" --
+ * RiskGuardianBanner.tsx already uses that exact phrase for the unrelated daily-loss
+ * halt (see its own `haltedForToday` branch), and reusing it here caused real operator
+ * confusion (two independent switches, same headline). Keep these two labels distinct.
  */
 export function AutopilotLockControl() {
   const { data, setData } = usePolledResource<AutopilotLockResponse>(
@@ -65,7 +70,7 @@ export function AutopilotLockControl() {
           disabled={busy}
           className="rounded-lg border border-amber-600 bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-[0_3px_0_#92400e] transition disabled:cursor-not-allowed disabled:opacity-60"
         >
-          🔒 AUTOPILOT LOCKED — Unlock
+          🔒 AUTO-EXECUTION LOCKED — Unlock
         </button>
       </div>
     );
