@@ -143,6 +143,38 @@ describe("chat tools -- confirm-phrase safety gates", () => {
     });
   });
 
+  describe("get_predictions -- both engines distinguishable", () => {
+    it("exposes source on every prediction so a same pair/timeframe SMC and Range Engine (mean_reversion) read never collide or get defaulted to SMC", async () => {
+      predictionStore.set("USD/CHF", "15m", {
+        pair: "USD/CHF",
+        timeframe: "15m",
+        source: "smc",
+        evaluation: { status: "no_trade", reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bullish", h4: "bullish", h1: "bearish" } },
+        time: Date.now(),
+        regime: "strong_uptrend",
+        trends: { d1: "bullish", h4: "bullish", h1: "bearish" },
+      });
+      predictionStore.set("USD/CHF", "15m", {
+        pair: "USD/CHF",
+        timeframe: "15m",
+        source: "mean_reversion",
+        evaluation: { status: "no_trade", reason: { code: "no_boundary_touch" } },
+        time: Date.now(),
+        regime: "range",
+        trends: { d1: "bullish", h4: "bullish", h1: "bearish" },
+      });
+
+      const tools = buildTools(ctxWith("what about the range setup"));
+      const get_predictions = findTool(tools, "get_predictions");
+      const raw = await get_predictions.run({});
+      const entries = JSON.parse(raw as string) as Array<Record<string, unknown>>;
+      const chfEntries = entries.filter((e) => e.pair === "USD/CHF" && e.timeframe === "15m");
+
+      expect(chfEntries).toHaveLength(2);
+      expect(chfEntries.map((e) => e.source).sort()).toEqual(["mean_reversion", "smc"]);
+    });
+  });
+
   // Proves there's exactly one computation behind what chat, voice, and the dashboard
   // each show for the same signal -- not three independently-derived readings that
   // could quietly drift apart. get_signals and buildSignalAnnouncement both read
@@ -201,6 +233,21 @@ describe("chat tools -- confirm-phrase safety gates", () => {
 
       expect(entry?.regime).toBe("strong_uptrend");
       expect(entry?.setupQuality).toMatchObject({ total: expect.any(Number) });
+    });
+
+    it("exposes source so JUDE can tell an SMC signal apart from a Range Engine (mean_reversion) one instead of defaulting to SMC", async () => {
+      const smcSignal = buildSignal({ id: "source-test-smc", pair: "EUR/USD", timeframe: "15m", source: "smc" });
+      const rangeSignal = buildSignal({ id: "source-test-range", pair: "USD/CHF", timeframe: "15m", source: "mean_reversion" });
+      signalStore.add(smcSignal);
+      signalStore.add(rangeSignal);
+
+      const tools = buildTools(ctxWith("just checking"));
+      const get_signals = findTool(tools, "get_signals");
+      const raw = await get_signals.run({});
+      const entries = JSON.parse(raw as string) as Array<Record<string, unknown>>;
+
+      expect(entries.find((s) => s.id === smcSignal.id)?.source).toBe("smc");
+      expect(entries.find((s) => s.id === rangeSignal.id)?.source).toBe("mean_reversion");
     });
 
     it("honestly reports regime/setupQuality as unavailable rather than guessing when no matching prediction exists", async () => {

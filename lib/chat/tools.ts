@@ -109,7 +109,7 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
   const get_predictions: ToolDef = {
     name: "get_predictions",
     description:
-      "Get the current SMC signal engine evaluation for every watched pair -- headline (e.g. STRONG BUY, NEUTRAL, NO TRADE), a short reason, and confidence. Use this to answer any question about current market read/outlook.",
+      "Get the current evaluation for every watched pair from BOTH signal engines -- SMC (source \"smc\", trend-continuation setups) and the Range Engine (source \"mean_reversion\", mean-reversion/range-bounce setups) -- headline (e.g. STRONG BUY, NEUTRAL, NO TRADE), a short reason, and confidence. Each pair+timeframe appears twice, once per engine, distinguished by the `source` field -- always check it before answering an engine-specific question (e.g. \"what about the range setup\") rather than defaulting to SMC. Use this to answer any question about current market read/outlook.",
     parameters: NO_PARAMS,
     run: async () => {
       const updates = predictionStore.all();
@@ -117,6 +117,7 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
         updates.map((update) => ({
           pair: update.pair,
           timeframe: update.timeframe,
+          source: update.source,
           headline: predictionHeadline(update.evaluation),
           regime: update.regime,
           detail:
@@ -132,7 +133,7 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
   const get_signals: ToolDef = {
     name: "get_signals",
     description:
-      "List recent executable trade signals (buy/strong_buy tier, not watch-tier) with their id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (SMC's own direction/entry sub-scores and confluence tags, plus Signer B's independent direction/confidence and its own EMA trend/Supertrend/RSI divergence/currency strength/news reads), the current market regime for that pair/timeframe, a transparent 7-category setup quality breakdown (NOT a win probability), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X' or 'why is this setup only scored N'.",
+      "List recent executable trade signals (buy/strong_buy tier, not watch-tier) from ANY engine -- check the `source` field (\"smc\", \"mean_reversion\" [the Range Engine], or \"tradingview\") before describing one, never assume SMC by default. Each entry has its id, pair, direction, entry/stop-loss/take-profit, confidence, a full breakdown of what confirmed the setup (SMC's own direction/entry sub-scores and confluence tags, plus Signer B's independent direction/confidence and its own EMA trend/Supertrend/RSI divergence/currency strength/news reads -- Signer B fields read \"unavailable\" for mean_reversion/tradingview signals, which don't use it, say so plainly rather than implying agreement), the current market regime for that pair/timeframe, a transparent setup quality breakdown (NOT a win probability), and the exact confirmation phrase required to execute each one. Use this before proposing a trade, answering 'what should I trade', or explaining 'why did you buy/sell X' or 'why is this setup only scored N'.",
     parameters: NO_PARAMS,
     run: async () => {
       return JSON.stringify(
@@ -148,6 +149,7 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
             const regime = signal.source === "tradingview" ? undefined : predictionStore.get(signal.pair, signal.timeframe, signal.source)?.regime;
             return {
               id: signal.id,
+              source: signal.source,
               pair: signal.pair,
               direction: signal.direction,
               entry: signal.entry,
