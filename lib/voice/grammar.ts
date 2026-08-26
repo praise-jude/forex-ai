@@ -194,6 +194,15 @@ export function buildDailyLossAnnouncement(maxDailyLossPct: number): string {
   return `Jude, the daily loss limit of ${maxDailyLossPct} percent has been reached. Autopilot is now locked until the next trading day.`;
 }
 
+/** Spoken the moment the London/NY killzone window (see sessions.ts) opens or closes --
+ * see useVoiceAssistant's session-status poll. Purely informational, mirrors the mobile
+ * push notification's own wording. */
+export function buildKillzoneAnnouncement(opened: boolean): string {
+  return opened
+    ? "Jude, the killzone just opened. I'm now actively watching for new setups on your FX and gold pairs."
+    : "Jude, today's killzone window just closed. No new FX or gold signals until it reopens -- Bitcoin keeps trading as usual.";
+}
+
 export type VoiceCommand =
   | { kind: "hard_confirm" }
   | { kind: "soft_confirm" }

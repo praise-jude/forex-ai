@@ -423,6 +423,10 @@ export interface NotificationPrefs {
    * skips -- those are the operator's own standing choice, not new information, and would
    * just repeat on every signal while active. */
   autopilotBlocked: boolean;
+  /** Fires when the London/NY killzone window opens or closes -- the SMC engine's own
+   * FX/gold trading window (see sessions.ts). Purely informational, same posture as
+   * autopilotBlocked above. Defaults ON. */
+  sessionAlerts: boolean;
   minConfidence: number;
 }
 
@@ -441,6 +445,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   dailyDigest: false,
   engineModeAlerts: true,
   autopilotBlocked: true,
+  sessionAlerts: true,
   minConfidence: 80,
 };
 
@@ -455,7 +460,8 @@ export type NotificationCategory =
   | "weekly_digest"
   | "daily_digest"
   | "engine_mode_reset"
-  | "signal_blocked";
+  | "signal_blocked"
+  | "session_alert";
 
 export type DevicePlatform = "ios" | "android" | "web";
 

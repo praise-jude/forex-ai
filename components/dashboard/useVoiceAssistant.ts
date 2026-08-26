@@ -7,6 +7,7 @@ import {
   buildConfirmPhrase,
   buildCooldownAnnouncement,
   buildDailyLossAnnouncement,
+  buildKillzoneAnnouncement,
   buildPredictionAnnouncement,
   buildResultAnnouncement,
   buildSignalAnnouncement,
@@ -40,8 +41,15 @@ interface ConfirmationModeResponse {
   proposalTtlSeconds: number;
 }
 
+interface SessionStatusResponse {
+  isKillzone: boolean;
+}
+
 const ENGINE_MODE_POLL_MS = 7000;
 const RISK_STATUS_POLL_MS = 7000;
+// Killzone boundaries only ever move on a clock-hour edge (see sessions.ts) -- no need
+// to poll anywhere near as often as price-driven state.
+const SESSION_STATUS_POLL_MS = 30000;
 // How long JUDE keeps listening after asking "would you like me to place this trade?"
 // before giving up -- ambiguous/absent input must never execute, so a timeout always
 // resolves to "not placed", never a fallback confirm.
@@ -123,6 +131,11 @@ export function useVoiceAssistant({
     () => fetch("/api/confirmation-mode").then((res) => res.json()),
     CONFIRMATION_MODE_POLL_MS
   );
+  const { data: sessionStatus } = usePolledResource<SessionStatusResponse>(
+    "session-status",
+    () => fetch("/api/session-status").then((res) => res.json()),
+    SESSION_STATUS_POLL_MS
+  );
 
   const engineRef = useRef<VoiceEngine | null>(null);
   if (!engineRef.current && typeof window !== "undefined") {
@@ -152,6 +165,10 @@ export function useVoiceAssistant({
   // Previous poll's guardian state -- compared against each new poll to speak only on the
   // moment a cooldown/halt actually trips, not on every single poll while it stays active.
   const prevRiskStatusRef = useRef<RiskStatusResponse | null>(null);
+  // Same "compare against the previous poll, speak only on an actual flip" shape as
+  // prevRiskStatusRef -- undefined (not a boolean) until the first poll resolves, so
+  // landing on the dashboard mid-killzone doesn't misfire an "opened" announcement.
+  const prevIsKillzoneRef = useRef<boolean | undefined>(undefined);
   // Previous *headline* per (pair, timeframe) composite key -- not raw confidence (a
   // same-tier confidence wobble, e.g. 91%->93%, must not re-announce), and not per-pair
   // alone anymore now that three signal engines (15m/30m/1h) run concurrently per pair --
@@ -188,6 +205,19 @@ export function useVoiceAssistant({
     }
     prevRiskStatusRef.current = riskStatus;
   }, [riskStatus]);
+
+  // Mirrors the risk-status effect above, but for the killzone open/close boundary (see
+  // sessionAlerts.ts's server-side push-notification counterpart) -- purely
+  // informational, narrates the exact "why is nothing firing" confusion point rather
+  // than changing anything about execution.
+  useEffect(() => {
+    if (!sessionStatus) return;
+    const prev = prevIsKillzoneRef.current;
+    if (settingsRef.current.voiceMode !== "off" && prev !== undefined && sessionStatus.isKillzone !== prev) {
+      speak(buildKillzoneAnnouncement(sessionStatus.isKillzone));
+    }
+    prevIsKillzoneRef.current = sessionStatus.isKillzone;
+  }, [sessionStatus]);
 
   function clearListenTimer() {
     if (listenTimerRef.current) {

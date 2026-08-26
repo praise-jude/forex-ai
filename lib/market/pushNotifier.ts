@@ -17,6 +17,7 @@ const PREF_KEY_FOR_CATEGORY: Record<NotificationCategory, keyof PushDevice["noti
   daily_digest: "dailyDigest",
   engine_mode_reset: "engineModeAlerts",
   signal_blocked: "autopilotBlocked",
+  session_alert: "sessionAlerts",
 };
 
 let cachedClient: Expo | null = null;
