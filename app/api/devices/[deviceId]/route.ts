@@ -13,6 +13,7 @@ const PREF_KEYS: (keyof NotificationPrefs)[] = [
   "weeklyDigest",
   "dailyDigest",
   "engineModeAlerts",
+  "autopilotBlocked",
   "minConfidence",
 ];
 

@@ -413,6 +413,16 @@ export interface NotificationPrefs {
    * on why that reset is unconditional and deliberate, not a bug. Defaults ON: missing
    * this one means believing you're still live-trading when you're not. */
   engineModeAlerts: boolean;
+  /** Fires when a signal that otherwise qualified (buy/strong_buy tier) was held back
+   * from auto-execution -- correlated exposure, a stale/wide-spread price, a risk limit,
+   * an existing losing position on the same pair+timeframe, or a lot size too small for
+   * the account balance to clear the broker's minimum. Purely informational -- narrates
+   * WHY the autopilot didn't fire, never changes whether it does. Defaults ON: without
+   * it, a held-back signal is silent, and "why didn't that fire" has no answer short of
+   * reading server logs. Deliberately excludes the autopilot-lock/kill-switch/engine-mode
+   * skips -- those are the operator's own standing choice, not new information, and would
+   * just repeat on every signal while active. */
+  autopilotBlocked: boolean;
   minConfidence: number;
 }
 
@@ -430,6 +440,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   // testing on demo with a notification every evening.
   dailyDigest: false,
   engineModeAlerts: true,
+  autopilotBlocked: true,
   minConfidence: 80,
 };
 
@@ -443,7 +454,8 @@ export type NotificationCategory =
   | "connection_alert"
   | "weekly_digest"
   | "daily_digest"
-  | "engine_mode_reset";
+  | "engine_mode_reset"
+  | "signal_blocked";
 
 export type DevicePlatform = "ios" | "android" | "web";
 

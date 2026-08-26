@@ -1,6 +1,6 @@
 import { Expo } from "expo-server-sdk";
 import type { ExpoPushMessage } from "expo-server-sdk";
-import type { NotificationCategory, PushDevice } from "./types";
+import { DEFAULT_NOTIFICATION_PREFS, type NotificationCategory, type PushDevice } from "./types";
 import { deviceStore } from "./deviceStore";
 
 // Which NotificationPrefs boolean gates each category -- kept as one table so adding a
@@ -16,6 +16,7 @@ const PREF_KEY_FOR_CATEGORY: Record<NotificationCategory, keyof PushDevice["noti
   weekly_digest: "weeklyDigest",
   daily_digest: "dailyDigest",
   engine_mode_reset: "engineModeAlerts",
+  signal_blocked: "autopilotBlocked",
 };
 
 let cachedClient: Expo | null = null;
@@ -42,7 +43,14 @@ export interface NotificationPayload {
 function eligibleDevices(payload: NotificationPayload): PushDevice[] {
   const prefKey = PREF_KEY_FOR_CATEGORY[payload.category];
   return deviceStore.all().filter((device) => {
-    if (!device.notificationPrefs[prefKey]) return false;
+    // Falls back to the default when a device's stored prefs blob predates this
+    // category (jsonb, so an old row simply doesn't have the key yet) -- an explicit
+    // `false` the operator actually set is still respected, only a genuinely-missing
+    // key falls through to the default, same "new category defaults apply until
+    // overridden" posture as a freshly registered device gets via DEFAULT_NOTIFICATION_
+    // PREFS in deviceStore.ts's own registration path.
+    const enabled = device.notificationPrefs[prefKey] ?? DEFAULT_NOTIFICATION_PREFS[prefKey];
+    if (!enabled) return false;
     if (payload.confidence !== undefined && payload.confidence < device.notificationPrefs.minConfidence) return false;
     return true;
   });

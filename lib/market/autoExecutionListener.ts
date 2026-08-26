@@ -1,4 +1,4 @@
-import type { ExecutedTrade, OpenPosition, Pair, Timeframe } from "./types";
+import type { ExecutedTrade, OpenPosition, Pair, Signal, Timeframe } from "./types";
 import { eventBus } from "./eventBus";
 import { attemptExecution } from "./executionEngine";
 import { autoExecutionAccount, getEngineMode } from "./engineMode";
@@ -7,8 +7,23 @@ import { requiresAcknowledgement, riskState } from "./riskState";
 import { loadExecutionConfig } from "./executionConfig";
 import { positionStore } from "./positionStore";
 import { isAutopilotLocked } from "./autopilotLock";
+import { sendNotification } from "./pushNotifier";
 
 let started = false;
+
+// Purely informational -- narrates WHY a signal that otherwise qualified (already
+// buy/strong_buy tier, already past the source/rangeEngine/lock/acknowledgement gates
+// above) didn't end up auto-firing. Never itself changes whether a trade happens; see
+// NotificationPrefs.autopilotBlocked's own doc comment for why the lock/kill-switch/
+// engine-mode skips are deliberately NOT routed through this (self-evident, repetitive).
+function notifyBlocked(signal: Signal, reason: string): void {
+  void sendNotification({
+    category: "signal_blocked",
+    title: `JUDE AI — Signal held back: ${signal.pair}`,
+    body: reason,
+    data: { signalId: signal.id, pair: signal.pair },
+  });
+}
 
 /**
  * Pure. True if this pair+timeframe already has an open, currently-losing position on
@@ -108,14 +123,23 @@ export function startAutoExecutionListener(): void {
     // own doc comment for why that's the intended recovery/reversal path.
     const openTrades = positionStore.all().filter((trade) => trade.account === accountKey && trade.status === "filled");
     if (hasAdverseOpenPosition(event.signal.pair, event.signal.timeframe, event.signal.direction, openTrades, getOpenPositions(accountKey))) {
-      console.log(
-        `[auto-execution] skip ${event.signal.pair} ${event.signal.timeframe} ${event.signal.id} (${accountKey}): existing ${event.signal.direction} position on this pair/timeframe is currently losing -- waiting for it to close`
-      );
+      const reason = `Your existing ${event.signal.direction} ${event.signal.pair} ${event.signal.timeframe} position is currently losing -- waiting for it to close before adding another in the same direction.`;
+      console.log(`[auto-execution] skip ${event.signal.pair} ${event.signal.timeframe} ${event.signal.id} (${accountKey}): ${reason}`);
+      notifyBlocked(event.signal, reason);
       return;
     }
 
-    attemptExecution(event.signal, accountKey).catch((error: unknown) => {
-      console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);
-    });
+    attemptExecution(event.signal, accountKey)
+      .then((result) => {
+        // "duplicate"/"rejected"/"filled" are either uninteresting (idempotency replay)
+        // or already notified elsewhere (order_rejected in executionEngine.ts itself,
+        // trade_opened on fill) -- only the two silent-by-default outcomes get a signal_
+        // blocked push here.
+        if (result.status === "blocked") notifyBlocked(event.signal, result.reason);
+        if (result.status === "skipped_sizing") notifyBlocked(event.signal, result.reason);
+      })
+      .catch((error: unknown) => {
+        console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);
+      });
   });
 }
