@@ -1,11 +1,50 @@
+import type { ExecutedTrade, OpenPosition, Pair, Timeframe } from "./types";
 import { eventBus } from "./eventBus";
 import { attemptExecution } from "./executionEngine";
 import { autoExecutionAccount, getEngineMode } from "./engineMode";
-import { getAccountInformation } from "./metaApiConnection";
+import { getAccountInformation, getOpenPositions } from "./metaApiConnection";
 import { requiresAcknowledgement, riskState } from "./riskState";
 import { loadExecutionConfig } from "./executionConfig";
+import { positionStore } from "./positionStore";
+import { isAutopilotLocked } from "./autopilotLock";
 
 let started = false;
+
+/**
+ * Pure. True if this pair+timeframe already has an open, currently-losing position on
+ * this account IN THE SAME DIRECTION as the incoming signal -- the autopilot's per-
+ * pair/timeframe brake against piling more risk onto a trade that's already going
+ * against it. Deliberately direction-scoped, not "any open trade on this pair+
+ * timeframe": an OPPOSITE-direction signal must still pass straight through, since
+ * that's the recovery path -- positionInvalidation.ts closes the losing trade and this
+ * same event lets autoExecutionListener open the new, opposite-direction one, both
+ * firing off the one fresh signal. Blocking here too would trap a losing position open
+ * forever instead of letting it flip.
+ *
+ * Once the losing trade is actually closed (its own SL/TP, or that invalidation close),
+ * this simply returns false again next time -- ordinary signal-driven auto-execution
+ * resumes on its own, no separate re-arm step needed.
+ *
+ * Reads live broker P/L (OpenPosition.profit) rather than recomputing favorable/adverse
+ * from raw price -- correct out of the box across pairs with different quote currencies
+ * and pip values, matching positionManager.ts's own preference for broker-reported state
+ * over re-derived math wherever it's available.
+ */
+export function hasAdverseOpenPosition(
+  pair: Pair,
+  timeframe: Timeframe,
+  direction: "long" | "short",
+  openTrades: ExecutedTrade[],
+  openPositions: OpenPosition[]
+): boolean {
+  const positionsById = new Map(openPositions.map((position) => [position.id, position]));
+  return openTrades.some((trade) => {
+    if (trade.status !== "filled" || !trade.brokerPositionId) return false;
+    if (trade.pair !== pair || trade.timeframe !== timeframe || trade.direction !== direction) return false;
+    const live = positionsById.get(trade.brokerPositionId);
+    return live !== undefined && live.profit < 0;
+  });
+}
 
 /**
  * The ONLY place a signal can auto-execute without a manual click. Subscribes to the
@@ -27,6 +66,12 @@ let started = false;
  * executionConfig.ts's rangeEngineEnabled for the target account -- that engine has no
  * backtest history yet, so it ships detection-only (visible on the dashboard, never
  * executed) until explicitly turned on.
+ *
+ * Reacts to a signal from any of the three signal engines (15m/30m/1h -- see
+ * metaApiConnection.ts's SIGNAL_TIMEFRAMES) equally; nothing here narrows that set on
+ * its own. hasAdverseOpenPosition below is what actually stops the autopilot from
+ * piling onto a pair+timeframe that's already going against it, independent of which of
+ * the three timeframes that is.
  */
 export function startAutoExecutionListener(): void {
   if (started) return;
@@ -35,6 +80,14 @@ export function startAutoExecutionListener(): void {
   eventBus.subscribe((event) => {
     if (event.type !== "signal") return;
     if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion") return;
+
+    // The operator's own manual master switch for the autopilot specifically -- see
+    // autopilotLock.ts's doc comment for how this differs from the kill switch (which
+    // also blocks manual clicks) and from engine mode (analysis/demo/live).
+    if (isAutopilotLocked()) {
+      console.log(`[auto-execution] skip ${event.signal.pair} ${event.signal.id}: autopilot is locked`);
+      return;
+    }
 
     const accountKey = autoExecutionAccount(getEngineMode());
     if (!accountKey) return; // ANALYSIS: no-op
@@ -47,6 +100,19 @@ export function startAutoExecutionListener(): void {
     // it already has a human reviewing every trade via the proposal/approve flow.
     const equity = getAccountInformation(accountKey)?.equity ?? 0;
     if (requiresAcknowledgement(riskState.current(Date.now(), equity, accountKey))) return;
+
+    // Per-pair/timeframe brake: don't add to a same-direction position that's already
+    // carrying a loss -- wait for it to close (SL/TP, or an opposite-signal invalidation
+    // close) before this same slot is allowed to auto-fire again in that direction. An
+    // opposite-direction signal passes straight through -- see hasAdverseOpenPosition's
+    // own doc comment for why that's the intended recovery/reversal path.
+    const openTrades = positionStore.all().filter((trade) => trade.account === accountKey && trade.status === "filled");
+    if (hasAdverseOpenPosition(event.signal.pair, event.signal.timeframe, event.signal.direction, openTrades, getOpenPositions(accountKey))) {
+      console.log(
+        `[auto-execution] skip ${event.signal.pair} ${event.signal.timeframe} ${event.signal.id} (${accountKey}): existing ${event.signal.direction} position on this pair/timeframe is currently losing -- waiting for it to close`
+      );
+      return;
+    }
 
     attemptExecution(event.signal, accountKey).catch((error: unknown) => {
       console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);

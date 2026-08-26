@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Dashboard } from "@/components/dashboard/Dashboard";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
+import { AutopilotLockControl } from "@/components/dashboard/AutopilotLockControl";
 import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
@@ -39,6 +40,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <EngineModeControl />
+          <AutopilotLockControl />
           <ExecutionPolicyControl />
           <EmergencyStopControl />
         </div>

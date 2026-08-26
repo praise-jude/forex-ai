@@ -4,6 +4,7 @@ import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyCo
 import { ConfirmationModeControl } from "@/components/dashboard/ConfirmationModeControl";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
+import { AutopilotLockControl } from "@/components/dashboard/AutopilotLockControl";
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
 import { SystemHealthPanel } from "@/components/dashboard/SystemHealthPanel";
 import { CorrelationPanel } from "@/components/dashboard/CorrelationPanel";
@@ -205,6 +206,7 @@ export default function SettingsPage() {
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Live controls</h2>
           <div className="flex flex-wrap items-center gap-2">
             <EngineModeControl />
+            <AutopilotLockControl />
             <ExecutionPolicyControl />
           </div>
           <div className="mt-2">

@@ -1,5 +1,6 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
 import { checkEngineModeAfterRestart } from "./engineMode";
+import { hydrateAutopilotLock } from "./autopilotLock";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
 import { startConnectionWatchdog } from "./connectionWatchdog";
@@ -55,6 +56,16 @@ export function startMarketEngine(): void {
   // push notification rather than that only being discoverable by chance.
   checkEngineModeAfterRestart().catch((error: unknown) => {
     console.error("[market] failed to check engine mode across restart:", error);
+  });
+
+  // Fire-and-forget, same posture as every hydrate above -- restores whatever
+  // lock/unlock state was last persisted, so a Railway redeploy doesn't silently drop
+  // the operator's own autopilot lock back to unlocked (see autopilotLock.ts). Engine
+  // mode's own unconditional reset to ANALYSIS on every restart (just above) already
+  // blocks all auto-execution until a human manually re-enables DEMO/LIVE, which is far
+  // slower than this DB round trip -- so this can't be raced in practice.
+  hydrateAutopilotLock().catch((error: unknown) => {
+    console.error("[market] failed to hydrate autopilot lock:", error);
   });
 
   ensureMetaApiConnection("live").catch((error: unknown) => {

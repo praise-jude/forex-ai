@@ -22,26 +22,20 @@ export type Pair =
   | "MSFT"
   | "SPCX";
 
-export const PAIRS: Pair[] = [
-  "EUR/USD",
-  "GBP/USD",
-  "USD/JPY",
-  "AUD/USD",
-  "USD/CAD",
-  "XAU/USD",
-  "XAG/USD",
-  "USOIL",
-  "UKOIL",
-  "BTC/USD",
-  "USD/CHF",
-  "NZD/USD",
-  "EUR/JPY",
-  "AUD/JPY",
-  "ETH/USD",
-  "NFLX",
-  "MSFT",
-  "SPCX",
-];
+// Trimmed to the operator's chosen "best 9" -- the 7 FX majors (best liquidity/spread
+// during the London/NY killzones this engine actually trades, see sessions.ts) plus gold
+// (the most reliable non-FX instrument for SMC/ICT-style structure) and one crypto (24/7,
+// exempt from the killzone gate -- see symbols.ts's isCrypto). Dropped: XAG/USD (thin,
+// redundant with gold), USOIL/UKOIL (correlated with each other, news- rather than
+// structure-driven), EUR/JPY/AUD/JPY (noisier crosses, correlated with the majors above),
+// ETH/USD (correlated with BTC/USD), and NFLX/MSFT/SPCX (single stocks, a different
+// market structure than this killzone-gated engine was built around).
+//
+// Only trims what's actively MONITORED/traded -- the full Pair type union above is
+// unchanged, so historical trade/journal records on a dropped pair still typecheck, and
+// any such position still open at the broker keeps getting managed normally (symbols.ts's
+// broker-symbol mapping is keyed off the Pair type, not this array).
+export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD"];
 
 export interface Candle {
   time: number; // unix ms, candle open time

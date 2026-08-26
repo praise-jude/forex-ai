@@ -162,3 +162,14 @@ export const engineModeState = pgTable("engine_mode_state", {
   mode: text("mode").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
+
+// Same "survive a Railway redeploy" reasoning as engineModeState above, but for
+// autopilotLock.ts -- unlike engine mode (which always boots back to the safe ANALYSIS
+// default on purpose, see engineMode.ts), a lock IS the safe state, so this one DOES get
+// read back and restored on boot (see autopilotLock.ts's own hydrate). Always exactly one
+// row (id "singleton").
+export const autopilotLockState = pgTable("autopilot_lock_state", {
+  id: text("id").primaryKey(),
+  locked: boolean("locked").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
