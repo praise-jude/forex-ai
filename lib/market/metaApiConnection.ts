@@ -36,7 +36,13 @@ import { detectMarketRegime } from "./marketRegime";
 import { checkNews } from "./newsFilter";
 import { emaTrendDirection } from "./indicators/emaTrend";
 import { scoreSetupQuality } from "./setupQualityScore";
-import { tradeJournal, type JournalCloseReason } from "./tradeJournal";
+import {
+  tradeJournal,
+  getConfidenceCalibration,
+  defaultCalibrationMinSamples,
+  calibrationMilestoneNotifications,
+  type JournalCloseReason,
+} from "./tradeJournal";
 import { positionStore } from "./positionStore";
 import { consume as consumeInvalidationMark } from "./invalidationMarker";
 
@@ -358,13 +364,19 @@ class MarketSyncListener extends SynchronizationListener {
     const config = loadExecutionConfig(this.accountKey);
 
     const pair = deal.symbol ? pairForBrokerSymbol(deal.symbol) : undefined;
-    if (pair) void sendNotification(closedPositionNotification(pair, deal, this.accountKey));
+    // Consumed exactly once here, before either reader below -- invalidationMarker's own
+    // consume() deletes the mark on read (deliberately single-use, see its own doc
+    // comment), so the notification and the journal entry must share this one read
+    // rather than each calling consume() independently, which would silently starve
+    // whichever ran second.
+    const wasInvalidation = deal.positionId !== undefined && consumeInvalidationMark(deal.positionId);
+    if (pair) void sendNotification(closedPositionNotification(pair, deal, this.accountKey, wasInvalidation));
     // Sibling recording action alongside the notification above -- never alters the
     // risk-state logic below it. Only ever produces a journal entry for a close this
     // app itself opened (a matching ExecutedTrade must exist); a manually opened and
     // closed position has no signal/entry/stop-loss to derive R from, so it's left out
     // rather than guessed.
-    if (pair) recordJournalOutcome(pair, deal, this.accountKey);
+    if (pair) recordJournalOutcome(pair, deal, this.accountKey, wasInvalidation);
 
     // Captured before recordTradeClosed mutates it in place -- the only way to tell
     // "cooldown just tripped on this deal" from "cooldown was already active" below.
@@ -394,9 +406,10 @@ class MarketSyncListener extends SynchronizationListener {
 /** Checked before the broker's own deal.reason mapping -- an API-initiated invalidation
  * close (see positionInvalidation.ts) reads to MetaApi as an ordinary client-side close
  * (DEAL_REASON_CLIENT/EXPERT), indistinguishable from a genuine manual close by reason
- * alone. invalidationMarker.ts's short-lived mark is what tells them apart. */
-function journalCloseReasonFor(deal: MetatraderDeal): JournalCloseReason {
-  if (deal.positionId !== undefined && consumeInvalidationMark(deal.positionId)) return "invalidation";
+ * alone. `wasInvalidation` is the one shared read of invalidationMarker.ts's short-lived
+ * mark (see onDealAdded's own comment on why it can't be read again here). */
+function journalCloseReasonFor(deal: MetatraderDeal, wasInvalidation: boolean): JournalCloseReason {
+  if (wasInvalidation) return "invalidation";
   if (deal.reason === "DEAL_REASON_SL") return "stop_loss";
   if (deal.reason === "DEAL_REASON_TP") return "take_profit";
   if (deal.reason === "DEAL_REASON_CLIENT" || deal.reason === "DEAL_REASON_MOBILE" || deal.reason === "DEAL_REASON_WEB" || deal.reason === "DEAL_REASON_EXPERT") {
@@ -409,7 +422,7 @@ function journalCloseReasonFor(deal: MetatraderDeal): JournalCloseReason {
  * positionStore's brokerPositionId <-> signalId link), then hands the real entry/
  * stop-loss/lots off to tradeJournal.recordOutcome for its own R-multiple math --
  * never recomputed here, so there's only one place that math lives. */
-function recordJournalOutcome(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey): void {
+function recordJournalOutcome(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey, wasInvalidation: boolean): void {
   if (deal.positionId === undefined || deal.price === undefined) return;
   const trade = positionStore.all().find((t) => t.account === accountKey && t.brokerPositionId === deal.positionId);
   if (!trade) return;
@@ -426,14 +439,39 @@ function recordJournalOutcome(pair: Pair, deal: MetatraderDeal, accountKey: Acco
     contractSize: getSymbolSpecification(pair, accountKey)?.contractSize,
     exitPrice: deal.price,
     profit: deal.profit,
-    reason: journalCloseReasonFor(deal),
+    reason: journalCloseReasonFor(deal, wasInvalidation),
     closedAt: deal.time.getTime(),
   });
+
+  checkCalibrationMilestone();
 }
 
-function closedPositionNotification(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey) {
+// Thin orchestration wrapper -- the actual milestone logic is pure and tested (see
+// tradeJournal.ts's calibrationMilestoneNotifications), this just supplies the real data
+// and fires the notification, on the operator's own explicit "wait for real data"
+// decision so that wait has visible progress instead of requiring a manual Settings check.
+function checkCalibrationMilestone(): void {
+  const minSamples = defaultCalibrationMinSamples();
+  const buckets = getConfidenceCalibration(tradeJournal.all(), minSamples);
+  for (const notification of calibrationMilestoneNotifications(buckets, minSamples)) {
+    void sendNotification({ category: "calibration_update", title: notification.title, body: notification.body });
+  }
+}
+
+function closedPositionNotification(pair: Pair, deal: MetatraderDeal, accountKey: AccountKey, wasInvalidation: boolean) {
   const outcome = deal.profit >= 0 ? "Profit" : "Loss";
-  const reasonLabel = deal.reason === "DEAL_REASON_SL" ? "Stop loss hit" : deal.reason === "DEAL_REASON_TP" ? "Take profit hit" : "Position closed";
+  // wasInvalidation takes priority over the broker's own deal.reason -- see
+  // positionInvalidation.ts's own flow: an opposite signal fires, closes this losing
+  // position, and (via the exact same event) opens the new, opposite-direction one --
+  // the single most important kind of close to recognize at a glance, and otherwise
+  // indistinguishable from an ordinary manual close (MetaApi reports both the same way).
+  const reasonLabel = wasInvalidation
+    ? "Reversed — opposite signal fired"
+    : deal.reason === "DEAL_REASON_SL"
+      ? "Stop loss hit"
+      : deal.reason === "DEAL_REASON_TP"
+        ? "Take profit hit"
+        : "Position closed";
   return {
     category: "trade_closed" as const,
     title: `JUDE AI — ${reasonLabel}: ${pair}`,

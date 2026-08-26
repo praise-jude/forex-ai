@@ -15,6 +15,7 @@ const PREF_KEYS: (keyof NotificationPrefs)[] = [
   "engineModeAlerts",
   "autopilotBlocked",
   "sessionAlerts",
+  "calibrationUpdates",
   "minConfidence",
 ];
 

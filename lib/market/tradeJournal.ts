@@ -507,6 +507,45 @@ export function getConfidenceCalibration(entries: JournalEntry[], minSamples: nu
   });
 }
 
+// Progress checkpoints toward a tier's own minSamples bar -- purely informational (see
+// calibrationMilestoneNotifications' own doc comment), same three fixed checkpoints
+// regardless of how far minSamples itself is configured.
+const CALIBRATION_MILESTONES = new Set([10, 20, 30]);
+
+export interface CalibrationMilestoneNotification {
+  tier: "buy" | "strong_buy";
+  title: string;
+  body: string;
+}
+
+/**
+ * Pure. Which (if any) calibration buckets just crossed a real closed-trade milestone
+ * (10/20/30) toward getConfidenceCalibration's own minSamples bar -- called once per
+ * newly-recorded outcome (see metaApiConnection.ts's onDealAdded), so a bucket's
+ * sampleSize only ever increases by exactly one per call and can land on a given
+ * milestone at most once as it climbs, never skip over it or re-trigger later.
+ *
+ * Purely informational, same "narrate, never touch scoring" posture as every other
+ * notification in this app -- getConfidenceCalibration/positionSizing.ts's own
+ * confidenceAdjustedRiskPct are completely unaffected by this; it only ever reads the
+ * same numbers Settings' own calibration panel already shows.
+ */
+export function calibrationMilestoneNotifications(
+  buckets: ConfidenceCalibrationBucket[],
+  minSamples: number
+): CalibrationMilestoneNotification[] {
+  return buckets
+    .filter((bucket) => CALIBRATION_MILESTONES.has(bucket.sampleSize))
+    .map((bucket) => {
+      const label = bucket.tier === "strong_buy" ? "Strong buy" : "Buy";
+      const body =
+        bucket.sampleSize >= minSamples
+          ? `${label} tier just reached ${bucket.sampleSize} real closed trades -- calibration data is now available in Settings.`
+          : `${label} tier: ${bucket.sampleSize}/${minSamples} real closed trades toward calibration.`;
+      return { tier: bucket.tier, title: `JUDE AI — Calibration progress: ${label}`, body };
+    });
+}
+
 export interface SignerBCalibrationBucket {
   tier: DimensionTier;
   sampleSize: number;

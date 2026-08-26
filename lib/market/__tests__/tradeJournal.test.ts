@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
-import { getConfidenceCalibration, getPerformanceBreakdown, getPerformanceStats, getSignalFunnelStats, getSignerBCalibration } from "../tradeJournal";
+import {
+  calibrationMilestoneNotifications,
+  getConfidenceCalibration,
+  getPerformanceBreakdown,
+  getPerformanceStats,
+  getSignalFunnelStats,
+  getSignerBCalibration,
+  type ConfidenceCalibrationBucket,
+} from "../tradeJournal";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
 import { loadTradeJournalModule } from "./tradeJournalTestHelper";
 
@@ -422,6 +430,45 @@ describe("getConfidenceCalibration", () => {
       { tier: "buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
       { tier: "strong_buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
     ]);
+  });
+});
+
+describe("calibrationMilestoneNotifications", () => {
+  it("fires for a tier that just landed exactly on a milestone (10/20/30)", () => {
+    const buckets: ConfidenceCalibrationBucket[] = [
+      { tier: "buy", sampleSize: 10, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+      { tier: "strong_buy", sampleSize: 3, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+    ];
+    const result = calibrationMilestoneNotifications(buckets, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ tier: "buy", body: expect.stringContaining("10/30") });
+  });
+
+  it("silently does nothing for a sample size that isn't a milestone", () => {
+    const buckets: ConfidenceCalibrationBucket[] = [
+      { tier: "buy", sampleSize: 11, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+      { tier: "strong_buy", sampleSize: 0, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+    ];
+    expect(calibrationMilestoneNotifications(buckets, 30)).toEqual([]);
+  });
+
+  it("uses the \"now available\" wording once the milestone reached is the real minSamples bar itself", () => {
+    const buckets: ConfidenceCalibrationBucket[] = [
+      { tier: "strong_buy", sampleSize: 30, status: "calibrated", winRate: 55, averageR: 0.4, expectancy: 0.4 },
+    ];
+    const result = calibrationMilestoneNotifications(buckets, 30);
+    expect(result).toHaveLength(1);
+    expect(result[0].tier).toBe("strong_buy");
+    expect(result[0].body).toContain("now available in Settings");
+  });
+
+  it("can fire for both tiers independently when both land on a milestone from the same call", () => {
+    const buckets: ConfidenceCalibrationBucket[] = [
+      { tier: "buy", sampleSize: 20, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+      { tier: "strong_buy", sampleSize: 10, status: "insufficient_data", winRate: null, averageR: null, expectancy: null },
+    ];
+    const result = calibrationMilestoneNotifications(buckets, 30);
+    expect(result.map((n) => n.tier).sort()).toEqual(["buy", "strong_buy"]);
   });
 });
 

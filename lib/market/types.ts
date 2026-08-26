@@ -435,6 +435,11 @@ export interface NotificationPrefs {
    * FX/gold trading window (see sessions.ts). Purely informational, same posture as
    * autopilotBlocked above. Defaults ON. */
   sessionAlerts: boolean;
+  /** Fires when a confidence tier (buy/strong_buy) crosses a real closed-trade milestone
+   * (10/20/30) toward getConfidenceCalibration's own sample-size bar -- purely
+   * informational progress toward data that isn't wired into sizing until it clears that
+   * bar (see positionSizing.ts's confidenceAdjustedRiskPct). Defaults ON. */
+  calibrationUpdates: boolean;
   minConfidence: number;
 }
 
@@ -454,6 +459,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   engineModeAlerts: true,
   autopilotBlocked: true,
   sessionAlerts: true,
+  calibrationUpdates: true,
   minConfidence: 80,
 };
 
@@ -469,7 +475,8 @@ export type NotificationCategory =
   | "daily_digest"
   | "engine_mode_reset"
   | "signal_blocked"
-  | "session_alert";
+  | "session_alert"
+  | "calibration_update";
 
 export type DevicePlatform = "ios" | "android" | "web";
 
