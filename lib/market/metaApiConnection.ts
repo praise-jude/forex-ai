@@ -718,7 +718,6 @@ export async function placeMarketOrder(
   stopLoss: number,
   takeProfit: number,
   requestedEntry: number,
-  clientId: string,
   accountKey: AccountKey = "live"
 ): Promise<PlaceOrderResult> {
   const connection = stateFor(accountKey).connection;
@@ -728,12 +727,21 @@ export async function placeMarketOrder(
   // in the broker terminal, not just on the dashboard.
   const comment = direction === "long" ? "JUDE" : "OMINI";
 
+  // No clientId -- confirmed in production (a real, repeated "Validation failed...
+  // clientId... must match required pattern" rejection from MetaApi) that it validates
+  // clientId against an undocumented pattern neither a flat hex string nor an
+  // underscore-prefixed one satisfied. It's optional (this app's own idempotency guard,
+  // positionStore.hasExecuted() checked synchronously before this call ever runs, is the
+  // real, primary protection against a duplicate order -- clientId was only ever
+  // defense-in-depth on top of that), so rather than keep guessing at an unpublished
+  // regex, this simply stops sending the one field that kept getting every order
+  // rejected outright.
   let response: MetatraderTradeResponse;
   try {
     response =
       direction === "long"
-        ? await connection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment })
-        : await connection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment });
+        ? await connection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { comment })
+        : await connection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { comment });
   } catch (error) {
     // MetaApi's SDK throws (rather than returning a normal response) for a validation-
     // level rejection, and its own Error.message alone is often just "Validation failed
