@@ -278,6 +278,16 @@ describe("evaluateSignal", () => {
     });
   });
 
+  // The trend-agreement gate deliberately only requires D1/H4 -- a live check of the
+  // lone-disagreement pattern across all 9 tracked pairs found H1 was the sole holdout
+  // in 5 of 7 blocked setups (D1: 2, H4: 0), so H1 disagreeing alone must never block a
+  // setup that D1/H4 both support.
+  it("still fires when only H1 disagrees with an agreeing D1/H4", () => {
+    const higherTimeframes = { ...buildHigherTimeframes("up"), h1: buildHigherTf(210, "down") };
+    const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", higherTimeframes);
+    expect(evaluation.status).toBe("signal");
+  });
+
   it("reports no_setup when price has already tagged the zone once", () => {
     const candles = buildCandles();
     candles.push(candle(t(WARMUP_LENGTH + 21), 1.04, 1.045, 1.02, 1.035));

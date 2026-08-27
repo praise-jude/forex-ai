@@ -147,11 +147,18 @@ export function evaluateSignal(
   const zoneDirection = wantsBullish ? "bullish" : "bearish";
   const direction: "long" | "short" = wantsBullish ? "long" : "short";
 
-  // --- Hard pre-gates: D1/H4/H1 agreement, ADX floor, ATR health ---
+  // --- Hard pre-gates: D1/H4 agreement, ADX floor, ATR health ---
+  // H1 is intentionally NOT part of this gate -- a live check of the lone-disagreement
+  // pattern across all 9 pairs found H1 was the sole holdout in 5 of 7 blocked setups
+  // (D1: 2, H4: 0), consistent with it being the fastest/noisiest of the three and most
+  // prone to a short-term pullback against the real D1/H4 trend. Requiring all three to
+  // agree was making the gate far stricter than the two slower, more reliable
+  // timeframes alone warrant. h1Trend is still computed and carried in the no-trade
+  // reason payload below purely as informational context, never as a blocker.
   const d1Trend = emaTrendDirection(higherTimeframes.d1);
   const h4Trend = emaTrendDirection(higherTimeframes.h4);
   const h1Trend = emaTrendDirection(higherTimeframes.h1);
-  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== h1Trend || d1Trend !== zoneDirection) {
+  if (d1Trend === "neutral" || d1Trend !== h4Trend || d1Trend !== zoneDirection) {
     return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: d1Trend, h4: h4Trend, h1: h1Trend });
   }
 

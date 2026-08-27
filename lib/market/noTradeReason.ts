@@ -66,7 +66,7 @@ function describeReason(reason: NoTradeReason): string {
       return "No qualifying setup right now -- no recent liquidity sweep with a confirming structure break and a freshly-tagged order block or fair value gap.";
     case "trend_disagreement": {
       const wanted = reason.impliedDirection === "long" ? "bullish" : "bearish";
-      return `A setup formed, but the daily/4-hour/1-hour trend doesn't agree (D1 ${reason.d1}, H4 ${reason.h4}, H1 ${reason.h1}) -- all three must be ${wanted} for a ${reason.impliedDirection === "long" ? "buy" : "sell"}.`;
+      return `A setup formed, but the daily/4-hour trend doesn't agree (D1 ${reason.d1}, H4 ${reason.h4}, H1 ${reason.h1} for reference) -- both D1 and H4 must be ${wanted} for a ${reason.impliedDirection === "long" ? "buy" : "sell"}.`;
     }
     case "weak_trend_adx":
       return `Trend strength is too weak (ADX ${reason.adx.toFixed(1)}, needs 20+) -- the market isn't trending enough to trust a directional setup right now.`;
