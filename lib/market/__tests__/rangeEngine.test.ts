@@ -76,7 +76,59 @@ function buildTouchCandle(time: number, weakRejection = false): Candle {
       candle(time, SUPPORT - 0.0008, SUPPORT - 0.0003, SUPPORT - 0.0015, SUPPORT - 0.0004);
 }
 
+// A separate, smooth sine-wave chop -- deliberately NOT buildRangeCandles() below, whose
+// ADX sits right at the "clean range" ceiling by design (per its own doc comment), too
+// fragile to also carry an outlier candle without tipping the whole series into a
+// different regime before ever reaching the range-width check this exercises.
+function buildOutlierProneChop(): { candles: Candle[]; resistance: number } {
+  const mid = 1.01;
+  const amp = 0.002;
+  const period = 8;
+  const candles: Candle[] = [];
+  let t = 0;
+  for (let i = 0; i < 60; i++) {
+    const price = mid + amp * Math.sin((2 * Math.PI * i) / period);
+    candles.push(candle(t, price, price + amp * 0.15, price - amp * 0.15, price));
+    t += STEP;
+  }
+  const resistance = mid + amp * 1.15;
+  // A rejection AT resistance: wicks above it, closes back just inside -- rejection
+  // (close near the wicked side's opposite) and nearBoundary (close still just shy of
+  // the boundary) both score, clearing the watch-tier floor without needing RSI extremity.
+  candles.push(candle(t, resistance + 0.0002, resistance + 0.0012, resistance - 0.0002, resistance - 0.0001));
+  return { candles, resistance };
+}
+
 describe("evaluateRangeSignal", () => {
+  it("rejects a range whose swing low is a single outlier candle, instead of producing a broken near-zero/negative takeProfit", () => {
+    // Confirmed (via a real production incident on XAU/USD) that a single implausible
+    // swing low picked up deep in the lookback window -- a broker feed glitch, or a
+    // genuine but ancient low from well outside the market's current volatility regime;
+    // either way, detectSwingPoints has no sanity bound of its own on how extreme a
+    // "low" can be -- lets Math.min(...lows) pick it as the range's own support. For a
+    // resistance-touch (short) setup, that support becomes this signal's own takeProfit
+    // (the opposite boundary), producing an impossible price and an absurd R:R (46:1 in
+    // this fixture; the real incident showed a takeProfit near zero, a negative
+    // takeProfit2, and R:R above 29 -- the same shape). MAX_RANGE_ATR_MULTIPLE now
+    // catches it before any of that gets computed.
+    const { candles: clean, resistance } = buildOutlierProneChop();
+
+    // Same fixture, unmodified, fires a perfectly sane signal -- proves the poisoned
+    // case below fails specifically because of the outlier, not because this setup
+    // wouldn't otherwise qualify.
+    const cleanEvaluation = evaluateRangeSignal(clean, "EUR/USD", "15m", CLEAR_NEWS);
+    expect(cleanEvaluation.status).toBe("signal");
+    if (cleanEvaluation.status !== "signal") return;
+    expect(cleanEvaluation.signal.takeProfit).toBeCloseTo(resistance - 0.0046, 3);
+    expect(cleanEvaluation.signal.riskReward).toBeLessThan(10);
+
+    const poisoned = [...clean];
+    poisoned[15] = { ...poisoned[15], low: 0.98 };
+
+    const evaluation = evaluateRangeSignal(poisoned, "EUR/USD", "15m", CLEAR_NEWS);
+    expect(evaluation).toEqual({ status: "no_trade", reason: { code: "no_range_detected" } });
+  });
+
   it("fires a watch-tier signal on a genuine support touch with rejection, a clean range, and entry proximity", () => {
     const base = buildRangeCandles();
     const candles = [...base, buildTouchCandle(base.length * STEP)];

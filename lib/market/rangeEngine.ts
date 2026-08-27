@@ -22,6 +22,19 @@ const SWING_LOOKBACK = 2; // matches detectSwingPoints' own default, explicit he
 // A range narrower than this (relative to ATR) is too tight to be a meaningful
 // mean-reversion setup rather than noise.
 const MIN_RANGE_ATR_MULTIPLE = 1.5;
+// A range wider than this (relative to ATR) is never a genuine tight consolidation a
+// mean-reversion strategy should trade -- same "confirmed via a real backtest" posture
+// as MIN_STOP_ATR_FRACTION's own floor below, and the same failure shape: a single
+// swing high/low picked up from one outlier candle (a broker feed glitch -- a near-zero
+// or wildly-off tick, not a real print) can make Math.min/Math.max over the whole swing
+// list pick that one bad price as the range's boundary, since detectSwingPoints has no
+// sanity bound of its own on how extreme a "high"/"low" can be. Without this ceiling,
+// that boundary becomes this signal's own takeProfit (the opposite boundary) --
+// observed in production producing a takeProfit near zero and a negative takeProfit2
+// for XAU/USD, both impossible prices for a real setup. A generous, documented starting
+// point to observe and tune, not a claimed-optimal figure -- any real consolidation
+// range should be nowhere close to this wide relative to current volatility.
+const MAX_RANGE_ATR_MULTIPLE = 15;
 // How close to a boundary counts as a genuine "touch" this candle, scaled to ATR
 // rather than a flat price distance -- same reasoning as signalEngine.ts's own
 // ATR-scaled sweep tolerance (see symbols.ts's XAU/USD comment on why pips aren't
@@ -102,7 +115,10 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
 
   const resistance = Math.max(...highs.map((s) => s.price));
   const support = Math.min(...lows.map((s) => s.price));
-  if (resistance - support < atr * MIN_RANGE_ATR_MULTIPLE) return noTrade({ code: "no_range_detected" });
+  const rangeWidth = resistance - support;
+  if (rangeWidth < atr * MIN_RANGE_ATR_MULTIPLE || rangeWidth > atr * MAX_RANGE_ATR_MULTIPLE) {
+    return noTrade({ code: "no_range_detected" });
+  }
 
   const touchTolerance = atr * BOUNDARY_TOUCH_ATR_FRACTION;
   const touchedSupport = lastCandle.low <= support + touchTolerance;

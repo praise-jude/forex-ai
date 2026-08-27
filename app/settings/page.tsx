@@ -5,6 +5,7 @@ import { ConfirmationModeControl } from "@/components/dashboard/ConfirmationMode
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
 import { AutopilotLockControl } from "@/components/dashboard/AutopilotLockControl";
+import { DemoTestTradeControl } from "@/components/dashboard/DemoTestTradeControl";
 import { SignalDiagnosticsPanel } from "@/components/dashboard/SignalDiagnosticsPanel";
 import { SystemHealthPanel } from "@/components/dashboard/SystemHealthPanel";
 import { CorrelationPanel } from "@/components/dashboard/CorrelationPanel";
@@ -234,6 +235,13 @@ export default function SettingsPage() {
             Pair correlation <span className="normal-case text-zinc-600">(what the correlated-exposure risk gate is using right now)</span>
           </h2>
           <CorrelationPanel />
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            DEMO test trade <span className="normal-case text-zinc-600">(verify order placement works, without waiting for a real setup)</span>
+          </h2>
+          <DemoTestTradeControl demoConfigured={demoConfigured} />
         </section>
 
         <section className="flex flex-col gap-4">

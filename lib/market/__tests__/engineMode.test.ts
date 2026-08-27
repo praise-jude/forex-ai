@@ -1,4 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const getOptionalDb = vi.fn();
+const sendNotification = vi.fn<() => Promise<void>>();
+
+vi.mock("../../db/optionalClient", () => ({
+  getOptionalDb: (...args: unknown[]) => getOptionalDb(...args),
+}));
+
+vi.mock("../pushNotifier", () => ({
+  sendNotification: (...args: unknown[]) => sendNotification(...(args as [])),
+}));
+
 import {
   LIVE_CONFIRMATION_PHRASE,
   autoExecutionAccount,
@@ -9,6 +21,21 @@ import {
   resetEngineModeForTests,
   setEngineMode,
 } from "../engineMode";
+
+/** Fakes just enough of the drizzle chain checkEngineModeAfterRestart/persistMode use --
+ * a select().from().where().limit() read returning `rows`, and an insert().values()
+ * .onConflictDoUpdate() write that always resolves. */
+function fakeDb(rows: { mode: string }[]) {
+  return {
+    select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve(rows) }) }) }),
+    insert: () => ({ values: () => ({ onConflictDoUpdate: () => Promise.resolve(undefined) }) }),
+  };
+}
+
+beforeEach(() => {
+  getOptionalDb.mockReset().mockReturnValue(null);
+  sendNotification.mockReset().mockResolvedValue(undefined);
+});
 
 describe("engineMode", () => {
   afterEach(() => {
@@ -49,19 +76,54 @@ describe("checkEngineModeAfterRestart", () => {
     resetEngineModeForTests();
   });
 
-  // Deliberately doesn't assert on whether a notification was sent -- that depends on
-  // whatever was last persisted to the DB by earlier runs/tests, which this suite
-  // doesn't control (see engineMode.ts's own "best-effort, DB may be unconfigured"
-  // posture). What every environment can assert regardless: this never touches the
-  // in-memory mode itself (only setEngineMode/enableLiveMode may), and never throws.
-  it("never mutates the in-memory engine mode", async () => {
-    setEngineMode("demo");
+  it("no-ops (mode stays at its module-load default, no notification) when DATABASE_URL isn't configured", async () => {
+    // getOptionalDb() already defaults to null via the top-level beforeEach.
     await checkEngineModeAfterRestart();
-    expect(getEngineMode()).toBe("demo");
+    expect(getEngineMode()).toBe("analysis");
+    expect(sendNotification).not.toHaveBeenCalled();
   });
 
-  it("resolves without throwing regardless of DB configuration", async () => {
+  it("auto-resumes DEMO after a restart -- it risks no real money, unlike LIVE", async () => {
+    getOptionalDb.mockReturnValue(fakeDb([{ mode: "demo" }]));
+    await checkEngineModeAfterRestart();
+    expect(getEngineMode()).toBe("demo");
+    expect(sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "engine_mode_reset", title: expect.stringContaining("resumed") })
+    );
+  });
+
+  it("never auto-resumes LIVE -- stays in ANALYSIS and notifies that it was reset", async () => {
+    getOptionalDb.mockReturnValue(fakeDb([{ mode: "live" }]));
+    await checkEngineModeAfterRestart();
+    expect(getEngineMode()).toBe("analysis");
+    expect(sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "engine_mode_reset", title: expect.stringContaining("reset to Analysis") })
+    );
+  });
+
+  it("does nothing when no mode was ever persisted before (first-ever boot)", async () => {
+    getOptionalDb.mockReturnValue(fakeDb([]));
+    await checkEngineModeAfterRestart();
+    expect(getEngineMode()).toBe("analysis");
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("resolves without throwing even if the DB read rejects", async () => {
+    // Read fails, but persistMode's own write (called unconditionally afterward) still
+    // needs a working insert chain -- this isn't testing persistMode, just confirming a
+    // broken read alone can't take the whole restart check down.
+    getOptionalDb.mockReturnValue({
+      ...fakeDb([]),
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.reject(new Error("connection refused")),
+          }),
+        }),
+      }),
+    });
     await expect(checkEngineModeAfterRestart()).resolves.toBeUndefined();
+    expect(getEngineMode()).toBe("analysis");
   });
 });
 

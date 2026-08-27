@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import type { Signal } from "@/lib/market/types";
+import { UNSCORED_SOURCE_LABEL, type Signal } from "@/lib/market/types";
 import { formatPrice } from "@/lib/market/format";
 import { TradingRobot } from "./TradingRobot";
 
@@ -43,7 +43,7 @@ function ToastCard({ entry, onDismiss }: { entry: ToastEntry; onDismiss: (key: s
         <span>{signal.timeframe}</span>
       </div>
       <div className="mt-1 text-[11px] text-zinc-500">
-        {signal.source === "tradingview" ? "Source: TradingView" : `Confidence ${signal.confidence.toFixed(0)}%`}
+        {UNSCORED_SOURCE_LABEL[signal.source] ?? `Confidence ${signal.confidence.toFixed(0)}%`}
       </div>
     </div>
   );
