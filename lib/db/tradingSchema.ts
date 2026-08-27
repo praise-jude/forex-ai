@@ -173,3 +173,16 @@ export const autopilotLockState = pgTable("autopilot_lock_state", {
   locked: boolean("locked").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
+
+// Durable dedup ledger for metaApiConnection.ts's onDealAdded -- the MetaApi SDK can
+// (and, per the "another cooldown" reports on 2026-08-27, does) redeliver the same
+// historical closing deal as a fresh onDealAdded event across a reconnect resync or a
+// process restart, and without this table every redelivery of the SAME real loss got
+// re-counted by riskState.recordTradeClosed, tripping phantom "N consecutive losses"
+// cooldowns for a loss that only ever happened once. Keyed by the broker's own deal
+// ticket (dealId) -- already globally unique, so no account column is needed.
+export const processedDeals = pgTable("processed_deals", {
+  dealId: text("deal_id").primaryKey(),
+  account: text("account").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).notNull(),
+});

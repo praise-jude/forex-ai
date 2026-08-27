@@ -45,6 +45,7 @@ import {
 } from "./tradeJournal";
 import { positionStore } from "./positionStore";
 import { consume as consumeInvalidationMark } from "./invalidationMarker";
+import { dealDedup } from "./dealDedup";
 
 // Three independent signal engines run concurrently per pair, one per timeframe --
 // each closed candle on any of these is evaluated on its own, sharing the same
@@ -343,10 +344,16 @@ class MarketSyncListener extends SynchronizationListener {
    * riskManager) off real position closes -- covers the WHOLE account, not just trades
    * this app opened, matching getOpenPositionCount's same philosophy.
    *
-   * `onDealAdded` also fires once per historical deal during the initial sync replay (and
-   * again after any reconnect resync) -- `connection.synchronized` is still false for the
-   * entire replay window and only flips true once it's caught up, so gating on it here is
-   * what stops years of old trade history from being misread as "just happened".
+   * `onDealAdded` also fires once per historical deal during the initial sync replay --
+   * `connection.synchronized` is still false for that replay window and only flips true
+   * once it's caught up, so gating on it here stops years of old trade history from being
+   * misread as "just happened" on a brand-new connection. That flag does NOT protect
+   * against every later reconnect resync, though -- MetaApi has been observed redelivering
+   * the same already-closed deal as a fresh onDealAdded event on later resyncs even while
+   * `synchronized` reads true throughout, which is what was tripping phantom "N
+   * consecutive losses" cooldowns for a single real loss redelivered several times across
+   * today's reconnects/restarts. dealDedup.hasProcessed/markProcessed below is the actual
+   * fix -- a durable, deal-id-keyed guard that no redelivery can get past twice.
    */
   async onDealAdded(_instanceIndex: string, deal: MetatraderDeal): Promise<void> {
     const state = stateFor(this.accountKey);
@@ -357,10 +364,16 @@ class MarketSyncListener extends SynchronizationListener {
     const isTradeDeal = deal.type === "DEAL_TYPE_BUY" || deal.type === "DEAL_TYPE_SELL";
     if (!isPositionClose || !isTradeDeal) return;
 
+    if (dealDedup.hasProcessed(deal.id)) {
+      console.log(`[metaapi] onDealAdded: deal ${deal.id} already processed for ${this.accountKey} -- skipping redelivered event`);
+      return;
+    }
+
     const equity = connection.terminalState.accountInformation?.equity;
     if (equity === undefined) return;
 
     const now = Date.now();
+    dealDedup.markProcessed(deal.id, this.accountKey, now);
     const config = loadExecutionConfig(this.accountKey);
 
     const pair = deal.symbol ? pairForBrokerSymbol(deal.symbol) : undefined;
