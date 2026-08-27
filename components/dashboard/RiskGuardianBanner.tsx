@@ -62,6 +62,21 @@ export function RiskGuardianBanner() {
     }
   }
 
+  // Same override shape as forceResume above, but for the consecutive-loss cooldown --
+  // see riskState.ts's forceResetCooldown doc comment.
+  async function forceResumeCooldown() {
+    if (!window.confirm(`Force-resume trading now? The ${data?.maxConsecutiveLosses ?? 3}-consecutive-loss cooldown already tripped -- this clears it before the timer would normally lift it.`)) {
+      return;
+    }
+    setForceResuming(true);
+    try {
+      const res = await fetch("/api/risk-status/force-resume-cooldown", { method: "POST" });
+      if (res.ok && data) setData({ ...data, cooldownUntil: null, consecutiveLosses: 0, requiresAcknowledgement: false });
+    } finally {
+      setForceResuming(false);
+    }
+  }
+
   useEffect(() => {
     const tickId = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tickId);
@@ -98,11 +113,21 @@ export function RiskGuardianBanner() {
 
   if (cooldownActive && data.cooldownUntil) {
     return (
-      <div className="rounded-lg border border-amber-700 bg-amber-950/40 px-3.5 py-2 text-sm">
-        <span className="font-bold text-amber-400">COOLDOWN ACTIVE</span>
-        <span className="ml-2 text-amber-300">
-          {data.maxConsecutiveLosses} consecutive losses on {data.account} -- resumes in {formatRemaining(data.cooldownUntil, now)}.
+      <div className="flex items-center justify-between rounded-lg border border-amber-700 bg-amber-950/40 px-3.5 py-2 text-sm">
+        <span>
+          <span className="font-bold text-amber-400">COOLDOWN ACTIVE</span>
+          <span className="ml-2 text-amber-300">
+            {data.maxConsecutiveLosses} consecutive losses on {data.account} -- resumes in {formatRemaining(data.cooldownUntil, now)}.
+          </span>
         </span>
+        <button
+          type="button"
+          onClick={forceResumeCooldown}
+          disabled={forceResuming}
+          className="ml-3 shrink-0 rounded-md border border-amber-700 bg-amber-900/60 px-2.5 py-1 text-xs font-semibold text-amber-200 transition hover:bg-amber-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {forceResuming ? "Resuming…" : "Force resume"}
+        </button>
       </div>
     );
   }

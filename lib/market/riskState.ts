@@ -165,6 +165,28 @@ class RiskStateStore {
     });
   }
 
+  /**
+   * Explicit human override -- same shape as forceResetHaltedForToday above, but for the
+   * consecutive-loss cooldown instead of the daily-loss halt. There is deliberately no
+   * button for this in the UI's normal flow -- see RiskGuardianBanner.tsx's own "Force
+   * resume" control on the COOLDOWN ACTIVE banner, which requires its own explicit
+   * confirmation, separate from the routine "Resume trading" acknowledge button.
+   *
+   * Deliberately narrow: flips only cooldownUntil/consecutiveLosses/pausedAt/
+   * acknowledgedAt back to their untripped shape. startOfDayEquity and tradesOpenedToday
+   * are left untouched, same reasoning as forceResetHaltedForToday.
+   */
+  forceResetCooldown(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
+    const state = this.current(nowMs, currentEquity, account);
+    state.cooldownUntil = null;
+    state.consecutiveLosses = 0;
+    state.pausedAt = null;
+    state.acknowledgedAt = null;
+    void persistState(account, state).catch((error: unknown) => {
+      console.error(`[riskState] failed to persist cooldown force-reset for ${account}:`, error);
+    });
+  }
+
   /** Explicit human action -- the only thing that lets DEMO/LIVE auto-execution resume
    * after a halt/cooldown, see requiresAcknowledgement's own doc comment. */
   acknowledge(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
