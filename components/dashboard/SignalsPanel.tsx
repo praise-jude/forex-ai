@@ -218,11 +218,17 @@ const SignalCard = memo(function SignalCard({
           <SignerBBreakdown signal={signal} />
         </div>
       )}
-      {/* TradingView-sourced signals carry hardcoded placeholder scores (see
-          tradingViewWebhook.ts), never real SMC-derived ones -- a quality breakdown off
-          those would fabricate meaning that isn't there, same reasoning as the
-          SignerBBreakdown exclusion above. */}
-      {signal.source !== "tradingview" && regime && (
+      {/* SMC-only, unlike SignerBBreakdown above: setupQualityScore.ts's own doc comment
+          is explicit that its weights (SMC zone/entry, trend regime agreement, etc.) are
+          shaped around Signer A's real sub-scores and only mean something for a real SMC
+          setup -- rangeEngine.ts sets directionScore/entryScore to its own single
+          combined total (not real SMC dimension scores) specifically because scoring it
+          this way "would produce a meaningless score, not a real one" (see rangeEngine.ts's
+          own doc comment), and TradingView's are hardcoded placeholders (see
+          tradingViewWebhook.ts) for the same underlying reason. A seemingly-precise
+          "52/100" breakdown for either would misrepresent it as a scored SMC read it
+          never was. */}
+      {signal.source === "smc" && regime && (
         <div className="mt-2 border-t border-white/10 pt-2">
           <SetupQualityBreakdown signal={signal} regime={regime} />
         </div>
