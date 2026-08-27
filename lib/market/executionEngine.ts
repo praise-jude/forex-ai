@@ -19,11 +19,19 @@ import {
 import { sendNotification } from "./pushNotifier";
 import { formatPrice } from "./format";
 
-// MT5's comment+clientId combined length cap is ~26-31 chars, so the raw signal.id
+// MT5's comment+clientId combined length cap is ~30-31 chars, so the raw signal.id
 // (a 36-char UUID) doesn't fit — use a short hash instead, as defense-in-depth
 // alongside the primary app-side idempotency guard below.
+//
+// MUST NOT be a flat lowercase-hex string -- confirmed in production (a real "Validation
+// failed... clientId... must match required pattern" rejection from MetaApi, only ever
+// on the specific hashes that happened to start with a digit) that MetaApi validates
+// clientId against a pattern, and its own documented example format is
+// "${strategyId}_${positionId}_${orderId}" (e.g. "RF_EURUSD_GjCy5lk") -- underscore-
+// separated, always starting with a letter. Prefixed with a fixed alphabetic segment so
+// this can never fail that way regardless of which hash the SHA1 happens to produce.
 function shortClientId(signalId: string): string {
-  return createHash("sha1").update(signalId).digest("hex").slice(0, 16);
+  return `sig_${createHash("sha1").update(signalId).digest("hex").slice(0, 12)}`;
 }
 
 export type ExecutionResult =
