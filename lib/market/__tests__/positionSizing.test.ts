@@ -1,9 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { calibratedMultiplier, computeLotSize, confidenceAdjustedRiskPct } from "../positionSizing";
+import { calibratedMultiplier, computeLotSize, confidenceAdjustedRiskPct, roundToTick } from "../positionSizing";
 import { buildSignal, buildSpec } from "./fixtures";
 import type { ConfidenceCalibrationBucket } from "../tradeJournal";
 
 const BASE_CONFIG = { confidenceSizingEnabled: true, riskMultiplierBuy: 1.0, riskMultiplierStrongBuy: 1.5 };
+
+describe("roundToTick", () => {
+  it("snaps a price to the nearest real multiple of the symbol's tick size", () => {
+    // XAU/USD-shaped: point 0.01, an ATR-derived price with far more precision than the
+    // broker will accept -- the exact failure shape confirmed in production ("Validation
+    // failed" from MT5 on an order whose stopLoss/takeProfit never landed on a real tick).
+    expect(roundToTick(4618.7049999999999, 0.01)).toBe(4618.71);
+    expect(roundToTick(4618.7049999999999, 0.02)).toBe(4618.7);
+    expect(roundToTick(4618.706, 0.01)).toBe(4618.71);
+  });
+
+  it("handles a finer FX-major tick size (5dp) without reintroducing float noise", () => {
+    expect(roundToTick(1.10032847123, 0.00001)).toBe(1.10033);
+  });
+
+  it("returns the price unchanged when point is non-positive (no real tick info)", () => {
+    expect(roundToTick(4618.7049999999999, 0)).toBe(4618.7049999999999);
+  });
+});
 
 describe("computeLotSize", () => {
   it("sizes to risk exactly the requested percentage of equity", () => {

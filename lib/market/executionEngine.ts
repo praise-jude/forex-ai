@@ -6,7 +6,7 @@ import { riskState } from "./riskState";
 import { checkCorrelatedExposure, checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { checkExecutionPolicy, getExecutionPolicy, type ExecutionPolicyBlockCode } from "./executionPolicy";
 import { loadExecutionConfig } from "./executionConfig";
-import { computeLotSize, confidenceAdjustedRiskPct } from "./positionSizing";
+import { computeLotSize, confidenceAdjustedRiskPct, roundToTick } from "./positionSizing";
 import { tradeJournal, getConfidenceCalibration, defaultCalibrationMinSamples } from "./tradeJournal";
 import {
   getAccountInformation,
@@ -176,6 +176,18 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     return { status: "skipped_sizing", reason: sizing.reason };
   }
 
+  // The broker rejects a market order outright ("Invalid stops"/"Validation failed") if
+  // entry/stopLoss/takeProfit don't land on a real multiple of the symbol's own tick size
+  // -- a signal's ATR-derived prices carry whatever binary-floating-point precision the
+  // arithmetic happened to produce, which on a wider-tick instrument (XAU/USD, BTC/USD)
+  // essentially never lands exactly on a valid tick by chance. Rounded here, once, right
+  // before both the journal record and the broker call, so what gets logged always
+  // matches what was actually sent -- never rounded at signal-construction time, so the
+  // dashboard still shows the engine's true computed level.
+  const entry = roundToTick(signal.entry, spec.point);
+  const stopLoss = roundToTick(signal.stopLoss, spec.point);
+  const takeProfit = roundToTick(signal.takeProfit, spec.point);
+
   // Reserve the signal id before the broker call — everything above this point is
   // read-only and safe to repeat, but from here on a duplicate call must not re-fire.
   const record = positionStore.recordAttempt({
@@ -186,9 +198,9 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     timeframe: signal.timeframe,
     direction: signal.direction,
     requestedLots: sizing.lots,
-    requestedEntry: signal.entry,
-    stopLoss: signal.stopLoss,
-    takeProfit: signal.takeProfit,
+    requestedEntry: entry,
+    stopLoss,
+    takeProfit,
     takeProfit2: signal.takeProfit2,
     riskPct,
     attemptedAt: now,
@@ -198,9 +210,9 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     signal.pair,
     signal.direction,
     sizing.lots,
-    signal.stopLoss,
-    signal.takeProfit,
-    signal.entry,
+    stopLoss,
+    takeProfit,
+    entry,
     shortClientId(signal.id),
     accountKey
   );

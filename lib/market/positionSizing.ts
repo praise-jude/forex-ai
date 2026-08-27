@@ -22,6 +22,26 @@ export function roundDownToStep(value: number, step: number): number {
   return Number((steps * step).toFixed(decimals));
 }
 
+// Exported for reuse by executionEngine.ts -- every order price (entry/stopLoss/
+// takeProfit) submitted to the broker must land on a real multiple of the symbol's own
+// tick size (SymbolSpec.point), or MT5 rejects the whole order outright ("Validation
+// failed", a real production failure this was confirmed against: a signal's ATR-derived
+// stopLoss/takeProfit carries whatever binary-floating-point precision the arithmetic
+// happened to produce, which on a wider-tick instrument -- XAU/USD, BTC/USD -- essentially
+// never lands exactly on a valid tick by chance, unlike an FX major's much finer point
+// size where it's far more likely to get lucky). Rounds to the NEAREST tick (never floor/
+// ceil) since this is a precision correction, not a risk-safety floor the way
+// roundDownToStep's volume rounding is -- at most half a tick of drift either way,
+// negligible next to any real stop distance.
+export function roundToTick(price: number, point: number): number {
+  if (point <= 0) return price;
+  // Same binary-floating-point noise guard as roundDownToStep above.
+  const safeValue = Number(price.toFixed(8));
+  const ticks = Math.round(safeValue / point);
+  const decimals = Math.max(0, -Math.floor(Math.log10(point)));
+  return Number((ticks * point).toFixed(decimals));
+}
+
 // Bounds on a CALIBRATED multiplier (never on the manual riskMultiplierBuy/
 // riskMultiplierStrongBuy config values themselves, which are an explicit operator
 // choice) -- a documented starting point to tune, not a claimed-optimal range. Caps how
