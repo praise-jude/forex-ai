@@ -43,9 +43,14 @@ export interface ScoreBreakdown {
 // smaller step: on the same backtest window it produced 2 signals at a 100% win rate,
 // +0.80 average R -- still a tiny sample, not proof this generalizes, but a real,
 // measured result rather than a guess. Revisit once more live data accumulates.
-const STRONG_BUY_THRESHOLD = 90;
-const BUY_THRESHOLD = 80;
-const WATCH_THRESHOLD = 70;
+// Exported so any UI displaying tier boundaries (see app/settings/page.tsx's
+// SIGNER_A_TIER_LABEL/SIGNER_B_TIER_LABEL) derives its labels from these real numbers
+// instead of hardcoding a second copy that can silently drift out of sync -- which is
+// exactly what had happened (the settings page showed "Buy (90-94)"/"Strong buy
+// (95-100)" while these actual thresholds were 80/90 the whole time).
+export const STRONG_BUY_THRESHOLD = 90;
+export const BUY_THRESHOLD = 80;
+export const WATCH_THRESHOLD = 70;
 
 const ADX_STRONG = 25;
 const ADX_ADEQUATE = 20;

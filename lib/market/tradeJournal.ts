@@ -508,13 +508,14 @@ export interface ConfidenceCalibrationBucket {
 
 /**
  * Buckets by the signal's own final tier at the moment it fired (context.confidence,
- * the same 90/95 boundaries confidenceScore.ts's tierOf already uses) rather than finer
- * numeric ranges -- every real fired signal in this app has confidence in the ~90-100
- * range only (watch-tier, 80-89, never executes; nothing below 80 ever becomes a Signal
- * at all, see signalEngine.ts), so finer buckets would only fragment an already-small
- * sample further. Entries with no context (predates this feature, or aged out past
- * CONTEXT_RETENTION_MS) are excluded -- there's no confidence to bucket them by, and
- * guessing one would defeat the entire point of calibrating against real data.
+ * the same 80/90 boundaries confidenceScore.ts's tierOf already uses) rather than finer
+ * numeric ranges -- every real fired signal in this app has confidence in the buy/
+ * strong_buy range (80-100) only (watch-tier, 70-79, never executes; nothing below 70
+ * ever becomes a Signal at all, see signalEngine.ts), so finer buckets would only
+ * fragment an already-small sample further. Entries with no context (predates this
+ * feature, or aged out past CONTEXT_RETENTION_MS) are excluded -- there's no confidence
+ * to bucket them by, and guessing one would defeat the entire point of calibrating
+ * against real data.
  *
  * Reuses getPerformanceStats' own win-rate/average-R math over each bucket rather than
  * reimplementing it. Feeds positionSizing.ts's confidenceAdjustedRiskPct once a tier

@@ -6,7 +6,7 @@ export type PredictionHeadline = "STRONG BUY" | "BUY" | "NEUTRAL" | "SELL" | "ST
  * The 5/6-way headline shown on the prediction card and spoken by voice. `tier` is a
  * confidence bucket, independent of `direction` -- "strong_buy"/"buy" name the bucket
  * historically, not the direction, so a short signal at strong_buy tier is "STRONG
- * SELL" here, not "STRONG BUY". `watch`-tier signals (a real direction, 80-89%
+ * SELL" here, not "STRONG BUY". `watch`-tier signals (a real direction, 70-79%
  * confidence, already treated everywhere else in the app as informational-only, not
  * executable) collapse to NEUTRAL -- see predictionSubline for the detail underneath.
  */

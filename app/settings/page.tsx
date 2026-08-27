@@ -22,7 +22,7 @@ import {
   type ConfidenceCalibrationBucket,
   type SignerBCalibrationBucket,
 } from "@/lib/market/tradeJournal";
-import type { DimensionTier } from "@/lib/market/confidenceScore";
+import { BUY_THRESHOLD, STRONG_BUY_THRESHOLD, WATCH_THRESHOLD, type DimensionTier } from "@/lib/market/confidenceScore";
 
 export const dynamic = "force-dynamic";
 
@@ -137,16 +137,20 @@ function CalibrationRow({ label, bucket, minSamples }: { label: string; bucket: 
   );
 }
 
+// Built from confidenceScore.ts's own real thresholds rather than hardcoded numbers --
+// a hardcoded copy here previously drifted out of sync with the actual 70/80/90
+// boundaries tierOf() uses (this showed "Buy (90-94)"/"Strong buy (95-100)" while the
+// real buy/strong-buy cutoffs were 80/90 the whole time).
 const SIGNER_A_TIER_LABEL: Record<"buy" | "strong_buy", string> = {
-  buy: "Buy (90-94)",
-  strong_buy: "Strong buy (95-100)",
+  buy: `Buy (${BUY_THRESHOLD}-${STRONG_BUY_THRESHOLD - 1})`,
+  strong_buy: `Strong buy (${STRONG_BUY_THRESHOLD}-100)`,
 };
 
 const SIGNER_B_TIER_LABEL: Record<DimensionTier, string> = {
-  no_trade: "No trade (<80)",
-  watch: "Watch (80-89)",
-  buy: "Buy (90-94)",
-  strong_buy: "Strong buy (95-100)",
+  no_trade: `No trade (<${WATCH_THRESHOLD})`,
+  watch: `Watch (${WATCH_THRESHOLD}-${BUY_THRESHOLD - 1})`,
+  buy: `Buy (${BUY_THRESHOLD}-${STRONG_BUY_THRESHOLD - 1})`,
+  strong_buy: `Strong buy (${STRONG_BUY_THRESHOLD}-100)`,
 };
 
 /**
