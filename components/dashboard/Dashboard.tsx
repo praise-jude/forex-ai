@@ -35,9 +35,19 @@ function emptyWatchlist(): WatchlistEntry[] {
   return PAIRS.map((pair) => ({ pair, bid: null, ask: null, time: null }));
 }
 
+// SMC-only: this map backs PredictionCard/RecentAnalysis/AutopilotStatus, all of which
+// are documented as surfacing the SMC engine's read specifically (see PredictionCard.tsx's
+// own doc comment). It's keyed by pair+timeframe with no source dimension, so a
+// rangeEngine.ts "mean_reversion" update sharing the same 15m slot as SMC would otherwise
+// silently overwrite SMC's real evaluation moments later (metaApiConnection.ts evaluates
+// both engines back-to-back on every closed 15m candle) -- exactly what made the dashboard
+// look permanently stuck showing only the (inert-by-default) range engine's "no trade"
+// reads. rangeEngine.ts's own diagnostics are already shown separately and correctly by
+// SignalDiagnosticsPanel.tsx, which polls /api/signals and filters by source itself.
 function buildPredictionMap(updates: PredictionUpdate[]): Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>> {
   const map: Partial<Record<Pair, Partial<Record<Timeframe, PredictionUpdate>>>> = {};
   for (const update of updates) {
+    if (update.source !== "smc") continue;
     map[update.pair] = { ...map[update.pair], [update.timeframe]: update };
   }
   return map;
@@ -200,6 +210,11 @@ export function Dashboard() {
           voice.onSignal(event.signal);
         }
       } else if (event.type === "prediction") {
+        // Same SMC-only scoping as buildPredictionMap above -- otherwise a live
+        // "mean_reversion" event for the same pair+15m slot would silently overwrite
+        // SMC's own real-time read (and spuriously re-trigger voice's headline
+        // announcement) moments after it arrives.
+        if (event.source !== "smc") return;
         const update = {
           pair: event.pair,
           timeframe: event.timeframe,
