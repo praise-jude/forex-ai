@@ -25,6 +25,10 @@ interface JournalResponse {
   /** "Which market regime is my SMC strategy actually working in" -- effectively
    * SMC-only, see getPerformanceBreakdown's own doc comment in tradeJournal.ts. */
   breakdownByRegime: Record<string, PerformanceStats>;
+  /** "Is the SMC engine or the mean-reversion range engine actually the one making
+   * money" -- see getPerformanceBreakdown's own doc comment in tradeJournal.ts. Unlike
+   * breakdownByRegime, this one is NOT SMC-only. */
+  breakdownBySource: Record<string, PerformanceStats>;
   /** "Which confluences actually predict wins" -- see getConfluenceBreakdown in
    * tradeJournal.ts. Always over the full ledger. */
   breakdownByConfluence: ConfluenceBreakdownBucket[];
@@ -92,9 +96,10 @@ function StatTile({ label, value, hint, tone }: { label: string; value: string; 
 
 function StatsSummary({ stats, openCount }: { stats: PerformanceStats; openCount: number }) {
   const averageRTone = stats.averageR === null ? undefined : stats.averageR >= 0 ? "positive" : "negative";
+  const profitFactorTone = stats.profitFactor === null ? undefined : stats.profitFactor >= 1 ? "positive" : "negative";
 
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
       <StatTile
         label="Trades"
         value={String(stats.count + openCount)}
@@ -106,6 +111,12 @@ function StatsSummary({ stats, openCount }: { stats: PerformanceStats; openCount
         label="Average R"
         value={stats.averageR === null ? "—" : `${stats.averageR >= 0 ? "+" : ""}${stats.averageR.toFixed(2)}R`}
         tone={averageRTone}
+      />
+      <StatTile
+        label="Profit factor"
+        value={stats.profitFactor === null ? "—" : stats.profitFactor.toFixed(2)}
+        hint="Gross profit / gross loss"
+        tone={profitFactorTone}
       />
       <StatTile label="Max drawdown" value={stats.maxDrawdownR === null ? "—" : `${stats.maxDrawdownR.toFixed(2)}R`} tone="negative" />
     </div>
@@ -152,6 +163,13 @@ const REGIME_LABEL: Record<string, string> = {
   range: "Range",
 };
 
+const SOURCE_LABEL: Record<string, string> = {
+  smc: "SMC",
+  mean_reversion: "Range engine",
+  tradingview: "TradingView",
+  manual_test: "Manual test",
+};
+
 /**
  * Which pairs/sessions performance is actually coming from -- kept as a compact table
  * (not tiles like StatsSummary) since there can be up to 10 rows (one per pair) and
@@ -173,6 +191,7 @@ function BreakdownTable({ title, breakdown, labelFor }: { title: string; breakdo
               <th className="px-3 py-2 font-medium">Trades</th>
               <th className="px-3 py-2 font-medium">Win rate</th>
               <th className="px-3 py-2 font-medium">Avg R</th>
+              <th className="px-3 py-2 font-medium">Profit factor</th>
             </tr>
           </thead>
           <tbody>
@@ -183,6 +202,11 @@ function BreakdownTable({ title, breakdown, labelFor }: { title: string; breakdo
                 <td className="px-3 py-2 tabular-nums text-zinc-300">{stats.winRate.toFixed(0)}%</td>
                 <td className={`px-3 py-2 tabular-nums ${stats.averageR === null ? "text-zinc-500" : stats.averageR >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                   {stats.averageR === null ? "—" : `${stats.averageR >= 0 ? "+" : ""}${stats.averageR.toFixed(2)}R`}
+                </td>
+                <td
+                  className={`px-3 py-2 tabular-nums ${stats.profitFactor === null ? "text-zinc-500" : stats.profitFactor >= 1 ? "text-emerald-400" : "text-rose-400"}`}
+                >
+                  {stats.profitFactor === null ? "—" : stats.profitFactor.toFixed(2)}
                 </td>
               </tr>
             ))}
@@ -524,7 +548,7 @@ function EntryRow({ entry }: { entry: JournalEntry }) {
         <div className="flex items-center gap-1.5">
           <span className={`font-semibold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>{isLong ? "LONG" : "SHORT"}</span>
           <span className="font-semibold text-zinc-100">{entry.pair}</span>
-          {entry.context && <span className="text-zinc-500">Setup quality {entry.context.setupQuality.total}/100</span>}
+          {entry.context?.setupQuality && <span className="text-zinc-500">Setup quality {entry.context.setupQuality.total}/100</span>}
         </div>
         <span className={`tabular-nums font-semibold ${inProfit ? "text-emerald-400" : "text-rose-400"}`}>
           {inProfit ? "+" : ""}
@@ -554,6 +578,7 @@ export function JournalPanel() {
       {data && <StatsSummary stats={data.stats} openCount={data.openCount} />}
       {data && <EquityCurveChart entries={data.entries} />}
       {data && <SignalFunnelSummary funnel={data.signalFunnel} />}
+      {data && <BreakdownTable title="Performance by engine" breakdown={data.breakdownBySource} labelFor={(key) => SOURCE_LABEL[key] ?? key} />}
       {data && <BreakdownTable title="Performance by pair" breakdown={data.breakdownByPair} labelFor={(key) => key} />}
       {data && <BreakdownTable title="Performance by session" breakdown={data.breakdownBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
       {data && (

@@ -98,6 +98,10 @@ export async function GET(request: Request) {
     // SMC-only, see getPerformanceBreakdown's own doc comment. Also always over the
     // full unfiltered ledger, same reasoning as the breakdowns above.
     breakdownByRegime: getPerformanceBreakdown(entries, "regime"),
+    // "Is the SMC engine or the mean-reversion range engine actually the one making
+    // money" -- head-to-head, since they trade on genuinely different theses. Also
+    // always over the full unfiltered ledger, same reasoning as the breakdowns above.
+    breakdownBySource: getPerformanceBreakdown(entries, "source"),
     // "Which confluences actually predict wins" -- see getConfluenceBreakdown's own doc
     // comment. Also always over the full unfiltered ledger, same reasoning as above.
     breakdownByConfluence: getConfluenceBreakdown(entries),

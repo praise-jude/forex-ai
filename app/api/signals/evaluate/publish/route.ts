@@ -73,6 +73,7 @@ export async function POST(request: Request) {
     session: signal.session,
     createdAt: signal.createdAt,
     confluences: signal.confluences,
+    source: signal.source,
   });
 
   return Response.json({ id: signal.id });

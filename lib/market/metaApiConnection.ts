@@ -293,6 +293,7 @@ class MarketSyncListener extends SynchronizationListener {
             session: signal.session,
             createdAt: signal.createdAt,
             confluences: signal.confluences,
+            source: signal.source,
           });
         }
       }
@@ -302,9 +303,14 @@ class MarketSyncListener extends SynchronizationListener {
       // doc comment). No M5 confirmation gate, no trade-journal setup-quality scoring
       // (scoreSetupQuality is SMC-shaped -- e.g. it rewards a "strong_uptrend"/
       // "strong_downtrend" regime, the opposite of what this engine wants, so applying
-      // it here would produce a meaningless score, not a real one). Journal/calibration
-      // integration is a natural follow-up once rangeEngineEnabled is actually turned
-      // on for real execution.
+      // it here would produce a meaningless score, not a real one -- SignalContext.
+      // setupQuality is left undefined below for exactly this reason). Decision context
+      // IS still recorded (source: "mean_reversion"), same as the SMC block above -- this
+      // is what makes getPerformanceBreakdown's "source" dimension (SMC vs. range engine
+      // performance, compared head to head) and getConfidenceCalibration/
+      // getSignerBCalibration possible for range-engine trades at all; before this they
+      // closed into the journal with context: null, same as a context-less TradingView
+      // entry, and were invisible to every context-based breakdown.
       if (barJustClosed && timeframe === "15m") {
         const rangeEvaluation = evaluateRangeSignal(priorSeries, pair, timeframe);
         const rangeTime = Date.now();
@@ -334,7 +340,27 @@ class MarketSyncListener extends SynchronizationListener {
           regime: rangeRegime,
           trends: rangeTrends,
         });
-        if (rangeEvaluation.status === "signal") publishSignal(rangeEvaluation.signal);
+        if (rangeEvaluation.status === "signal") {
+          publishSignal(rangeEvaluation.signal);
+          const rangeSignal = rangeEvaluation.signal;
+          tradeJournal.recordSignalContext({
+            signalId: rangeSignal.id,
+            pair: rangeSignal.pair,
+            timeframe: rangeSignal.timeframe,
+            direction: rangeSignal.direction,
+            regime: rangeRegime,
+            confidence: rangeSignal.confidence,
+            signerBDirection: rangeSignal.signerBDirection,
+            signerBConfidence: rangeSignal.signerBConfidence,
+            adx: rangeSignal.adx,
+            rsi: rangeSignal.rsi,
+            newsStatus: rangeSignal.newsStatus,
+            session: rangeSignal.session,
+            createdAt: rangeSignal.createdAt,
+            confluences: rangeSignal.confluences,
+            source: rangeSignal.source,
+          });
+        }
       }
     }
   }

@@ -8,7 +8,7 @@ import { riskState } from "../market/riskState";
 import { describeNoTradeReason } from "../market/noTradeReason";
 import { predictionHeadline, predictionSubline } from "../market/predictionLabel";
 import { scoreSetupQuality } from "../market/setupQualityScore";
-import { getPerformanceStats, tradeJournal, type PerformanceFilter } from "../market/tradeJournal";
+import { getPerformanceBreakdown, getPerformanceStats, tradeJournal, type PerformanceFilter } from "../market/tradeJournal";
 import { buildConfirmPhrase, buildResultAnnouncement, normalize } from "../voice/grammar";
 import type { ExecuteResponse } from "../market/executionClient";
 import { PAIRS, type MarketRegime, type Pair, type Session, type Timeframe } from "../market/types";
@@ -182,7 +182,7 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
   const get_trade_journal: ToolDef = {
     name: "get_trade_journal",
     description:
-      "Get real, closed-trade performance history for trades THIS app opened and closed -- count, win rate, average R-multiple, and max drawdown (in R), optionally filtered by pair/timeframe/session/regime/whether Signer B agreed with the trade's direction. This is the ONLY source of a real win rate or accuracy figure in this system -- always call this rather than estimating or recalling one from earlier in the conversation. An empty or low-count result is an honest 'not enough closed trades yet', not a sign of a broken system.",
+      "Get real, closed-trade performance history for trades THIS app opened and closed -- count, win rate, average R-multiple, profit factor, and max drawdown (in R), optionally filtered by pair/timeframe/session/regime/whether Signer B agreed with the trade's direction. Also returns byEngine, a head-to-head stats breakdown for the SMC engine vs. the mean-reversion range engine -- use this whenever asked which engine is actually performing better, rather than guessing from recentEntries alone. This is the ONLY source of a real win rate or accuracy figure in this system -- always call this rather than estimating or recalling one from earlier in the conversation. An empty or low-count result is an honest 'not enough closed trades yet', not a sign of a broken system.",
     parameters: {
       type: "object",
       properties: {
@@ -201,6 +201,10 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
       const stats = getPerformanceStats(entries, tradeJournalFilterFrom(input));
       return JSON.stringify({
         stats,
+        // Always over the full unfiltered ledger, same reasoning as
+        // /api/trade-journal's own breakdownBySource -- the point is comparing engines
+        // against each other, not viewing one pre-filtered by the `input` args above.
+        byEngine: getPerformanceBreakdown(entries, "source"),
         recentEntries: entries.slice(0, 20).map((entry) => ({
           pair: entry.pair,
           direction: entry.direction,
@@ -209,6 +213,7 @@ export function buildTools(ctx: ToolContext): ToolDef[] {
           reason: entry.reason,
           closedAt: entry.closedAt,
           regime: entry.context?.regime ?? "unavailable",
+          source: entry.context?.source ?? "unavailable",
         })),
       });
     },

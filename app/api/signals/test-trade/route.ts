@@ -94,6 +94,7 @@ export async function POST(request: Request) {
     session: signal.session,
     createdAt: signal.createdAt,
     confluences: signal.confluences,
+    source: signal.source,
   });
 
   const result = await attemptExecution(signal, "demo");

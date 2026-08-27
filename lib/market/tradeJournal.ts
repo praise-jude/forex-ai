@@ -35,7 +35,11 @@ export interface SignalContext {
   timeframe: Timeframe;
   direction: "long" | "short";
   regime: MarketRegime;
-  setupQuality: SetupQualityBreakdown;
+  /** Optional -- SMC-shaped (see scoreSetupQuality's own doc comment on why it would be
+   * a meaningless score for a mean-reversion setup), so the range engine's own context
+   * simply omits it rather than computing a number that doesn't mean what it looks like
+   * it means. Entries recorded before this field existed also simply have it undefined. */
+  setupQuality?: SetupQualityBreakdown;
   confidence: number;
   signerBDirection: Signal["signerBDirection"];
   signerBConfidence: number;
@@ -48,6 +52,11 @@ export interface SignalContext {
    * (old rows in the DB predate the column's use), never a fabricated guess at which
    * confluences were present. */
   confluences?: Confluence[];
+  /** Which engine produced the signal (see types.ts's SignalSource) -- optional because
+   * entries recorded before this field existed simply have it undefined, same posture as
+   * confluences above. getPerformanceBreakdown's "source" dimension excludes those, the
+   * same way it already excludes any other context-less entry. */
+  source?: Signal["source"];
 }
 
 // "invalidation" -- positionManager.ts's own early exit (the original SMC+Signer B
@@ -345,6 +354,13 @@ export interface PerformanceStats {
   /** Largest peak-to-trough drop in cumulative R across the filtered entries, in
    * chronological order. Null under the same condition as averageR. */
   maxDrawdownR: number | null;
+  /** Gross profit / gross loss (both in account currency, loss taken as a positive
+   * magnitude) -- unlike averageR, this uses real profit dollars, not the R-normalized
+   * figure, so it isn't skipped just because rMultiple couldn't be computed for some
+   * entries. Null when there are no losing trades to divide by (including when count is
+   * 0) -- a bare 0 there would misleadingly read as "breakeven" rather than "undefined",
+   * and Infinity would misrender in the UI. */
+  profitFactor: number | null;
 }
 
 /**
@@ -393,7 +409,11 @@ export function getPerformanceStats(entries: JournalEntry[], filter: Performance
     maxDrawdownR = maxDrop;
   }
 
-  return { count, wins, losses, winRate, averageR, maxDrawdownR };
+  const grossProfit = filtered.filter((e) => e.profit > 0).reduce((sum, e) => sum + e.profit, 0);
+  const grossLoss = filtered.filter((e) => e.profit < 0).reduce((sum, e) => sum + -e.profit, 0);
+  const profitFactor = grossLoss === 0 ? null : Number((grossProfit / grossLoss).toFixed(2));
+
+  return { count, wins, losses, winRate, averageR, maxDrawdownR, profitFactor };
 }
 
 /**
@@ -407,12 +427,27 @@ export function getPerformanceStats(entries: JournalEntry[], filter: Performance
  * effectively SMC-only: context is only ever recorded from the internal SMC engine loop
  * (see recordSignalContext's call site in metaApiConnection.ts) -- a TradingView-sourced
  * entry has no context at all, so it's excluded the same way an aged-out one is, never
- * needing a separate source check.
+ * needing a separate source check. "source" (which engine -- SMC vs. mean-reversion --
+ * produced the signal) is the one dimension NOT SMC-only: it's recorded for every engine
+ * that calls recordSignalContext, including the range engine's own call site. Entries
+ * that predate the `source` field (or a TradingView-sourced entry with no context at
+ * all) are excluded from this dimension specifically, same as any other missing-context
+ * case above.
  */
-export function getPerformanceBreakdown(entries: JournalEntry[], dimension: "pair" | "session" | "regime"): Record<string, PerformanceStats> {
+export function getPerformanceBreakdown(
+  entries: JournalEntry[],
+  dimension: "pair" | "session" | "regime" | "source"
+): Record<string, PerformanceStats> {
   const buckets = new Map<string, JournalEntry[]>();
   for (const entry of entries) {
-    const key = dimension === "pair" ? entry.pair : dimension === "session" ? entry.context?.session : entry.context?.regime;
+    const key =
+      dimension === "pair"
+        ? entry.pair
+        : dimension === "session"
+          ? entry.context?.session
+          : dimension === "regime"
+            ? entry.context?.regime
+            : entry.context?.source;
     if (!key) continue;
     const bucket = buckets.get(key);
     if (bucket) bucket.push(entry);
