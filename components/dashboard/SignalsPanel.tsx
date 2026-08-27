@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState } from "react";
-import type { Confluence, HigherTimeframeTrends, MarketRegime, Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
+import { UNSCORED_SOURCE_LABEL, type Confluence, type HigherTimeframeTrends, type MarketRegime, type Pair, type PredictionUpdate, type Signal, type Timeframe } from "@/lib/market/types";
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
 import { REGIME_LABEL } from "@/lib/market/noTradeReason";
@@ -182,9 +182,7 @@ const SignalCard = memo(function SignalCard({
             />
           </div>
           <div className="mt-1 text-[11px] text-zinc-500">
-            {signal.source === "tradingview"
-              ? "Source: TradingView"
-              : `Direction ${signal.directionScore.toFixed(0)}% · Entry ${signal.entryScore.toFixed(0)}%`}
+            {UNSCORED_SOURCE_LABEL[signal.source] ?? `Direction ${signal.directionScore.toFixed(0)}% · Entry ${signal.entryScore.toFixed(0)}%`}
           </div>
         </div>
       </div>
