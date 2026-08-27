@@ -735,6 +735,28 @@ export async function placeMarketOrder(
         ? await connection.createMarketBuyOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment })
         : await connection.createMarketSellOrder(symbol, lots, stopLoss, takeProfit, { clientId, comment });
   } catch (error) {
+    // MetaApi's SDK throws (rather than returning a normal response) for a validation-
+    // level rejection, and its own Error.message alone is often just "Validation failed
+    // (<trace id>)" with no real detail -- but the thrown object frequently carries
+    // additional properties (details/numericCode/stringCode/trace id) the SDK attaches
+    // beyond the base Error shape. Logged in full here (server-side only, never returned
+    // to the client) so a genuinely opaque rejection like that has an actual diagnosable
+    // reason in the logs next time, instead of only the same bare trace id every time.
+    console.error(`[metaapi] createMarket${direction === "long" ? "Buy" : "Sell"}Order threw for ${symbol} (${accountKey}):`, {
+      error,
+      errorKeys: error && typeof error === "object" ? Object.keys(error) : undefined,
+      errorJson: (() => {
+        try {
+          return JSON.stringify(error);
+        } catch {
+          return undefined;
+        }
+      })(),
+      lots,
+      stopLoss,
+      takeProfit,
+      requestedEntry,
+    });
     return { success: false, message: error instanceof Error ? error.message : String(error) };
   }
 
