@@ -7,6 +7,7 @@ import { PAIRS } from "../types";
 import { loadExecutionConfig } from "../executionConfig";
 import { getBacktestAccount, loadHistoricalRange, loadSymbolSpecs } from "./historyLoader";
 import { runBacktest, type BacktestBarResult, type RealisticSimConfig } from "./backtestEngine";
+import { evaluateRangeSignalForBacktest } from "../rangeEngine";
 import { applyEarlyInvalidation } from "./backtestInvalidation";
 import { fetchHistoricalEconomicEvents, type EconomicEvent } from "../newsFilter";
 import { BACKTEST_TIMEFRAMES, DEFAULT_REALISTIC_SPREAD_FRACTION, MAX_LOOKBACK_DAYS } from "./constants";
@@ -54,6 +55,13 @@ export interface BacktestRequest {
    * backtestEngine.ts's simulateRealisticOutcome. Defaults false so the existing quick/
    * idealized path is unaffected for anyone not opting in. */
   realistic?: boolean;
+  /** Which engine to backtest -- defaults to "smc" (runBacktest's own default) so
+   * every existing caller is unaffected. "mean_reversion" swaps in
+   * rangeEngine.ts's evaluateRangeSignalForBacktest, its own evaluateSignal-shaped
+   * adapter, reusing this exact same window-walking/outcome-simulation scaffolding
+   * instead of forking it -- the range engine had never actually been backtested
+   * before this, despite the scaffolding always having anticipated it. */
+  engine?: "smc" | "mean_reversion";
 }
 
 export type BacktestStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -312,6 +320,7 @@ class BacktestRunner {
           realistic: realisticSim,
           currencyStrengthCloses,
           historicalNewsEvents,
+          evaluate: job.request.engine === "mean_reversion" ? evaluateRangeSignalForBacktest : undefined,
           onBar: (done, total) => {
             job.progress.barsEvaluated = done;
             job.progress.barsTotal = total;

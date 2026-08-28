@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { simulateOutcome, simulateRealisticOutcome, type RealisticSimConfig } from "../backtestEngine";
+import { runBacktest, simulateOutcome, simulateRealisticOutcome, type RealisticSimConfig } from "../backtestEngine";
+import { evaluateRangeSignalForBacktest } from "../../rangeEngine";
 import { buildSignal, buildSpec } from "../../__tests__/fixtures";
 import type { Candle } from "../../types";
 
@@ -164,5 +165,90 @@ describe("simulateRealisticOutcome", () => {
     expect(withoutReading.rMultiple).toBeCloseTo(1.9);
     expect(withZeroReading.rMultiple).toBeCloseTo(1.9);
     expect(withoutSpecAtAll.rMultiple).toBeCloseTo(1.9);
+  });
+});
+
+// Proves runBacktest's `evaluate` override actually plugs the range engine into the
+// same window-walking scaffolding SMC uses -- the range engine had never been
+// backtestable at all before rangeEngine.ts's evaluateRangeSignalForBacktest adapter
+// was wired into backtestRunner.ts (see that file's own doc comment). Not a test of
+// the range engine's own scoring (rangeEngine.test.ts already covers that in depth) --
+// just that a real range setup fed through runBacktest with this evaluate override
+// actually produces a mean_reversion-sourced signal, not silently nothing.
+describe("runBacktest with the range engine's evaluate override", () => {
+  const STEP = 15 * 60 * 1000;
+  const SUPPORT = 1.0;
+  const RESISTANCE = 1.02;
+  const MID = (SUPPORT + RESISTANCE) / 2;
+
+  function rangeCandle(time: number, open: number, high: number, low: number, close: number): Candle {
+    return { time, open, high, low, close, tickVolume: 100 };
+  }
+
+  // Exact same proven fixture as rangeEngine.test.ts's own buildRangeCandles/
+  // buildTouchCandle (see that file's doc comment for how it was built/verified) --
+  // duplicated rather than imported, matching this codebase's existing convention of
+  // self-contained test files.
+  function buildRangeSeries(): Candle[] {
+    const candles: Candle[] = [];
+    let t = 0;
+
+    const WARMUP = 32;
+    for (let i = 0; i < WARMUP; i++) {
+      const price = MID + (i % 2 === 0 ? 0.0001 : -0.0001);
+      candles.push(rangeCandle(t, price, price + 0.00015, price - 0.00015, price));
+      t += STEP;
+    }
+
+    const CANDLES_PER_LEG = 5;
+    for (let i = 0; i < CANDLES_PER_LEG; i++) {
+      const frac = i / (CANDLES_PER_LEG - 1);
+      const price = SUPPORT + frac * (RESISTANCE - SUPPORT);
+      candles.push(rangeCandle(t, price - 0.0005, price + 0.0008, price - 0.0008, price));
+      t += STEP;
+    }
+    for (let i = 0; i < CANDLES_PER_LEG; i++) {
+      const frac = i / (CANDLES_PER_LEG - 1);
+      const price = RESISTANCE - frac * (RESISTANCE - SUPPORT);
+      candles.push(rangeCandle(t, price + 0.0005, price + 0.0008, price - 0.0008, price));
+      t += STEP;
+    }
+
+    const DESCENT_STEPS = 20;
+    for (let i = 0; i <= DESCENT_STEPS; i++) {
+      const frac = i / DESCENT_STEPS;
+      const price = RESISTANCE - frac * (RESISTANCE - SUPPORT);
+      const open = price + 0.002;
+      const close = price - 0.0007;
+      candles.push(rangeCandle(t, open, open + 0.0002, close - 0.0002, close));
+      t += STEP;
+    }
+
+    // Final touch candle: long lower wick below support, closes near the top of its
+    // own range (a real rejection).
+    candles.push(rangeCandle(t, SUPPORT - 0.0008, SUPPORT - 0.0003, SUPPORT - 0.0015, SUPPORT - 0.0004));
+    return candles;
+  }
+
+  it("produces a mean_reversion-sourced signal from a real range touch/rejection setup", () => {
+    const primary = buildRangeSeries();
+    const results = runBacktest({
+      pair: "EUR/USD",
+      timeframe: "15m",
+      primary,
+      h1: [],
+      h4: [],
+      d1: [],
+      windowStart: primary[0].time,
+      windowEnd: primary[primary.length - 1].time,
+      evaluate: evaluateRangeSignalForBacktest,
+    });
+
+    const fired = results.filter((r) => r.evaluation.status === "signal");
+    expect(fired.length).toBeGreaterThan(0);
+    for (const result of fired) {
+      if (result.evaluation.status !== "signal") continue;
+      expect(result.evaluation.signal.source).toBe("mean_reversion");
+    }
   });
 });

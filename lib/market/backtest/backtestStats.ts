@@ -109,7 +109,11 @@ export function toJournalEntries(
       timeframe: signal.timeframe,
       direction: signal.direction,
       regime: result.regime,
-      setupQuality: scoreSetupQuality(signal, result.regime),
+      // SMC-shaped -- same reasoning as the live path (metaApiConnection.ts's own
+      // recordSignalContext calls): a mean-reversion setup has no meaningful setup
+      // quality score under this SMC-specific rubric, so it's simply omitted rather
+      // than computing a number that doesn't mean what it looks like it means.
+      setupQuality: signal.source === "smc" ? scoreSetupQuality(signal, result.regime) : undefined,
       confidence: signal.confidence,
       signerBDirection: signal.signerBDirection,
       signerBConfidence: signal.signerBConfidence,
@@ -118,6 +122,10 @@ export function toJournalEntries(
       newsStatus: signal.newsStatus,
       session: signal.session,
       createdAt: signal.createdAt,
+      // Lets getPerformanceBreakdown's "source" dimension (and the strategy health
+      // dashboard's "Performance by engine" table) work for backtest-derived entries
+      // too, the same way it already does for live-closed trades.
+      source: signal.source,
     };
 
     // Falls back to the flat hypothetical stake per-entry (never for the whole run) when

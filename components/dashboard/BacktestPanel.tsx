@@ -70,6 +70,7 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
   const [selectedPairs, setSelectedPairs] = useState<Pair[]>([]);
   const [allPairs, setAllPairs] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
+  const [engine, setEngine] = useState<"smc" | "mean_reversion">("smc");
   const [lookbackDays, setLookbackDays] = useState(DEFAULT_LOOKBACK_DAYS);
   const [realistic, setRealistic] = useState(false);
 
@@ -86,7 +87,7 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) onStart({ pairs: effectivePairs, timeframe, lookbackDays, realistic });
+        if (canSubmit) onStart({ pairs: effectivePairs, timeframe, lookbackDays, realistic, engine });
       }}
       className="flex flex-col gap-3 rounded-xl border border-white/10 bg-zinc-900 p-3.5"
     >
@@ -117,6 +118,18 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Engine
+          <select
+            value={engine}
+            onChange={(e) => setEngine(e.target.value as "smc" | "mean_reversion")}
+            className="rounded border border-white/10 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+          >
+            <option value="smc">SMC</option>
+            <option value="mean_reversion">Range engine</option>
+          </select>
+        </label>
+
         <label className="flex flex-col gap-1 text-xs text-zinc-400">
           Timeframe
           <select
