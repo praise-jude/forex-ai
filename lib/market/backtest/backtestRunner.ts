@@ -280,11 +280,12 @@ class BacktestRunner {
             breakEvenTriggerR: liveConfig.breakEvenTriggerR,
             trailingArmTriggerR: liveConfig.trailingArmTriggerR,
             trailingDistanceFractionOfStop: liveConfig.trailingDistanceFractionOfStop,
-            // Always false regardless of the account's real setting -- partial-close
-            // simulation is a separate, later addition, see backtestEngine.ts's own
-            // scope notes on why (a blended two-leg outcome, real added complexity).
-            partialCloseEnabled: false,
+            // Now reflects the account's real setting -- see backtestEngine.ts's
+            // simulateRealisticOutcome for the actual blended-two-leg simulation this
+            // now drives.
+            partialCloseEnabled: liveConfig.partialCloseEnabled,
           },
+          partialCloseFraction: liveConfig.partialCloseFraction,
           spreadFractionOfStop: DEFAULT_REALISTIC_SPREAD_FRACTION,
           specs,
         };

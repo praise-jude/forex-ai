@@ -20,7 +20,12 @@ export interface OutcomeSim {
   reason: "take_profit" | "stop_loss" | "still_open_at_end" | "invalidation";
   /** -1 on stop_loss, the real R-multiple on take_profit, 0 on still_open_at_end (the
    * window ran out before either was touched -- expected near the end of any requested
-   * range, not an error). */
+   * range, not an error). When a partial close applied (see RealisticSimConfig's own
+   * partialCloseFraction), this is the SIZE-WEIGHTED BLEND of the locked-in TP1 leg and
+   * the remainder leg's own eventual outcome, not either one alone -- `reason`/
+   * `exitPrice`/`exitTime` describe the remainder leg specifically (the point the
+   * position was fully closed), since a single JournalEntry has no second exit to
+   * record the TP1 leg's own close separately. */
   rMultiple: number;
   /** Informational only -- take_profit2 is never actually sent to the broker as a real
    * order (see executionEngine.ts's placeMarketOrder call), so it never drives
@@ -76,11 +81,16 @@ export function simulateOutcome(signal: Signal, future: Candle[]): OutcomeSim {
 
 export interface RealisticSimConfig {
   /** Sourced from loadExecutionConfig("live") by the caller, so a realistic run reflects
-   * the account's actual configured break-even/trailing triggers, not invented defaults.
-   * partialCloseEnabled is deliberately never read as true here regardless of the
-   * account's real setting -- see this feature's own scope notes on why partial-close
-   * simulation (a blended two-leg outcome) is a separate, later addition. */
+   * the account's actual configured break-even/trailing/partial-close triggers, not
+   * invented defaults. */
   positionManagement: PositionManagementConfig;
+  /** Fraction of the position closed at TP1 when positionManagement.partialCloseEnabled
+   * is true -- same meaning as executionConfig.ts's own partialCloseFraction (a sibling
+   * field there too, not part of PositionManagementConfig, for the same reason: the
+   * trigger decision only needs to know partial close is enabled at all, the fraction
+   * itself is only needed once it actually fires). Ignored when partialCloseEnabled is
+   * false. */
+  partialCloseFraction: number;
   /** Fraction of the signal's own stop distance, same convention as
    * executionConfig.ts's maxSpreadFractionOfStop -- worsens the effective entry price
    * (a market buy fills at ask, sell at bid), the one cost simulateOutcome ignores
@@ -97,15 +107,21 @@ export interface RealisticSimConfig {
 }
 
 /**
- * Like simulateOutcome, but simulates break-even and trailing-stop position management
- * (the two features that default ON in live, see executionConfig.ts) plus spread cost --
- * kept as a separate function rather than a flag on simulateOutcome so the idealized
- * path stays byte-identical for callers that don't opt in.
+ * Like simulateOutcome, but simulates break-even, trailing-stop, and partial-close
+ * position management (see executionConfig.ts) plus spread cost -- kept as a separate
+ * function rather than a flag on simulateOutcome so the idealized path stays
+ * byte-identical for callers that don't opt in.
  *
  * Live delegates actual tick-by-tick trailing to the broker once armed (MetaApi's own
  * server-side trailing) -- this has to simulate that manually: once armed, track a
  * running high/low-water-mark each candle and only ratchet the stop tighter, standard
  * trailing-stop semantics (a trailing stop never loosens).
+ *
+ * When partial close is enabled and TP1 fires, this doesn't return immediately -- it
+ * locks in that leg's R-multiple, moves the remainder's stop to break-even (mirroring
+ * positionManager.ts's real runAccountCycle exactly), and keeps simulating the
+ * remainder onward. The final return blends both legs, size-weighted by
+ * config.partialCloseFraction -- see finish() below.
  *
  * Same pessimistic tie-break philosophy as simulateOutcome: within a single candle, a
  * stop/target hit is always checked BEFORE that candle's own management action is
@@ -156,18 +172,61 @@ export function simulateRealisticOutcome(
   let trailingDistance = 0;
   let trailingWaterMark: number | null = null;
 
+  // Set once the partial-close leg fires (TP1 reached while partialCloseEnabled) -- the
+  // R-multiple already locked in for that fraction of the position, blended with the
+  // remainder's own eventual outcome at the very end via finish() below. Stays null the
+  // entire simulation when partial close never applies (disabled, or TP1 never reached
+  // at all), in which case finish() is a no-op and every return below is byte-identical
+  // to before this feature existed.
+  let partialCloseLegR: number | null = null;
+  // TP2 is purely informational (see OutcomeSim.tp2Reached's own doc comment) -- tracked
+  // across the whole simulation, including the partial-close leg's own candle, rather
+  // than only whichever leg happens to return last, so a TP2 touch during the TP1 leg
+  // isn't silently lost from the blended result.
+  let anyTp2Reached = false;
+
+  const finish = (remainder: OutcomeSim): OutcomeSim => {
+    if (partialCloseLegR === null) return remainder;
+    const fraction = config.partialCloseFraction;
+    const blendedR = fraction * partialCloseLegR + (1 - fraction) * remainder.rMultiple;
+    return { ...remainder, rMultiple: blendedR, tp2Reached: remainder.tp2Reached || anyTp2Reached };
+  };
+
   for (const candle of future) {
     const hitSl = isLong ? candle.low <= effectiveStop : candle.high >= effectiveStop;
     const hitTp1 = isLong ? candle.high >= signal.takeProfit : candle.low <= signal.takeProfit;
 
     if (hitSl) {
       const rMultiple = stopDistance > 0 ? ((isLong ? effectiveStop - effectiveEntry : effectiveEntry - effectiveStop) / stopDistance) : 0;
-      return { exitPrice: effectiveStop, exitTime: candle.time, reason: "stop_loss", rMultiple, tp2Reached: false };
+      return finish({ exitPrice: effectiveStop, exitTime: candle.time, reason: "stop_loss", rMultiple, tp2Reached: false });
     }
     if (hitTp1) {
       const hitTp2 = isLong ? candle.high >= signal.takeProfit2 : candle.low <= signal.takeProfit2;
+      anyTp2Reached = anyTp2Reached || hitTp2;
       const rMultiple = stopDistance > 0 ? Math.abs(signal.takeProfit - effectiveEntry) / stopDistance : 0;
-      return { exitPrice: signal.takeProfit, exitTime: candle.time, reason: "take_profit", rMultiple, tp2Reached: hitTp2 };
+
+      // Partial close: checked ahead of the ordinary full-exit return below, same
+      // precedence as live's own evaluatePositionForManagement (the partial_close
+      // action is checked first, "ahead of even the trailingArmed early-return" --
+      // see that function's own doc comment). Locks in this leg's R, moves the
+      // remainder's stop to break-even (matching live's own newStopLoss:
+      // trade.requestedEntry, unconditionally -- even if trailing had already
+      // ratcheted a better stop, exactly mirroring live's real behavior rather than
+      // "fixing" it here), and keeps simulating the remainder from the NEXT candle
+      // onward. Never re-checks THIS candle's own low/high against the new stop --
+      // same "OHLC alone can't reveal real intrabar order" posture as the rest of
+      // this function, and mirrors live's own two separate broker calls (the partial
+      // close and the break-even modify), which can't instantly re-fill the
+      // remainder at this same TP1 touch either.
+      if (config.positionManagement.partialCloseEnabled && !managementState.partialCloseApplied) {
+        partialCloseLegR = rMultiple;
+        managementState.partialCloseApplied = true;
+        managementState.breakEvenApplied = true;
+        effectiveStop = effectiveEntry;
+        continue;
+      }
+
+      return finish({ exitPrice: signal.takeProfit, exitTime: candle.time, reason: "take_profit", rMultiple, tp2Reached: hitTp2 });
     }
 
     // Neither touched this candle -- ratchet an already-armed trailing stop off this
@@ -193,13 +252,13 @@ export function simulateRealisticOutcome(
   }
 
   const last = future[future.length - 1];
-  return {
+  return finish({
     exitPrice: last?.close ?? effectiveEntry,
     exitTime: last?.time ?? signal.createdAt,
     reason: "still_open_at_end",
     rMultiple: 0,
     tp2Reached: false,
-  };
+  });
 }
 
 /** A higher-timeframe candle only counts as "closed and knowable" once its own bar

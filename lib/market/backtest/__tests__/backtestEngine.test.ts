@@ -65,6 +65,7 @@ describe("simulateOutcome", () => {
 describe("simulateRealisticOutcome", () => {
   const noSpreadConfig: RealisticSimConfig = {
     positionManagement: { breakEvenTriggerR: 1.0, trailingArmTriggerR: 1.5, trailingDistanceFractionOfStop: 1.0, partialCloseEnabled: false },
+    partialCloseFraction: 0.5,
     spreadFractionOfStop: 0,
   };
 
@@ -165,6 +166,52 @@ describe("simulateRealisticOutcome", () => {
     expect(withoutReading.rMultiple).toBeCloseTo(1.9);
     expect(withZeroReading.rMultiple).toBeCloseTo(1.9);
     expect(withoutSpecAtAll.rMultiple).toBeCloseTo(1.9);
+  });
+
+  describe("partial close", () => {
+    // Same fixture signal throughout: entry 1.105, stopLoss 1.103 (risk 0.002),
+    // takeProfit 1.109 (R 2 at TP1). partialCloseFraction 0.5 -- half the position
+    // locks in at TP1, the remainder's stop moves to break-even (1.105, since
+    // spreadFractionOfStop is 0 here so effectiveEntry === entry).
+    const partialCloseConfig: RealisticSimConfig = {
+      positionManagement: { breakEvenTriggerR: 1.0, trailingArmTriggerR: 1.5, trailingDistanceFractionOfStop: 1.0, partialCloseEnabled: true },
+      partialCloseFraction: 0.5,
+      spreadFractionOfStop: 0,
+    };
+
+    it("blends the TP1 leg with a remainder that later stops out at break-even (0.5*2R + 0.5*0R = 1R)", () => {
+      const signal = buildSignal({ direction: "long", entry: 1.105, stopLoss: 1.103, takeProfit: 1.109 });
+      const future = [
+        // Touches TP1 (1.109) -- partial close fires, leg A locks in R=2, remainder's
+        // stop moves to break-even (1.105).
+        candle({ time: 1000, high: 1.11, low: 1.108, close: 1.109 }),
+        // Pulls back through the new break-even stop (1.105) -- remainder closes at 0R.
+        candle({ time: 2000, high: 1.106, low: 1.104, close: 1.1045 }),
+      ];
+
+      const result = simulateRealisticOutcome(signal, future, partialCloseConfig);
+      expect(result.rMultiple).toBeCloseTo(1.0);
+      expect(result.reason).toBe("stop_loss");
+      expect(result.exitTime).toBe(2000);
+    });
+
+    it("blends two TP1-leg exits into the same result as a full TP1 hit (0.5*2R + 0.5*2R = 2R)", () => {
+      const signal = buildSignal({ direction: "long", entry: 1.105, stopLoss: 1.103, takeProfit: 1.109 });
+      const future = [
+        // Touches TP1 -- partial close fires, leg A locks in R=2.
+        candle({ time: 1000, high: 1.11, low: 1.108, close: 1.109 }),
+        // Neither the break-even stop (1.105) nor TP1 (1.109) touched this candle.
+        candle({ time: 2000, high: 1.107, low: 1.106, close: 1.1065 }),
+        // Touches TP1 again -- partialCloseApplied is already true, so this is the
+        // remainder's own ordinary full exit, not a second partial close.
+        candle({ time: 3000, high: 1.11, low: 1.108, close: 1.109 }),
+      ];
+
+      const result = simulateRealisticOutcome(signal, future, partialCloseConfig);
+      expect(result.rMultiple).toBeCloseTo(2.0);
+      expect(result.reason).toBe("take_profit");
+      expect(result.exitTime).toBe(3000);
+    });
   });
 });
 
