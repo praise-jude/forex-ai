@@ -3,7 +3,8 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal, type StreamEvent, type Timeframe } from "@/lib/market/types";
-import { executeSignalRequest, statusFromTrade, type CardStatus } from "@/lib/market/executionClient";
+import { executeSignalRequest, statusFromTrade, statusFromBlockedOutcome, type CardStatus } from "@/lib/market/executionClient";
+import type { BlockedOutcome } from "@/lib/market/blockedOutcomeStore";
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { Watchlist, type WatchlistEntry } from "./Watchlist";
@@ -68,6 +69,7 @@ export function Dashboard() {
   // SignalsPanel shows different copy for each rather than an identical empty state.
   const [signalsLoaded, setSignalsLoaded] = useState(false);
   const [executedTrades, setExecutedTrades] = useState<ExecutedTrade[]>([]);
+  const [blockedOutcomes, setBlockedOutcomes] = useState<Record<string, BlockedOutcome>>({});
   // Nested by pair then timeframe -- three signal engines (15m/30m/1h) run concurrently
   // per pair now, so a single PredictionUpdate per pair is no longer enough (mirrors
   // predictionStore.ts's own nested-Map shape on the server).
@@ -88,8 +90,14 @@ export function Dashboard() {
       const status = statusFromTrade(trade);
       if (status) seeded[trade.signalId] = status;
     }
+    // Blocked outcomes seeded second, from a genuinely separate source (see
+    // blockedOutcomeStore.ts) -- a signal only ever ends up in one or the other, never
+    // both, so there's no real overwrite risk here, just two sources for one map.
+    for (const [signalId, outcome] of Object.entries(blockedOutcomes)) {
+      seeded[signalId] = statusFromBlockedOutcome(outcome.code, outcome.reason);
+    }
     return seeded;
-  }, [executedTrades]);
+  }, [executedTrades, blockedOutcomes]);
 
   const cardStatuses = useMemo(() => ({ ...seededStatuses, ...localStatuses }), [seededStatuses, localStatuses]);
 
@@ -172,11 +180,13 @@ export function Dashboard() {
           signals: Signal[];
           executedTrades: ExecutedTrade[];
           predictions: PredictionUpdate[];
+          blockedOutcomes: Record<string, BlockedOutcome>;
         }) => {
           setWatchlist(data.watchlist);
           setSignals(data.signals);
           setExecutedTrades(data.executedTrades);
           setPredictions(buildPredictionMap(data.predictions));
+          setBlockedOutcomes(data.blockedOutcomes);
           for (const signal of data.signals) seenSignalIds.current.add(signal.id);
           setSignalsLoaded(true);
         }

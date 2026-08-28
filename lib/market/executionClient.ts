@@ -1,4 +1,5 @@
 import type { ExecutedTrade } from "./types";
+import { SKIPPED_SIZING_CODE } from "./blockedOutcomeStore";
 
 // Mirrors ExecutionResult from executionEngine.ts (kept as a local, JSON-shaped type here
 // rather than importing that server module client-side), plus two client-only outcomes
@@ -29,6 +30,15 @@ export function statusFromTrade(trade: ExecutedTrade): CardStatus | null {
   if (trade.status === "filled") return { state: "done", result: { status: "filled", trade } };
   if (trade.status === "rejected") return { state: "done", result: { status: "rejected", trade } };
   return null;
+}
+
+/** Same seeding purpose as statusFromTrade, for a signal blocked before it ever reached
+ * positionStore (see blockedOutcomeStore.ts's own doc comment on why that case needs a
+ * separate source to seed from) -- an attempt that happened server-side with no client
+ * click in this tab to have recorded it locally. */
+export function statusFromBlockedOutcome(code: string, reason: string): CardStatus {
+  if (code === SKIPPED_SIZING_CODE) return { state: "done", result: { status: "skipped_sizing", reason } };
+  return { state: "done", result: { status: "blocked", code, reason } };
 }
 
 export async function executeSignalRequest(

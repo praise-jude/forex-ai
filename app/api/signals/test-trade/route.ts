@@ -11,6 +11,7 @@ import { detectMarketRegime } from "@/lib/market/marketRegime";
 import { calculateAdx } from "@/lib/market/indicators/adx";
 import { calculateAtr } from "@/lib/market/indicators/atr";
 import { checkNews } from "@/lib/market/newsFilter";
+import { recordBlockedOutcome, SKIPPED_SIZING_CODE } from "@/lib/market/blockedOutcomeStore";
 
 export const runtime = "nodejs";
 
@@ -98,5 +99,12 @@ export async function POST(request: Request) {
   });
 
   const result = await attemptExecution(signal, "demo");
+  // Fires server-side with no client click to seed a local status from -- see
+  // blockedOutcomeStore.ts's own doc comment. "duplicate"/"not_found"/etc. can't
+  // actually happen for a signal this route just published itself, but are handled
+  // the same way for completeness rather than assuming.
+  if (result.status === "blocked" || result.status === "skipped_sizing") {
+    recordBlockedOutcome(signal.id, "code" in result ? result.code : SKIPPED_SIZING_CODE, result.reason);
+  }
   return Response.json(result);
 }
