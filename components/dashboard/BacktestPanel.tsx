@@ -222,10 +222,16 @@ function ResultsView({ job }: { job: BacktestJob }) {
   const { stats, profitFactor, sharpeRatio, streaks, scoreRangeBreakdown, openAtWindowEnd, perPair } = job.result;
   const averageRTone = stats.averageR === null ? undefined : stats.averageR >= 0 ? "positive" : "negative";
   const realistic = job.request.realistic === true;
+  // The run form's own Engine dropdown is just the NEXT run's config -- switching it
+  // after submitting doesn't change what a past result was actually produced by. This
+  // badge is the only place these numbers are unambiguously labeled by the engine that
+  // actually ran, not whatever the dropdown happens to currently show.
+  const engineLabel = job.request.engine === "mean_reversion" ? "Range engine" : "SMC";
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
+        <span className="rounded-full bg-zinc-700/60 px-2 py-0.5 text-[11px] font-semibold text-zinc-300">{engineLabel}</span>
         <span
           className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
             realistic ? "bg-sky-500/15 text-sky-400" : "bg-zinc-700/60 text-zinc-400"
