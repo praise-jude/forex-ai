@@ -63,6 +63,12 @@ export interface ExecutionConfig {
    * same posture as every other weighted constant in this codebase (e.g.
    * setupQualityScore.ts's dimension weights). */
   riskMultiplierStrongBuy: number;
+  /** See positionSizing.ts's confluenceAdjustedMultiplier -- scales riskPerTradePct by
+   * the real measured expectancy of the specific confluence tags present on THIS signal
+   * (see tradeJournal.ts's getConfluenceBreakdown), multiplied into confidenceAdjustedRiskPct's
+   * result rather than replacing it. Defaults OFF, same posture as confidenceSizingEnabled
+   * and partialCloseEnabled: this changes actual position size, so it ships opt-in. */
+  confluenceSizingEnabled: boolean;
   /** Master on/off switch for rangeEngine.ts's mean-reversion signals ever reaching
    * autoExecutionListener.ts/positionInvalidation.ts. Defaults OFF, same "off until
    * explicitly configured" posture as partialCloseEnabled -- this engine has zero
@@ -131,6 +137,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     confidenceSizingEnabled: envBoolean(`${prefix}CONFIDENCE_SIZING_ENABLED`, false),
     riskMultiplierBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_BUY`, 1.0),
     riskMultiplierStrongBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_STRONG_BUY`, 1.5),
+    confluenceSizingEnabled: envBoolean(`${prefix}CONFLUENCE_SIZING_ENABLED`, false),
     rangeEngineEnabled: envBoolean(`${prefix}RANGE_ENGINE_ENABLED`, false),
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),

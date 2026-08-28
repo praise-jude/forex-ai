@@ -6,8 +6,8 @@ import { riskState } from "./riskState";
 import { checkCorrelatedExposure, checkPriceDrift, checkRiskLimits, checkSpread, isKillSwitchActive, type RiskBlockCode } from "./riskManager";
 import { checkExecutionPolicy, getExecutionPolicy, type ExecutionPolicyBlockCode } from "./executionPolicy";
 import { loadExecutionConfig } from "./executionConfig";
-import { computeLotSize, confidenceAdjustedRiskPct, roundToTick } from "./positionSizing";
-import { tradeJournal, getConfidenceCalibration, defaultCalibrationMinSamples } from "./tradeJournal";
+import { computeLotSize, confidenceAdjustedRiskPct, confluenceAdjustedMultiplier, roundToTick } from "./positionSizing";
+import { tradeJournal, getConfidenceCalibration, getConfluenceBreakdown, defaultCalibrationMinSamples } from "./tradeJournal";
 import {
   getAccountInformation,
   getOpenPositionCount,
@@ -155,14 +155,17 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   // configured base % goes through confidence sizing and correlation-aware sizing (see
   // positionSizing.ts's own doc comment and checkCorrelatedExposure above).
   //
-  // Calibration is only computed when confidence sizing is actually enabled -- a cheap,
-  // synchronous read over the in-memory journal either way, but no reason to do it on
-  // every execution attempt for accounts that never opted into confidence sizing at all.
+  // Calibration/breakdown are only computed when their own sizing toggle is actually
+  // enabled -- a cheap, synchronous read over the in-memory journal either way, but no
+  // reason to do it on every execution attempt for accounts that never opted in.
   const calibration = config.confidenceSizingEnabled ? getConfidenceCalibration(tradeJournal.all(), defaultCalibrationMinSamples()) : undefined;
+  const confluenceBreakdown = config.confluenceSizingEnabled ? getConfluenceBreakdown(tradeJournal.all()) : undefined;
   const riskPct =
     riskPctOverride !== undefined && Number.isFinite(riskPctOverride) && riskPctOverride > 0
       ? riskPctOverride
-      : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config, calibration) * correlationCheck.sizeMultiplier;
+      : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config, calibration) *
+        correlationCheck.sizeMultiplier *
+        confluenceAdjustedMultiplier(signal.confluences, config, confluenceBreakdown);
   const sizing = computeLotSize(signal, account.equity, riskPct, spec);
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);

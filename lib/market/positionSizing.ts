@@ -1,6 +1,6 @@
-import type { ConfidenceTier, Signal, SymbolSpec } from "./types";
+import type { Confluence, ConfidenceTier, Signal, SymbolSpec } from "./types";
 import type { ExecutionConfig } from "./executionConfig";
-import type { ConfidenceCalibrationBucket } from "./tradeJournal";
+import type { ConfidenceCalibrationBucket, ConfluenceBreakdownBucket } from "./tradeJournal";
 import { pipSize } from "./symbols";
 import { pipValuePerLot } from "./pipValue";
 
@@ -101,6 +101,38 @@ export function confidenceAdjustedRiskPct(
   const bucket = calibration?.find((b) => b.tier === tier);
   const multiplier = calibratedMultiplier(bucket) ?? manualMultiplier;
   return baseRiskPct * multiplier;
+}
+
+/**
+ * Same real-measured-expectancy-to-multiplier math as calibratedMultiplier, but averaged
+ * across every confluence tag actually present on THIS signal that has cleared
+ * getConfluenceBreakdown's own sample-size bar (see tradeJournal.ts -- a confluence
+ * still short on real trades, or entirely absent from the signal, contributes nothing).
+ * A signal carrying several calibrated confluences gets the average of their individual
+ * pulls rather than one dominating -- no single tag is treated as decisive on its own.
+ *
+ * Returns 1 (no adjustment) when disabled, when no breakdown was supplied, or when none
+ * of this signal's confluences have real data behind them yet -- same "purely additive,
+ * never a new way to skip a check" posture as confidenceAdjustedRiskPct. Multiplies
+ * INTO that function's result at the call site (executionEngine.ts), it never replaces
+ * it -- a signal's tier-based multiplier and its confluence-based one are independent
+ * reads of the same journal, not competing sources of truth for the same number.
+ */
+export function confluenceAdjustedMultiplier(
+  confluences: Confluence[],
+  config: Pick<ExecutionConfig, "confluenceSizingEnabled">,
+  breakdown?: ConfluenceBreakdownBucket[]
+): number {
+  if (!config.confluenceSizingEnabled || !breakdown) return 1;
+
+  const calibrated = confluences
+    .map((tag) => breakdown.find((b) => b.confluence === tag))
+    .filter((bucket): bucket is ConfluenceBreakdownBucket => bucket !== undefined && bucket.status === "ok" && bucket.averageR !== null);
+  if (calibrated.length === 0) return 1;
+
+  const averageExpectancy = calibrated.reduce((sum, bucket) => sum + (bucket.averageR as number), 0) / calibrated.length;
+  const raw = 1 + averageExpectancy * EXPECTANCY_SENSITIVITY;
+  return Math.min(MAX_CALIBRATED_MULTIPLIER, Math.max(MIN_CALIBRATED_MULTIPLIER, raw));
 }
 
 /**

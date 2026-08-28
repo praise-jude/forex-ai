@@ -20,6 +20,7 @@ const ENV_VARS = [
   "CONFIDENCE_SIZING_ENABLED",
   "RISK_MULTIPLIER_BUY",
   "RISK_MULTIPLIER_STRONG_BUY",
+  "CONFLUENCE_SIZING_ENABLED",
   "KILL_SWITCH_FILE",
   "DEMO_RISK_PER_TRADE_PCT",
   "DEMO_MAX_CONCURRENT_POSITIONS",
@@ -39,6 +40,7 @@ const ENV_VARS = [
   "DEMO_CONFIDENCE_SIZING_ENABLED",
   "DEMO_RISK_MULTIPLIER_BUY",
   "DEMO_RISK_MULTIPLIER_STRONG_BUY",
+  "DEMO_CONFLUENCE_SIZING_ENABLED",
   "KILL_SWITCH_FILE_DEMO",
 ];
 
@@ -67,6 +69,7 @@ describe("loadExecutionConfig", () => {
       confidenceSizingEnabled: false,
       riskMultiplierBuy: 1.0,
       riskMultiplierStrongBuy: 1.5,
+      confluenceSizingEnabled: false,
       rangeEngineEnabled: false,
       killSwitchFile: ".trading-paused",
     });
@@ -89,6 +92,7 @@ describe("loadExecutionConfig", () => {
       confidenceSizingEnabled: false,
       riskMultiplierBuy: 1.0,
       riskMultiplierStrongBuy: 1.5,
+      confluenceSizingEnabled: false,
       rangeEngineEnabled: false,
       killSwitchFile: ".trading-paused-demo",
     });
@@ -158,6 +162,12 @@ describe("loadExecutionConfig", () => {
     expect(loadExecutionConfig("demo").riskMultiplierBuy).toBe(1.0); // falls back to the shared default
     expect(loadExecutionConfig("live").riskMultiplierStrongBuy).toBe(1.5); // falls back to the shared default
     expect(loadExecutionConfig("demo").riskMultiplierStrongBuy).toBe(2);
+  });
+
+  it("reads the confluence-sizing toggle independently per account too", () => {
+    process.env.CONFLUENCE_SIZING_ENABLED = "true";
+    expect(loadExecutionConfig("live").confluenceSizingEnabled).toBe(true);
+    expect(loadExecutionConfig("demo").confluenceSizingEnabled).toBe(false); // falls back to the shared default
   });
 
   it("falls back to 1.0 (no scaling) for a non-positive or non-numeric multiplier, never the operator's stray value", () => {

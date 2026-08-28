@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { calibratedMultiplier, computeLotSize, confidenceAdjustedRiskPct, roundToTick } from "../positionSizing";
+import { calibratedMultiplier, computeLotSize, confidenceAdjustedRiskPct, confluenceAdjustedMultiplier, roundToTick } from "../positionSizing";
 import { buildSignal, buildSpec } from "./fixtures";
-import type { ConfidenceCalibrationBucket } from "../tradeJournal";
+import type { ConfidenceCalibrationBucket, ConfluenceBreakdownBucket } from "../tradeJournal";
 
 const BASE_CONFIG = { confidenceSizingEnabled: true, riskMultiplierBuy: 1.0, riskMultiplierStrongBuy: 1.5 };
 
@@ -137,5 +137,64 @@ describe("calibratedMultiplier", () => {
   it("clamps to the [0.5, 2.0] safety band even with an extreme real expectancy", () => {
     expect(calibratedMultiplier(buildBucket({ expectancy: 5 }))).toBe(2.0);
     expect(calibratedMultiplier(buildBucket({ expectancy: -5 }))).toBe(0.5);
+  });
+});
+
+describe("confluenceAdjustedMultiplier", () => {
+  function buildBreakdownBucket(overrides: Partial<ConfluenceBreakdownBucket> = {}): ConfluenceBreakdownBucket {
+    return { confluence: "fvg", sampleSize: 10, status: "ok", winRate: 60, averageR: 0.4, ...overrides };
+  }
+
+  it("returns 1 (no adjustment) when disabled, regardless of breakdown data", () => {
+    const breakdown = [buildBreakdownBucket({ confluence: "fvg", averageR: 0.4 })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: false }, breakdown)).toBe(1);
+  });
+
+  it("returns 1 when enabled but no breakdown was supplied at all (every pre-existing call site)", () => {
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true })).toBe(1);
+  });
+
+  it("returns 1 when none of the signal's confluences appear in the breakdown", () => {
+    const breakdown = [buildBreakdownBucket({ confluence: "macd_crossover", averageR: 0.4 })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true }, breakdown)).toBe(1);
+  });
+
+  it("returns 1 when the matching confluence is still insufficient_data", () => {
+    const breakdown = [buildBreakdownBucket({ confluence: "fvg", status: "insufficient_data", averageR: null })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true }, breakdown)).toBe(1);
+  });
+
+  it("scales by 1 + expectancy for a single calibrated confluence present on the signal", () => {
+    const breakdown = [buildBreakdownBucket({ confluence: "fvg", averageR: 0.4 })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true }, breakdown)).toBeCloseTo(1.4);
+  });
+
+  it("averages across every calibrated confluence present on the signal, not just the first", () => {
+    const breakdown = [
+      buildBreakdownBucket({ confluence: "fvg", averageR: 0.4 }),
+      buildBreakdownBucket({ confluence: "macd_crossover", averageR: 0.0 }),
+    ];
+    // (0.4 + 0.0) / 2 = 0.2 expectancy -> 1.2x.
+    expect(confluenceAdjustedMultiplier(["fvg", "macd_crossover"], { confluenceSizingEnabled: true }, breakdown)).toBeCloseTo(1.2);
+  });
+
+  it("ignores an un-calibrated confluence when averaging, using only the ones with real data", () => {
+    const breakdown = [
+      buildBreakdownBucket({ confluence: "fvg", averageR: 0.4 }),
+      buildBreakdownBucket({ confluence: "macd_crossover", status: "insufficient_data", averageR: null }),
+    ];
+    expect(confluenceAdjustedMultiplier(["fvg", "macd_crossover"], { confluenceSizingEnabled: true }, breakdown)).toBeCloseTo(1.4);
+  });
+
+  it("a confluence with real negative expectancy sizes DOWN", () => {
+    const breakdown = [buildBreakdownBucket({ confluence: "fvg", averageR: -0.3 })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true }, breakdown)).toBeCloseTo(0.7);
+  });
+
+  it("clamps to the [0.5, 2.0] safety band even with extreme real expectancy", () => {
+    const highBreakdown = [buildBreakdownBucket({ confluence: "fvg", averageR: 5 })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true }, highBreakdown)).toBe(2.0);
+    const lowBreakdown = [buildBreakdownBucket({ confluence: "fvg", averageR: -5 })];
+    expect(confluenceAdjustedMultiplier(["fvg"], { confluenceSizingEnabled: true }, lowBreakdown)).toBe(0.5);
   });
 });

@@ -650,8 +650,13 @@ export interface ConfluenceBreakdownBucket {
  * carry many confluences at once, e.g. both "fvg" and "order_block"), so a trade
  * legitimately contributes to several buckets here. Entries with no context (predates
  * this feature, or aged out) or no confluences recorded (predates the confluences field
- * itself) are excluded -- there's nothing real to bucket them by. Read-only measurement,
- * same as getConfidenceCalibration -- never wired into signal scoring or execution.
+ * itself) are excluded -- there's nothing real to bucket them by.
+ *
+ * Feeds positionSizing.ts's confluenceAdjustedMultiplier once a confluence tag clears
+ * the sample-size bar (real measured expectancy scales sizing for signals carrying that
+ * tag) -- same "insufficient_data" -> no adjustment posture as getConfidenceCalibration,
+ * gated behind its own confluenceSizingEnabled toggle (see executionConfig.ts), off by
+ * default.
  */
 export function getConfluenceBreakdown(entries: JournalEntry[], minSamples = DEFAULT_CONFLUENCE_MIN_SAMPLES): ConfluenceBreakdownBucket[] {
   const withConfluences = entries.filter((e) => e.context?.confluences !== undefined);
