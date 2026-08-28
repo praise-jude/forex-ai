@@ -1,4 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// positionStore.recordAttempt/markFilled/markRejected each fire an un-awaited real DB
+// write (persistAttempt/persistFilled/persistRejected in positionStore.ts) as a
+// best-effort durability backstop -- deliberately not awaited, since this store's
+// in-memory Map must stay the synchronous source of truth (see the class's own doc
+// comment). Left unmocked, those real network calls outlive this file's synchronous
+// assertions: when DATABASE_URL happens to be set (e.g. vitest.setup.ts loads
+// .env.local for sessions.test.ts's benefit) but no tunnel is open, every one of them
+// rejects after the test file has already finished, racing vitest's own environment
+// teardown and intermittently throwing "EnvironmentTeardownError: Closing rpc while
+// onUserConsoleLog was pending" from the resulting console.error calls. Mocking
+// getOptionalDb to return null -- same pattern as engineMode.test.ts -- makes every
+// persist* call a same-tick no-op, so this stays a pure, fast, network-free unit test
+// of the Map-based store regardless of the local DATABASE_URL/tunnel state.
+vi.mock("../../db/optionalClient", () => ({
+  getOptionalDb: () => null,
+}));
+
 import { positionStore } from "../positionStore";
 
 const ATTEMPT = {
