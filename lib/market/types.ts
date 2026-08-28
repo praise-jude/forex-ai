@@ -22,39 +22,16 @@ export type Pair =
   | "MSFT"
   | "SPCX";
 
-// Widened from the earlier "best 9" back to 13 on 2026-08-28 -- not a quality change,
-// a volume-of-opportunity one: with the gates themselves unchanged (D1/H4 agreement,
-// killzone, M5 confirmation, confidence floor), the only lever left that adds genuinely
-// INDEPENDENT chances at a qualifying setup, rather than loosening the bar per chance,
-// is tracking more instruments. Re-added XAG/USD (a second precious metal -- correlated
-// with gold but still its own structure/timing), USOIL/UKOIL (a genuinely different
-// asset class, mostly uncorrelated with FX-pair moves), and ETH/USD (24/7 like BTC/USD,
-// exempt from the killzone gate -- see symbols.ts's isCrypto and CRYPTO_PAIRS).
-//
-// Deliberately still excluded: EUR/JPY/AUD/JPY (noisier crosses, meaningfully
-// correlated with the majors already tracked -- not much independent opportunity) and
-// NFLX/MSFT/SPCX (single stocks -- a different market structure than this
-// killzone-gated engine was built around, a real structural mismatch, not just noise).
-//
-// Only trims/widens what's actively MONITORED/traded -- the full Pair type union above
-// is unchanged, so historical trade/journal records on a dropped pair still typecheck,
-// and any such position still open at the broker keeps getting managed normally
-// (symbols.ts's broker-symbol mapping is keyed off the Pair type, not this array).
-export const PAIRS: Pair[] = [
-  "EUR/USD",
-  "GBP/USD",
-  "USD/JPY",
-  "AUD/USD",
-  "USD/CAD",
-  "USD/CHF",
-  "NZD/USD",
-  "XAU/USD",
-  "BTC/USD",
-  "XAG/USD",
-  "USOIL",
-  "UKOIL",
-  "ETH/USD",
-];
+// Widened from 9 to 13 on 2026-08-28, then REVERTED back to 9 the same night after
+// real production evidence: within minutes of deploying 13 pairs, the live account hit
+// a sustained, self-perpetuating candle-subscription-downgrade storm (nearly every
+// symbol repeatedly downgraded, hundreds of events, not settling over 7+ minutes) --
+// the app's own bounded 2-attempt recovery (see MarketSyncListener.onSubscriptionDowngraded)
+// couldn't keep up at this pair count, unlike at 9. Going back to 13 (or beyond) needs
+// that recovery/subscription-pacing story solved FIRST, verified on demo, before ever
+// touching the live account's pair count again -- not just re-adding pairs and hoping.
+// See the "widen tracked pairs" and its revert commit for the full incident.
+export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD"];
 
 export interface Candle {
   time: number; // unix ms, candle open time
