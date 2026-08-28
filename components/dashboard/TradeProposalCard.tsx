@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExecuteResponse } from "@/lib/market/executionClient";
 import type { HigherTimeframeTrends, Signal } from "@/lib/market/types";
 import { formatPrice } from "@/lib/market/format";
@@ -22,6 +22,11 @@ const NEWS_LABEL: Record<Signal["newsStatus"], string> = {
 function secondsRemaining(createdAt: number, ttlSeconds: number, now: number): number {
   return Math.max(0, Math.ceil((createdAt + ttlSeconds * 1000 - now) / 1000));
 }
+
+// How long an EXPIRED card stays visible (showing the red label) before it closes
+// itself -- long enough to actually register as "this one aged out," not so long it
+// just sits there cluttering Active Signals once it's no longer actionable.
+const AUTO_DISMISS_AFTER_EXPIRED_MS = 4000;
 
 /**
  * The AI prepares the complete trade -- it never places it. Rendered in place of the
@@ -80,6 +85,23 @@ export function TradeProposalCard({
 
   const remaining = secondsRemaining(signal.createdAt, ttlSeconds, now);
   const expired = remaining <= 0;
+
+  // Confirmed real user pain: an expired card previously just sat there forever with
+  // Approve disabled, cluttering Active Signals until a manual page refresh cleared
+  // it. Auto-closes itself a few seconds after expiring instead -- via a ref, not a
+  // dependency, so the per-second `now` tick above (which re-renders this component
+  // and could hand onDismiss a fresh closure) can't keep resetting this timer before
+  // it ever fires; it only actually (re)starts on the one real transition that
+  // matters, `expired` flipping false -> true.
+  const onDismissRef = useRef(onDismiss);
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
+  useEffect(() => {
+    if (!expired) return;
+    const timeoutId = setTimeout(() => onDismissRef.current(), AUTO_DISMISS_AFTER_EXPIRED_MS);
+    return () => clearTimeout(timeoutId);
+  }, [expired]);
   const isLong = signal.direction === "long";
   const riskPct = Number(riskInput) > 0 ? Number(riskInput) : defaultRiskPct;
 
