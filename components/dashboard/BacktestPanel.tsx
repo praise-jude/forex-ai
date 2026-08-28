@@ -68,7 +68,11 @@ function DisclosureBanner({ realistic }: { realistic: boolean }) {
 
 function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestRequest) => void; busy: boolean; disabled: boolean }) {
   const [selectedPairs, setSelectedPairs] = useState<Pair[]>([]);
-  const [allPairs, setAllPairs] = useState(false);
+  // Defaults to checked -- previously defaulted unchecked with nothing else selected
+  // either, so a fresh page load showed "Run backtest" permanently disabled and "~0
+  // bars to evaluate across 0 pairs" with no visual cue that a pair needed picking
+  // first. Every real run this session has been "all 9 pairs" anyway.
+  const [allPairs, setAllPairs] = useState(true);
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [engine, setEngine] = useState<"smc" | "mean_reversion">("smc");
   const [lookbackDays, setLookbackDays] = useState(DEFAULT_LOOKBACK_DAYS);
