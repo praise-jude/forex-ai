@@ -48,8 +48,15 @@ export interface ScoreBreakdown {
 // instead of hardcoding a second copy that can silently drift out of sync -- which is
 // exactly what had happened (the settings page showed "Buy (90-94)"/"Strong buy
 // (95-100)" while these actual thresholds were 80/90 the whole time).
+// BUY_THRESHOLD nudged 80 -> 75 on 2026-08-28, after the H1-relaxation fix (see
+// signalEngine.ts) was itself verified on real data: 6 trades/67% win rate/2.79 profit
+// factor over a real 180-day, 9-pair, 15m realistic backtest -- a small, bounded step
+// off a result that already held up, not a guess. Still bounded well above the 70
+// floor that was already tried and rejected once (11 signals, 27% win rate, 0.53
+// profit factor -- net-losing, see the note above). Re-verify against a fresh backtest
+// before trusting this value; revert to 80 if it doesn't hold up.
 export const STRONG_BUY_THRESHOLD = 90;
-export const BUY_THRESHOLD = 80;
+export const BUY_THRESHOLD = 75;
 export const WATCH_THRESHOLD = 70;
 
 const ADX_STRONG = 25;

@@ -476,7 +476,7 @@ describe("getSignerBCalibration", () => {
   it("buckets by Signer B's own confidence, independently of the fired signal's own confidence", () => {
     const entries = [
       buildEntry({ id: "1", context: buildContext({ confidence: 92, signerBConfidence: 45 }) }), // no_trade
-      buildEntry({ id: "2", context: buildContext({ confidence: 92, signerBConfidence: 75 }) }), // watch
+      buildEntry({ id: "2", context: buildContext({ confidence: 92, signerBConfidence: 72 }) }), // watch
       buildEntry({ id: "3", context: buildContext({ confidence: 92, signerBConfidence: 85 }) }), // buy
       buildEntry({ id: "4", context: buildContext({ confidence: 92, signerBConfidence: 97 }) }), // strong_buy
     ];
