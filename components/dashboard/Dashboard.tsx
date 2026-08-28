@@ -77,6 +77,18 @@ export function Dashboard() {
   const [latestEvent, setLatestEvent] = useState<StreamEvent | null>(null);
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
 
+  // Confirmed real user pain: a signal past its own proposalTtlSeconds still showed a
+  // live-looking Buy/Sell button in Active Signals (a 2-hour-old EUR/USD read, in one
+  // case) -- clicking it just opened an already-expired proposal, since the initial
+  // card had no expiry awareness at all (only the opened TradeProposalCard did).
+  // Ticked independently of confirmationMode's own 15s poll so a stale card actually
+  // disappears close to when it expires, not up to 15s late.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tickId = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(tickId);
+  }, []);
+
   // Only ever set by an execution attempt in this tab (loading/done) -- statuses for
   // trades executed before this page loaded are derived below from `executedTrades`
   // instead, so an attempt in this tab always wins over the seeded snapshot without
@@ -129,6 +141,17 @@ export function Dashboard() {
     "confirmation-mode",
     () => fetch("/api/confirmation-mode").then((res) => res.json()),
     15000
+  );
+  const proposalTtlSeconds = confirmationMode?.proposalTtlSeconds ?? 120;
+
+  // Drops a signal from Active Signals once it's past its own TTL -- see the `now`
+  // ticker's own comment above for why this exists. Server-fired SSE "signal" events
+  // still add to `signals` unconditionally (Dashboard has no reason to filter what it
+  // stores, only what it displays), so this is purely a display-layer prune, not a
+  // change to what's tracked.
+  const activeSignals = useMemo(
+    () => signals.filter((signal) => now - signal.createdAt <= proposalTtlSeconds * 1000),
+    [signals, proposalTtlSeconds, now]
   );
   // Seeds the proposal card's default "Risk" figure -- the account's actually-configured
   // riskPerTradePct. Shared key with EngineModeControl.tsx/useVoiceAssistant.ts, which
@@ -275,12 +298,12 @@ export function Dashboard() {
 
         <div className="flex flex-col gap-4">
           <SignalsPanel
-            signals={signals}
+            signals={activeSignals}
             statuses={cardStatuses}
             onExecute={executeSignal}
             predictions={predictions}
             manualMode={confirmationMode?.manualMode ?? "confirm"}
-            ttlSeconds={confirmationMode?.proposalTtlSeconds ?? 120}
+            ttlSeconds={proposalTtlSeconds}
             defaultRiskPct={engineModeData?.riskPerTradePct ?? 1}
             loaded={signalsLoaded}
           />
