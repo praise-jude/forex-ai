@@ -164,11 +164,21 @@ class MarketSyncListener extends SynchronizationListener {
     const lostCandles = Array.isArray(unsubscriptions) && unsubscriptions.some((u) => u.type === "candles");
     if (!lostCandles) return;
 
+    const pair = pairForBrokerSymbol(symbol);
+    // A symbol outside today's PAIRS (e.g. a stale/ghost subscription the terminal
+    // never released after a since-reverted PAIRS change -- see the explicit
+    // unsubscribe-stale-symbols step in connect() above) must never be recovered here.
+    // Confirmed as the real mechanism that turned a one-time downgrade into a
+    // sustained, self-perpetuating storm: blindly re-subscribing it just spends the
+    // same 10-calls/60s account-wide budget legitimate PAIRS symbols share, causing
+    // THEM to downgrade next, whose own recovery attempts spend more budget in turn --
+    // observed hours after the 2026-08-28 revert, with zero PAIRS change involved.
+    if (!pair || !PAIRS.includes(pair)) return;
+
     if (this.pendingRecovery.has(symbol)) return;
     this.pendingRecovery.add(symbol);
 
-    const pair = pairForBrokerSymbol(symbol);
-    console.error(`[market] ${symbol}${pair ? ` (${pair})` : ""} candle subscription downgraded -- scheduling recovery`);
+    console.error(`[market] ${symbol} (${pair}) candle subscription downgraded -- scheduling recovery`);
 
     // At most 2 attempts total -- a bounded retry, not a loop. Past that, give up; the
     // next real downgrade event (or the initial paced subscribe loop on the next
@@ -624,6 +634,32 @@ async function connect(accountKey: AccountKey): Promise<void> {
   // exchange for candle subscriptions that don't get silently downgraded partway
   // through, which is what "candlesticks not moving" has actually been three times now.
   const SUBSCRIBE_STAGGER_MS = 6500;
+
+  // A terminal that once had more symbols subscribed -- e.g. the 2026-08-28 PAIRS
+  // widen-then-revert (see types.ts's own doc comment on that incident) -- keeps
+  // trying to maintain those stale subscriptions across every reconnect even after
+  // this app stops requesting them, since MetaApi's terminal-side state persists
+  // independently of what subscribeToMarketData asks for going forward. Confirmed as
+  // a real, separate recurrence of the same downgrade storm hours after PAIRS was
+  // already back to 9 -- no PAIRS change fired that time, and the symbols downgrading
+  // (XAGUSDm, ETHUSDm) were exactly the ones the earlier widen had added and never
+  // explicitly released. Explicitly unsubscribing anything the terminal reports beyond
+  // today's PAIRS clears this permanently, instead of relying on a manual pause/
+  // redeploy on app.metaapi.cloud every time this recurs. Same 6.5s stagger as the
+  // subscribe loop below -- unsubscribeFromMarketData shares the same 10-calls/60s
+  // account-level rate limit.
+  const wantedSymbols = new Set(PAIRS.map(brokerSymbol));
+  const staleSymbols = connection.subscribedSymbols.filter((symbol) => !wantedSymbols.has(symbol));
+  for (const [index, symbol] of staleSymbols.entries()) {
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
+    try {
+      await connection.unsubscribeFromMarketData(symbol, [{ type: "quotes" }, { type: "candles" }]);
+      console.log(`[market] ${accountKey} unsubscribed stale symbol ${symbol}`);
+    } catch (error: unknown) {
+      console.error(`[market] ${accountKey} failed to unsubscribe stale symbol ${symbol}:`, error);
+    }
+  }
+  if (staleSymbols.length > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
 
   for (const [index, pair] of PAIRS.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
