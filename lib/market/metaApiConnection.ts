@@ -23,7 +23,7 @@ import { evaluateRangeSignal } from "./rangeEngine";
 import { confirmsDirection, M5_CONFIRMATION_BARS } from "./m5Confirmation";
 import { publishSignal } from "./signalPublisher";
 import { predictionStore } from "./predictionStore";
-import { brokerSymbol, pairForBrokerSymbol } from "./symbols";
+import { ALL_PAIRS, brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
 import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
@@ -648,8 +648,19 @@ async function connect(accountKey: AccountKey): Promise<void> {
   // redeploy on app.metaapi.cloud every time this recurs. Same 6.5s stagger as the
   // subscribe loop below -- unsubscribeFromMarketData shares the same 10-calls/60s
   // account-level rate limit.
+  //
+  // Deliberately NOT limited to connection.subscribedSymbols -- confirmed by a real
+  // production log that it doesn't cover this case: it's this SDK CLIENT's own local
+  // subscription cache, so a brand-new connection instance (e.g. right after a
+  // redeploy) starts with it empty and never sees a ghost symbol the client itself
+  // never called subscribeToMarketData for this session, even though the ACCOUNT's own
+  // server-side terminal state still has it and keeps emitting real downgrade events
+  // for it. Unioned with every Pair the type union has ever named (ALL_PAIRS) minus
+  // today's PAIRS instead, so a historically-widened-then-reverted symbol always gets a
+  // real unsubscribe attempt regardless of what the client-side cache happens to know.
   const wantedSymbols = new Set(PAIRS.map(brokerSymbol));
-  const staleSymbols = connection.subscribedSymbols.filter((symbol) => !wantedSymbols.has(symbol));
+  const historicallyStale = ALL_PAIRS.filter((pair) => !PAIRS.includes(pair)).map(brokerSymbol);
+  const staleSymbols = [...new Set([...connection.subscribedSymbols.filter((symbol) => !wantedSymbols.has(symbol)), ...historicallyStale])];
   for (const [index, symbol] of staleSymbols.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
     try {

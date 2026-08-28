@@ -90,6 +90,13 @@ export function pairForPlainSymbol(symbol: string): Pair | undefined {
   return BY_PLAIN_SYMBOL.get(normalized);
 }
 
+// Every Pair the type union has ever named, not just today's watched PAIRS -- see
+// metaApiConnection.ts's stale-subscription cleanup, which needs the FULL historical
+// set (including pairs that were once widened-to and later reverted, e.g. XAG/USD,
+// ETH/USD) to explicitly unsubscribe them, regardless of whether this session's own
+// client-side subscription cache happens to know about them.
+export const ALL_PAIRS: Pair[] = Object.keys(BASE_CONFIG) as Pair[];
+
 const CONFIG: Record<Pair, PairConfig> = Object.fromEntries(
   Object.entries(BASE_CONFIG).map(([pair, cfg]) => [
     pair,
