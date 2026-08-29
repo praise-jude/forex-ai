@@ -35,6 +35,7 @@ import { calculateAtr } from "./indicators/atr";
 import { detectMarketRegime } from "./marketRegime";
 import { assessPositionRisk } from "./positionRiskNarration";
 import { getLastPositionRiskLevel, setLastPositionRiskLevel } from "./positionRiskStore";
+import { generateTradeRetrospective } from "../chat/tradeRetrospective";
 import { checkNews } from "./newsFilter";
 import { emaTrendDirection } from "./indicators/emaTrend";
 import { scoreSetupQuality } from "./setupQualityScore";
@@ -513,7 +514,7 @@ function recordJournalOutcome(pair: Pair, deal: MetatraderDeal, accountKey: Acco
   const trade = positionStore.all().find((t) => t.account === accountKey && t.brokerPositionId === deal.positionId);
   if (!trade) return;
 
-  tradeJournal.recordOutcome({
+  const entry = tradeJournal.recordOutcome({
     dealId: String(deal.id),
     signalId: trade.signalId,
     account: accountKey,
@@ -530,6 +531,16 @@ function recordJournalOutcome(pair: Pair, deal: MetatraderDeal, accountKey: Acco
   });
 
   checkCalibrationMilestone();
+
+  // Only for a real engine's own signal (never a synthetic manual_test order, which
+  // has no real setup to retrospect on) -- see generateTradeRetrospective's own doc
+  // comment on why this is fire-and-forget and can never affect execution/risk/the
+  // journal entry itself (already durably recorded above).
+  if (entry.context?.source === "smc" || entry.context?.source === "mean_reversion") {
+    void generateTradeRetrospective(entry).catch((error: unknown) => {
+      console.error(`[metaapi] trade retrospective generation failed for deal ${deal.id}:`, error);
+    });
+  }
 }
 
 // Thin orchestration wrapper -- the actual milestone logic is pure and tested (see

@@ -13,7 +13,10 @@ import { buildTools, type ToolContext } from "./tools";
 // rotates model versions -- confirmed live that it currently resolves to
 // gemini-3.5-flash-lite. Re-verify against the real API if this ever 404s or the quota
 // error reappears.
-const MODEL = "gemini-flash-lite-latest";
+// Exported for reuse by tradeRetrospective.ts -- same free-tier model/client, a
+// single-shot (non-tool-calling) completion, so this must NOT switch to a different,
+// possibly-paid model without deliberately re-confirming that choice first.
+export const MODEL = "gemini-flash-lite-latest";
 // A hard ceiling on the call-tool -> feed-result -> call-model-again loop below, so a
 // model stuck calling tools forever can't hang a request indefinitely -- see the loop's
 // own comment. No real JUDE turn should ever need more than a handful of tool calls.
@@ -21,7 +24,10 @@ const MAX_TOOL_ROUNDS = 8;
 
 let client: GoogleGenAI | null = null;
 
-function getClient(): GoogleGenAI {
+// Exported for reuse by tradeRetrospective.ts -- same lazy-init, same shared client
+// instance, so both callers count against the exact same free-tier quota, not two
+// separate ones.
+export function getClient(): GoogleGenAI {
   // Lazy so a missing key only breaks /api/chat (mirrors the OPENAI_API_KEY pattern in
   // app/api/voice/transcribe/route.ts), not module load / every other route.
   if (!client) client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
