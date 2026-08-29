@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AreaSeries,
+  BarSeries,
   CandlestickSeries,
   createChart,
   createSeriesMarkers,
@@ -31,6 +33,10 @@ interface PriceChartProps {
 
 const UP_COLOR = "#34d399";
 const DOWN_COLOR = "#f87171";
+// Single neutral accent for the Line/Area chart types, which have no inherent per-bar
+// up/down meaning the way Candlestick/Bar do -- matches TradingView's own convention of
+// one line color rather than forcing red/green onto a line.
+const LINE_COLOR = "#38bdf8";
 // Purely illustrative candle spacing for the forecast curve's TP1/TP2 points -- this
 // has no relationship to a real time prediction (the engine makes no time-to-target
 // estimate), it only visually separates the curve from the last close so it reads as
@@ -43,6 +49,7 @@ function toTime(ms: number): UTCTimestamp {
 }
 
 const VISIBLE_RANGE_STORAGE_PREFIX = "forex-ai:chart-visible-range:";
+const CHART_TYPE_STORAGE_KEY = "forex-ai:chart-type";
 
 // Keyed per pair+timeframe (not a single global key) so switching between them doesn't
 // clobber each other's zoom -- restored on refresh AND on switching back to a
@@ -60,8 +67,47 @@ function safeParseRange(raw: string): IRange<Time> | null {
   }
 }
 
+// TradingView's own four core chart types -- Candlestick and Bar both plot real OHLC,
+// Line and Area both plot a single value (the close), same grouping as TradingView's.
+// A single, GLOBAL preference (not per pair/timeframe) -- matches how a real trading
+// platform's chart-type choice works: it's how you like to look at any chart, not a
+// per-instrument setting.
+export type ChartType = "candlestick" | "bar" | "line" | "area";
+const CHART_TYPES: ChartType[] = ["candlestick", "bar", "line", "area"];
+const CHART_TYPE_LABEL: Record<ChartType, string> = {
+  candlestick: "Candles",
+  bar: "Bars",
+  line: "Line",
+  area: "Area",
+};
+
+function isChartType(value: string | null): value is ChartType {
+  return value === "candlestick" || value === "bar" || value === "line" || value === "area";
+}
+
+function loadChartType(): ChartType {
+  if (typeof window === "undefined") return "candlestick";
+  const raw = window.localStorage.getItem(CHART_TYPE_STORAGE_KEY);
+  return isChartType(raw) ? raw : "candlestick";
+}
+
+function isOhlcType(type: ChartType): boolean {
+  return type === "candlestick" || type === "bar";
+}
+
 function toBar(candle: Candle) {
   return { time: toTime(candle.time), open: candle.open, high: candle.high, low: candle.low, close: candle.close };
+}
+
+function toLinePoint(candle: Candle) {
+  return { time: toTime(candle.time), value: candle.close };
+}
+
+/** Shapes one candle for whichever series type is currently active -- OHLC types
+ * (Candlestick/Bar) keep the real open/high/low/close, value types (Line/Area) plot
+ * the close only, same as TradingView's own Line/Area modes. */
+function toSeriesPoint(candle: Candle, type: ChartType) {
+  return isOhlcType(type) ? toBar(candle) : toLinePoint(candle);
 }
 
 /**
@@ -87,11 +133,17 @@ function upsertCandle(candles: Candle[], candle: Candle): Candle[] {
 export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  // Loosely typed on purpose: this ref holds whichever ONE of Candlestick/Bar/Line/Area
+  // is currently active (see createMainSeries below). Every call site that touches it
+  // already knows the real shape via `chartType`/toSeriesPoint, so a strict per-type
+  // generic here would only fight itself across four different addSeries() results.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const seriesRef = useRef<ISeriesApi<any> | null>(null);
   const forecastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   // v5's markers are a primitive returned by createSeriesMarkers, not a method on the
-  // series itself (series.setMarkers() was removed in v5) -- created once alongside the
-  // candle series below, updated in place via .setMarkers() from redrawAnnotations.
+  // series itself (series.setMarkers() was removed in v5) -- recreated alongside the
+  // main series every time it's (re)created, updated in place via .setMarkers() from
+  // redrawAnnotations.
   const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesRef = useRef<IPriceLine[]>([]);
@@ -106,8 +158,20 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     timeframeRef.current = timeframe;
   }, [pair, timeframe]);
 
+  const [chartType, setChartType] = useState<ChartType>(loadChartType);
+  // Read by the mount-only effect and the live-update effect, both of which can't take
+  // `chartType` itself as a dependency without re-running on every switch (the mount
+  // effect must only run once; the live-update effect already has its own real deps) --
+  // same "ref mirrors state for effects that can't depend on it directly" pattern used
+  // elsewhere in this app (e.g. Dashboard.tsx's selectedPairRef).
+  const chartTypeRef = useRef(chartType);
+  useEffect(() => {
+    chartTypeRef.current = chartType;
+  }, [chartType]);
+
   const renderAll = useCallback((candles: Candle[]) => {
-    seriesRef.current?.setData(candles.map(toBar));
+    const type = chartTypeRef.current;
+    seriesRef.current?.setData(candles.map((c) => toSeriesPoint(c, type)));
   }, []);
 
   // Clears this pair+timeframe's saved zoom (see handleVisibleRangeChange below) and
@@ -122,7 +186,8 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   // Draws (or clears) the entry/SL/TP/zone price lines and the AI forecast curve for
   // the currently held `prediction` prop, against whatever candle history is currently
   // loaded. Never fabricates a curve for a no_trade evaluation -- there's no entry/TP
-  // to derive one from.
+  // to derive one from. Price lines/markers work identically across all four series
+  // types (a lightweight-charts series-level feature, not specific to Candlestick).
   const redrawAnnotations = useCallback(() => {
     const series = seriesRef.current;
     const forecastSeries = forecastSeriesRef.current;
@@ -175,6 +240,68 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     if (forecastLabelRef.current) forecastLabelRef.current.style.display = "block";
   }, [prediction, pair, timeframe]);
 
+  // Creates (or re-creates, on a chart-type switch) the main price series, bound to
+  // whichever ONE of the four TradingView-style chart types is currently selected --
+  // lightweight-charts v5 has no way to change an existing series' type in place, only
+  // remove and add a new one. Markers plugin is recreated alongside it every time (v5's
+  // createSeriesMarkers binds to one specific series instance, not the chart itself).
+  const createMainSeries = useCallback((chart: IChartApi, type: ChartType) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let series: ISeriesApi<any>;
+    if (type === "candlestick") {
+      series = chart.addSeries(CandlestickSeries, {
+        upColor: UP_COLOR,
+        downColor: DOWN_COLOR,
+        borderVisible: false,
+        wickUpColor: UP_COLOR,
+        wickDownColor: DOWN_COLOR,
+      });
+    } else if (type === "bar") {
+      series = chart.addSeries(BarSeries, { upColor: UP_COLOR, downColor: DOWN_COLOR });
+    } else if (type === "area") {
+      series = chart.addSeries(AreaSeries, {
+        lineColor: LINE_COLOR,
+        topColor: "rgba(56, 189, 248, 0.28)",
+        bottomColor: "rgba(56, 189, 248, 0.02)",
+        lineWidth: 2,
+      });
+    } else {
+      series = chart.addSeries(LineSeries, { color: LINE_COLOR, lineWidth: 2 });
+    }
+    seriesRef.current = series;
+    seriesMarkersRef.current = createSeriesMarkers(series, []);
+  }, []);
+
+  // Swaps the active series when the user picks a different chart type from the
+  // buttons below -- removes the old one, creates the new one, and re-renders the
+  // already-loaded candle history + annotations against it (no refetch needed).
+  // Persisted globally (not per pair/timeframe), matching how a real trading
+  // platform's chart-type choice works.
+  const switchChartType = useCallback(
+    (type: ChartType) => {
+      const chart = chartRef.current;
+      const oldSeries = seriesRef.current;
+      if (!chart || !oldSeries || type === chartTypeRef.current) return;
+      chart.removeSeries(oldSeries);
+      createMainSeries(chart, type);
+      // Set synchronously, not just via the `chartType` state -> effect mirror below --
+      // renderAll (called a few lines down, in this same synchronous call) reads this
+      // ref directly, and the effect wouldn't run until after this function returns.
+      // Confirmed as a real bug live: switching to Line/Area threw "item data value
+      // must be a number, got=undefined" because renderAll was still mapping data for
+      // the OLD (OHLC) type into a series that now expects {time, value}.
+      chartTypeRef.current = type;
+      seriesRef.current?.applyOptions({
+        priceFormat: { type: "price", precision: decimals(pair), minMove: 1 / 10 ** decimals(pair) },
+      });
+      renderAll(candlesRef.current);
+      redrawAnnotations();
+      window.localStorage.setItem(CHART_TYPE_STORAGE_KEY, type);
+      setChartType(type);
+    },
+    [pair, createMainSeries, renderAll, redrawAnnotations]
+  );
+
   // Chart + series lifecycle: created once per mount.
   useEffect(() => {
     if (!containerRef.current) return;
@@ -186,16 +313,12 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       timeScale: { timeVisible: true, secondsVisible: false },
     });
 
-    const candle = chart.addSeries(CandlestickSeries, {
-      upColor: UP_COLOR,
-      downColor: DOWN_COLOR,
-      borderVisible: false,
-      wickUpColor: UP_COLOR,
-      wickDownColor: DOWN_COLOR,
-    });
+    createMainSeries(chart, chartTypeRef.current);
 
-    // Low-opacity dotted line, distinct from the solid candle wicks, so it reads as
+    // Low-opacity dotted line, distinct from the main series, so it reads as
     // "illustrative" rather than real price action -- see the AI FORECAST label overlay.
+    // Unaffected by chart-type switching -- always a dotted Line regardless of what the
+    // main series currently is.
     const forecast = chart.addSeries(LineSeries, {
       lineWidth: 2,
       lineStyle: LineStyle.Dotted,
@@ -206,9 +329,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     });
 
     chartRef.current = chart;
-    seriesRef.current = candle;
     forecastSeriesRef.current = forecast;
-    seriesMarkersRef.current = createSeriesMarkers(candle, []);
 
     // Persists the user's own zoom/pan so it survives a page refresh (and switching back
     // to a pair/timeframe they'd already zoomed earlier) instead of always resetting to
@@ -232,6 +353,9 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       seriesMarkersRef.current = null;
       priceLinesRef.current = [];
     };
+    // createMainSeries is stable (its own useCallback has an empty dep array) --
+    // intentionally excluded so this effect still only ever runs once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reseed history whenever the selected pair or timeframe changes.
@@ -286,7 +410,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     candlesRef.current = upsertCandle(candlesRef.current, streamEvent.candle);
 
     if (isAppendOrCurrentBar) {
-      seriesRef.current?.update(toBar(streamEvent.candle));
+      seriesRef.current?.update(toSeriesPoint(streamEvent.candle, chartTypeRef.current));
     } else {
       // Rare: a late "final" correction to a bar that's already closed on the chart (see
       // upsertCandle's own doc comment) -- series.update() only supports the most recent
@@ -305,13 +429,31 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
-      <button
-        type="button"
-        onClick={resetZoom}
-        className="absolute left-2 top-2 rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400 hover:text-zinc-200"
-      >
-        Reset zoom
-      </button>
+      {/* z-10: lightweight-charts' own internal canvas layers are otherwise capturing
+          clicks meant for these buttons -- confirmed with a real click, not just a
+          visual overlap (no explicit z-index on either side means the library's canvas
+          was winning the hit-test at this position despite coming earlier in the DOM). */}
+      <div className="absolute left-2 top-2 z-10 flex items-center gap-1">
+        {CHART_TYPES.map((type) => (
+          <button
+            key={type}
+            type="button"
+            onClick={() => switchChartType(type)}
+            className={`rounded px-2 py-1 text-[10px] font-medium transition ${
+              chartType === type ? "bg-sky-600/80 text-white" : "bg-zinc-900/80 text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            {CHART_TYPE_LABEL[type]}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={resetZoom}
+          className="rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400 hover:text-zinc-200"
+        >
+          Reset zoom
+        </button>
+      </div>
       <div
         ref={forecastLabelRef}
         className="pointer-events-none absolute right-2 top-2 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400"
