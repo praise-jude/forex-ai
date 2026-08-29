@@ -12,7 +12,13 @@ interface PositionsResponse {
   tradesToday: number;
 }
 
-const POLL_INTERVAL_MS = 7000;
+// 1s, not the 7s every other poller here uses -- confirmed real user request: the P/L
+// number should feel like it's actually counting, the way Exness's own platform does,
+// not visibly jumping every few seconds. Safe to poll this fast because the data behind
+// it (getOpenPositions) is a cheap read of MetaApi's own already-synced local terminal
+// state, never a live broker round-trip -- see metaApiConnection.ts's own doc comment
+// on terminalState.positions.
+const POLL_INTERVAL_MS = 1000;
 
 const RISK_BADGE_CLASS: Record<PositionRiskAssessment["level"], string> = {
   aligned: "bg-zinc-700/60 text-zinc-400",
