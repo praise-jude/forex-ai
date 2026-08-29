@@ -33,6 +33,8 @@ import { isPending } from "./pendingInvalidationClose";
 import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
 import { detectMarketRegime } from "./marketRegime";
+import { assessPositionRisk } from "./positionRiskNarration";
+import { getLastPositionRiskLevel, setLastPositionRiskLevel } from "./positionRiskStore";
 import { checkNews } from "./newsFilter";
 import { emaTrendDirection } from "./indicators/emaTrend";
 import { scoreSetupQuality } from "./setupQualityScore";
@@ -281,6 +283,41 @@ class MarketSyncListener extends SynchronizationListener {
         const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
         predictionStore.set(pair, timeframe, { pair, timeframe, source: "smc", evaluation, time, regime, trends });
         eventBus.publish({ type: "prediction", pair, timeframe, source: "smc", evaluation, time, regime, trends });
+
+        // Position-risk narration -- only on the freshest timeframe (15m), so this
+        // doesn't fire the same check three times per candle-close cascade (15m/30m/1h
+        // can all close together on some minute boundaries). "live" only, matching this
+        // whole listener's own top-of-function guard -- demo never streams candles.
+        // Purely additive: narrates via a new event + notification, never touches
+        // sizing, stop loss, or execution (see positionRiskNarration.ts's own doc
+        // comment).
+        if (timeframe === "15m") {
+          for (const position of getOpenPositions("live")) {
+            if (position.pair !== pair) continue;
+            const assessment = assessPositionRisk(position.direction, regime, trends);
+            const previousLevel = getLastPositionRiskLevel(position.id);
+            setLastPositionRiskLevel(position.id, assessment.level);
+            if (previousLevel === assessment.level) continue; // no real change -- see positionRiskStore.ts
+            eventBus.publish({
+              type: "position_risk",
+              positionId: position.id,
+              pair: position.pair,
+              direction: position.direction,
+              level: assessment.level,
+              reason: assessment.reason,
+              time,
+            });
+            if (assessment.level !== "aligned") {
+              void sendNotification({
+                category: "risk_alert",
+                title: `JUDE AI — ${assessment.level === "warning" ? "Warning" : "Caution"}: ${position.pair}`,
+                body: assessment.reason,
+                data: { positionId: position.id, pair: position.pair },
+              });
+            }
+          }
+        }
+
         if (evaluation.status === "signal") {
           publishSignal(evaluation.signal);
           // Snapshot the decision context now, while it's still real -- signalStore

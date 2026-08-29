@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { predictionHeadline } from "@/lib/market/predictionLabel";
-import type { Pair, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
+import type { Pair, PositionRiskLevel, PredictionUpdate, Signal, Timeframe } from "@/lib/market/types";
 import {
   buildConfirmPhrase,
   buildCooldownAnnouncement,
   buildDailyLossAnnouncement,
   buildKillzoneAnnouncement,
+  buildPositionRiskAnnouncement,
   buildPredictionAnnouncement,
   buildResultAnnouncement,
   buildSignalAnnouncement,
@@ -93,6 +94,7 @@ export interface VoiceAssistantState {
   pushToTalk: () => void;
   onSignal: (signal: Signal) => void;
   onPredictionChange: (update: PredictionUpdate) => void;
+  onPositionRisk: (event: { pair: Pair; direction: "long" | "short"; level: PositionRiskLevel; reason: string }) => void;
 }
 
 function manualAccount(mode: EngineMode): AccountKey {
@@ -433,6 +435,20 @@ export function useVoiceAssistant({
     speak(buildPredictionAnnouncement(update));
   }
 
+  /**
+   * A "position_risk" SSE event only ever arrives on a genuine level change -- the
+   * server (positionRiskStore.ts) already dedupes repeats, so there's no extra
+   * edge-detection needed here, unlike onPredictionChange above. Bypasses the FIFO
+   * queue for the same reason that one does: this is a passive status readout, not a
+   * trade opportunity that must never be dropped. Never speaks "aligned" -- recovering
+   * to aligned is shown on the dashboard, but isn't worth interrupting the user for.
+   */
+  function onPositionRisk(event: { pair: Pair; direction: "long" | "short"; level: PositionRiskLevel; reason: string }) {
+    if (settingsRef.current.voiceMode === "off") return;
+    if (event.level === "aligned") return;
+    speak(buildPositionRiskAnnouncement(event.pair, event.direction, event.level, event.reason));
+  }
+
   function updateSettings(patch: Partial<VoiceSettings>) {
     setSettings((prev) => {
       const next = { ...prev, ...patch };
@@ -485,5 +501,6 @@ export function useVoiceAssistant({
     pushToTalk,
     onSignal,
     onPredictionChange,
+    onPositionRisk,
   };
 }

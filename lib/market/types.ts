@@ -298,6 +298,17 @@ export interface HigherTimeframeTrends {
   h1: "bullish" | "bearish" | "neutral";
 }
 
+// "Is the market still backing this open position, or has it turned against it" --
+// see positionRiskNarration.ts's own doc comment for the full classification logic.
+// Defined here (not in that file) so this and the StreamEvent variant below can share
+// it without positionRiskNarration.ts importing back into this module.
+export type PositionRiskLevel = "aligned" | "caution" | "warning";
+
+export interface PositionRiskAssessment {
+  level: PositionRiskLevel;
+  reason: string;
+}
+
 export type StreamEvent =
   | { type: "price"; pair: Pair; bid: number; ask: number; time: number }
   | { type: "candle"; pair: Pair; timeframe: Timeframe; candle: Candle }
@@ -311,6 +322,15 @@ export type StreamEvent =
       time: number;
       regime: MarketRegime;
       trends: HigherTimeframeTrends;
+    }
+  | {
+      type: "position_risk";
+      positionId: string;
+      pair: Pair;
+      direction: "long" | "short";
+      level: PositionRiskLevel;
+      reason: string;
+      time: number;
     };
 
 /** Latest per-pair evaluation result -- overwritten every closed M15 candle, no

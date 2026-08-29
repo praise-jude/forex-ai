@@ -2,7 +2,7 @@ import type { ExecuteResponse } from "../market/executionClient";
 import { formatPrice } from "../market/format";
 import { describeNoTradeReason } from "../market/noTradeReason";
 import { predictionHeadline } from "../market/predictionLabel";
-import type { Pair, PredictionUpdate, Signal, Timeframe } from "../market/types";
+import type { Pair, PositionRiskLevel, PredictionUpdate, Signal, Timeframe } from "../market/types";
 
 // Friendlier spoken names for the current PAIRS list (lib/market/types.ts) -- spells out
 // ticker-style pairs letter by letter so TTS engines don't mangle "EURUSD" as a word.
@@ -201,6 +201,18 @@ export function buildKillzoneAnnouncement(opened: boolean): string {
   return opened
     ? "Jude, the killzone just opened. I'm now actively watching for new setups on your FX and gold pairs."
     : "Jude, today's killzone window just closed. No new FX or gold signals until it reopens -- Bitcoin keeps trading as usual.";
+}
+
+/** Spoken only for a real caution/warning transition on an open position (see
+ * positionRiskStore.ts -- the server only ever emits a "position_risk" event on a
+ * genuine level change, so every call here already represents real new information,
+ * not a repeat). Never spoken for "aligned" -- see useVoiceAssistant's own caller,
+ * which filters that out before this is ever reached. */
+export function buildPositionRiskAnnouncement(pair: Pair, direction: "long" | "short", level: Exclude<PositionRiskLevel, "aligned">, reason: string): string {
+  const pairName = PAIR_SPOKEN_NAMES[pair];
+  const sideWord = direction === "long" ? "buy" : "sell";
+  const prefix = level === "warning" ? "Warning" : "Caution";
+  return `Jude, ${prefix}. Your ${pairName} ${sideWord} position: ${reason}`;
 }
 
 export type VoiceCommand =

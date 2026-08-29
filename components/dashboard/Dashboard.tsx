@@ -259,6 +259,12 @@ export function Dashboard() {
         };
         setPredictions((prev) => ({ ...prev, [event.pair]: { ...prev[event.pair], [event.timeframe]: update } }));
         voice.onPredictionChange(update);
+      } else if (event.type === "position_risk") {
+        // No local state to update here -- PositionsPanel.tsx polls /api/positions on
+        // its own short interval and always shows the fresh, current assessment
+        // regardless of this event; this is purely the voice trigger, same reasoning
+        // as onPredictionChange above bypassing the toast/signal-list machinery.
+        voice.onPositionRisk(event);
       }
     };
 

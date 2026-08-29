@@ -1,6 +1,9 @@
 import { getEngineMode, manualExecutionAccount } from "@/lib/market/engineMode";
 import { getOpenPositions } from "@/lib/market/metaApiConnection";
 import { positionStore } from "@/lib/market/positionStore";
+import { predictionStore } from "@/lib/market/predictionStore";
+import { assessPositionRisk } from "@/lib/market/positionRiskNarration";
+import type { PositionRiskAssessment } from "@/lib/market/types";
 
 export const runtime = "nodejs";
 
@@ -13,10 +16,27 @@ function dayKeyFor(nowMs: number): string {
 // here always matches what a click on this page would actually affect.
 export async function GET() {
   const accountKey = manualExecutionAccount(getEngineMode());
+  const positions = getOpenPositions(accountKey);
+
+  // Always the FRESH, current read -- unlike metaApiConnection.ts's own position-risk
+  // wiring (which only emits on a real level change, to keep voice/push notifications
+  // from repeating), this passive display has no reason to hide an unchanged "caution"
+  // from someone looking at the dashboard right now. Only ever populated for "live"
+  // (predictionStore.ts's own regime/trends reads come from the live candle stream --
+  // demo positions show no risk read, same "no second signal engine" boundary as the
+  // rest of this app's demo-account handling).
+  const risk: Record<string, PositionRiskAssessment> = {};
+  if (accountKey === "live") {
+    for (const position of positions) {
+      const prediction = predictionStore.get(position.pair, "15m", "smc");
+      if (prediction) risk[position.id] = assessPositionRisk(position.direction, prediction.regime, prediction.trends);
+    }
+  }
 
   return Response.json({
     account: accountKey,
-    positions: getOpenPositions(accountKey),
+    positions,
+    risk,
     tradesToday: positionStore.tradesOnDay(dayKeyFor(Date.now()), accountKey).length,
   });
 }
