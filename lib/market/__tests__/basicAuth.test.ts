@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAuthorized } from "../basicAuth";
+import { isAuthorized, passwordMatches } from "../basicAuth";
 
 function basicHeader(user: string, pass: string): string {
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
@@ -23,5 +23,13 @@ describe("isAuthorized", () => {
 
   it("handles a password that itself contains a colon", () => {
     expect(isAuthorized(basicHeader("trader", "sec:ret"), "sec:ret")).toBe(true);
+  });
+});
+
+describe("passwordMatches", () => {
+  it("accepts the matching password and rejects a wrong one", () => {
+    expect(passwordMatches("secret123", "secret123")).toBe(true);
+    expect(passwordMatches("wrong", "secret123")).toBe(false);
+    expect(passwordMatches("", "secret123")).toBe(false);
   });
 });

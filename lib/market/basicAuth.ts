@@ -34,6 +34,12 @@ export function isAuthorized(authHeader: string | null, password: string): boole
   }
 }
 
+/** Same timing-safe comparison as isAuthorized, for the /login page's real password
+ * field -- there's no Basic header to decode here, just a raw submitted string. */
+export function passwordMatches(supplied: string, password: string): boolean {
+  return timingSafeEqual(digest(supplied), digest(password));
+}
+
 /** Triggers the browser's native login prompt, which then caches the credentials for
  * every subsequent same-origin request (including EventSource, which can't set custom
  * headers itself) -- this is the whole reason Basic Auth was chosen over a custom header
