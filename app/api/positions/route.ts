@@ -16,7 +16,22 @@ function dayKeyFor(nowMs: number): string {
 // here always matches what a click on this page would actually affect.
 export async function GET() {
   const accountKey = manualExecutionAccount(getEngineMode());
-  const positions = getOpenPositions(accountKey);
+  const rawPositions = getOpenPositions(accountKey);
+
+  // Enriches each position with when THIS app placed it, for the chart's entry->target
+  // path (see PriceChart.tsx). A position opened directly on the broker outside the app
+  // (confirmed a real occurrence -- see tradesToday's own doc comment) has no matching
+  // record here, so it simply gets no openedAt and the chart draws no path for it.
+  const filledByBrokerPositionId = new Map(
+    positionStore
+      .all()
+      .filter((trade) => trade.status === "filled" && trade.brokerPositionId && trade.filledAt !== undefined)
+      .map((trade) => [trade.brokerPositionId as string, trade.filledAt as number])
+  );
+  const positions = rawPositions.map((position) => {
+    const openedAt = filledByBrokerPositionId.get(position.id);
+    return openedAt !== undefined ? { ...position, openedAt } : position;
+  });
 
   // Always the FRESH, current read -- unlike metaApiConnection.ts's own position-risk
   // wiring (which only emits on a real level change, to keep voice/push notifications

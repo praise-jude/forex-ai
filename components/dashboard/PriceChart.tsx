@@ -17,9 +17,10 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { Candle, Pair, PredictionUpdate, StreamEvent, Timeframe } from "@/lib/market/types";
+import type { Candle, OpenPosition, Pair, PredictionUpdate, StreamEvent, Timeframe } from "@/lib/market/types";
 import { decimals } from "@/lib/market/symbols";
 import { TIMEFRAME_MS } from "@/lib/market/timeframes";
+import { usePolledResource } from "@/lib/hooks/usePolledResource";
 
 interface PriceChartProps {
   pair: Pair;
@@ -43,6 +44,21 @@ const LINE_COLOR = "#38bdf8";
 // "projected ahead" rather than overlapping the candles. Same spirit as
 // signalEngine.ts's ATR_BUFFER_FRACTION-style tunable constants.
 const FORECAST_BAR_SPACING = 8;
+
+// Same shared "positions" key/interval PositionsPanel.tsx already polls -- usePolledResource
+// dedupes them onto one request either way, but matching the interval here too means
+// whichever of the two components happens to mount first doesn't leave the other on a
+// slower-than-intended cadence.
+const POSITIONS_POLL_MS = 1000;
+
+interface PositionsResponse {
+  positions: OpenPosition[];
+}
+
+async function fetchPositions(): Promise<PositionsResponse> {
+  const res = await fetch("/api/positions");
+  return res.json();
+}
 
 function toTime(ms: number): UTCTimestamp {
   return Math.floor(ms / 1000) as UTCTimestamp;
@@ -140,6 +156,13 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seriesRef = useRef<ISeriesApi<any> | null>(null);
   const forecastSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Solid entry->target path for a REAL, already-placed trade -- distinct from
+  // forecastSeriesRef's dotted "illustrative, not yet real" curve above. Whichever
+  // signer/source placed the trade (SMC, Signer B, the combined decision matrix, or a
+  // JUDE chat proposal) is irrelevant here: by the time a position exists, it's just
+  // real broker data, not a signal-specific concept.
+  const positionPathSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const positionLabelRef = useRef<HTMLDivElement>(null);
   // v5's markers are a primitive returned by createSeriesMarkers, not a method on the
   // series itself (series.setMarkers() was removed in v5) -- recreated alongside the
   // main series every time it's (re)created, updated in place via .setMarkers() from
@@ -147,6 +170,14 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   const seriesMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  // True while redrawAnnotations is touching the forecast/position-path series -- see
+  // its own doc comment on why those setData() calls can trigger a spurious auto-fit.
+  // handleVisibleRangeChange checks this to skip persisting that transient range to
+  // localStorage; without it, the corruption survived a page reload even though
+  // redrawAnnotations' own explicit restore fixed the CURRENT session's visual state --
+  // confirmed as a real bug live (long position rendered correctly, but reloading for
+  // the short-position screenshot came back to the narrow, candle-less view).
+  const suppressRangePersistRef = useRef(false);
   const forecastLabelRef = useRef<HTMLDivElement>(null);
   // Kept current via the effect below so the visible-range-change subscription (wired up
   // once, in the mount-only effect) always saves under today's pair/timeframe rather than
@@ -169,6 +200,25 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     chartTypeRef.current = chartType;
   }, [chartType]);
 
+  // Only ever the FIRST open position for this pair -- a real account could theoretically
+  // hold more than one on the same pair, and drawing a path per position would just be
+  // visual noise; the most useful single path is whichever one this app itself placed
+  // and can date (see openedAt's own doc comment on OpenPosition).
+  const { data: positionsData } = usePolledResource<PositionsResponse>("positions", fetchPositions, POSITIONS_POLL_MS);
+  const openPosition = positionsData?.positions.find((p) => p.pair === pair && p.openedAt !== undefined && p.takeProfit !== undefined);
+  // A stable, value-based key for redrawAnnotations' dependency array below -- the
+  // 1s poll above hands back a brand-new object every tick even when nothing about the
+  // position actually changed, which made redrawAnnotations (and therefore
+  // positionPathSeries.setData()) re-run every second. Confirmed as a real bug live:
+  // lightweight-charts treats each of those as a fresh empty->populated transition and
+  // re-auto-fits the time scale to it, silently fighting the user's own zoom/pan every
+  // second while a position is open. Keying off real field values instead means the
+  // callback only actually changes identity when something real changes (open, close,
+  // or a partial-close moving SL/TP) -- see the closure-staleness note where it's used.
+  const openPositionKey = openPosition
+    ? `${openPosition.id}:${openPosition.direction}:${openPosition.openPrice}:${openPosition.takeProfit}:${openPosition.stopLoss}:${openPosition.openedAt}`
+    : null;
+
   const renderAll = useCallback((candles: Candle[]) => {
     const type = chartTypeRef.current;
     seriesRef.current?.setData(candles.map((c) => toSeriesPoint(c, type)));
@@ -183,31 +233,86 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     chartRef.current?.timeScale().fitContent();
   }, [pair, timeframe]);
 
-  // Draws (or clears) the entry/SL/TP/zone price lines and the AI forecast curve for
-  // the currently held `prediction` prop, against whatever candle history is currently
-  // loaded. Never fabricates a curve for a no_trade evaluation -- there's no entry/TP
-  // to derive one from. Price lines/markers work identically across all four series
-  // types (a lightweight-charts series-level feature, not specific to Candlestick).
+  // Draws (or clears) the entry/SL/TP/zone price lines and either the real open-position
+  // path or the AI forecast curve, against whatever candle history is currently loaded.
+  // An open position for this pair always wins over the prediction-based forecast --
+  // once a trade is actually placed, its real entry/SL/TP are the meaningful thing to
+  // show, not an illustrative projection for a setup that may have already moved on.
+  // Price lines/markers work identically across all four series types (a
+  // lightweight-charts series-level feature, not specific to Candlestick).
   const redrawAnnotations = useCallback(() => {
     const series = seriesRef.current;
     const forecastSeries = forecastSeriesRef.current;
-    if (!series || !forecastSeries) return;
+    const positionPathSeries = positionPathSeriesRef.current;
+    if (!series || !forecastSeries || !positionPathSeries) return;
+
+    // Captured BEFORE touching forecast/position-path below, then explicitly restored
+    // after -- confirmed as a real bug live: per this file's own established note on
+    // series.setData() ("auto-fits the time scale itself the first time a series goes
+    // from empty to populated"), that behavior is per-SERIES, not a fit to the union of
+    // every series on the chart. The position path's own first setData() call
+    // independently snapped the whole chart to just its own narrow entry->target range,
+    // squeezing every real candle out of view. Reading the chart's OWN current range
+    // (not localStorage) sidesteps a second bug that reading-after-the-fact hit: the
+    // clobbering setData call itself fires the same visible-range-change subscription
+    // that persists zoom to localStorage, so a post-hoc localStorage read could pick up
+    // the very corruption this is meant to undo.
+    const rangeBeforeAnnotations = chartRef.current?.timeScale().getVisibleRange() ?? null;
+    suppressRangePersistRef.current = true;
 
     for (const line of priceLinesRef.current) series.removePriceLine(line);
     priceLinesRef.current = [];
     forecastSeries.setData([]);
+    positionPathSeries.setData([]);
     seriesMarkersRef.current?.setMarkers([]);
     if (forecastLabelRef.current) forecastLabelRef.current.style.display = "none";
-
-    if (!prediction || prediction.pair !== pair || prediction.timeframe !== timeframe) return;
-    if (prediction.evaluation.status !== "signal") return;
-    const signal = prediction.evaluation.signal;
+    if (positionLabelRef.current) positionLabelRef.current.style.display = "none";
 
     const addLine = (price: number, color: string, title: string) => {
       priceLinesRef.current.push(
         series.createPriceLine({ price, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title })
       );
     };
+
+    if (openPosition && openPosition.openedAt !== undefined && openPosition.takeProfit !== undefined) {
+      addLine(openPosition.openPrice, "#a1a1aa", "Entry");
+      if (openPosition.stopLoss !== undefined) addLine(openPosition.stopLoss, DOWN_COLOR, "SL");
+      addLine(openPosition.takeProfit, UP_COLOR, "TP");
+
+      const lastCandle = candlesRef.current[candlesRef.current.length - 1];
+      const barMs = TIMEFRAME_MS[timeframe];
+      // Point A is the real fill time, clamped to never sit AFTER the newest loaded
+      // candle -- confirmed as a real bug live: a genuinely open position's real
+      // openedAt can be well ahead of the last loaded candle (a stale connection, or a
+      // forex position still open across the weekend candle gap), and plotting point A
+      // out there forced the chart to auto-scale around it, squeezing every real candle
+      // into an invisible sliver. Point B has no real "when it'll hit TP" to plot
+      // (that's the future), so it's projected the same illustrative distance past the
+      // latest candle the AI forecast curve uses below -- same visual language, just
+      // solid (real trade) instead of dotted (not yet real).
+      const pointATime = lastCandle ? Math.min(openPosition.openedAt, lastCandle.time) : openPosition.openedAt;
+      const pointBTime = lastCandle ? lastCandle.time + barMs * FORECAST_BAR_SPACING : openPosition.openedAt + barMs * FORECAST_BAR_SPACING;
+      positionPathSeries.applyOptions({ color: openPosition.direction === "long" ? UP_COLOR : DOWN_COLOR });
+      positionPathSeries.setData([
+        { time: toTime(pointATime), value: openPosition.openPrice },
+        { time: toTime(Math.max(pointBTime, pointATime + barMs)), value: openPosition.takeProfit },
+      ]);
+      if (positionLabelRef.current) positionLabelRef.current.style.display = "block";
+      if (rangeBeforeAnnotations) chartRef.current?.timeScale().setVisibleRange(rangeBeforeAnnotations);
+      suppressRangePersistRef.current = false;
+      return;
+    }
+
+    if (!prediction || prediction.pair !== pair || prediction.timeframe !== timeframe) {
+      suppressRangePersistRef.current = false;
+      return;
+    }
+    if (prediction.evaluation.status !== "signal") {
+      suppressRangePersistRef.current = false;
+      return;
+    }
+    const signal = prediction.evaluation.signal;
+
     addLine(signal.entry, "#a1a1aa", "Entry");
     addLine(signal.stopLoss, DOWN_COLOR, "SL");
     addLine(signal.takeProfit, UP_COLOR, "TP1");
@@ -216,7 +321,10 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     if (signal.zoneBottom !== undefined) addLine(signal.zoneBottom, "#60a5fa", "Zone");
 
     const lastCandle = candlesRef.current[candlesRef.current.length - 1];
-    if (!lastCandle) return; // candles not loaded yet -- the history-reseed effect calls this again once they are
+    if (!lastCandle) {
+      suppressRangePersistRef.current = false;
+      return; // candles not loaded yet -- the history-reseed effect calls this again once they are
+    }
 
     // A single directional marker at the signal's own candle -- distinct from the
     // dotted forecast curve (which projects a path, not a fixed marker) and the price
@@ -238,7 +346,15 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       { time: toTime(lastCandle.time + barMs * FORECAST_BAR_SPACING * 2), value: signal.takeProfit2 },
     ]);
     if (forecastLabelRef.current) forecastLabelRef.current.style.display = "block";
-  }, [prediction, pair, timeframe]);
+    if (rangeBeforeAnnotations) chartRef.current?.timeScale().setVisibleRange(rangeBeforeAnnotations);
+    suppressRangePersistRef.current = false;
+    // openPosition itself (not just openPositionKey) is read in the body above -- safe
+    // despite the narrower dep list: whenever openPositionKey is unchanged, the stale
+    // closure's openPosition is guaranteed to hold identical field values (that's what
+    // the key is built from), so re-running with it produces an identical result. This
+    // is the whole point -- see openPositionKey's own doc comment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prediction, pair, timeframe, openPositionKey]);
 
   // Creates (or re-creates, on a chart-type switch) the main price series, bound to
   // whichever ONE of the four TradingView-style chart types is currently selected --
@@ -328,8 +444,20 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       crosshairMarkerVisible: false,
     });
 
+    // Solid line, distinct from the forecast's dotted style -- see positionPathSeriesRef's
+    // own doc comment. Also unaffected by chart-type switching.
+    const positionPath = chart.addSeries(LineSeries, {
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      color: UP_COLOR,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
     chartRef.current = chart;
     forecastSeriesRef.current = forecast;
+    positionPathSeriesRef.current = positionPath;
 
     // Persists the user's own zoom/pan so it survives a page refresh (and switching back
     // to a pair/timeframe they'd already zoomed earlier) instead of always resetting to
@@ -338,7 +466,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     // just-restored value, or that spurious event would race the reseed effect's own read
     // of localStorage and wipe out the saved zoom before it's ever used.
     const handleVisibleRangeChange = (range: IRange<Time> | null) => {
-      if (!range) return;
+      if (!range || suppressRangePersistRef.current) return;
       const key = visibleRangeStorageKey(pairRef.current, timeframeRef.current);
       window.localStorage.setItem(key, JSON.stringify(range));
     };
@@ -350,6 +478,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       chartRef.current = null;
       seriesRef.current = null;
       forecastSeriesRef.current = null;
+      positionPathSeriesRef.current = null;
       seriesMarkersRef.current = null;
       priceLinesRef.current = [];
     };
@@ -419,9 +548,9 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     }
   }, [streamEvent, pair, timeframe, renderAll]);
 
-  // Redraw annotations/forecast whenever the prediction itself changes (new evaluation
-  // for this pair, or the user switched pairs -- redrawAnnotations already checks that
-  // `prediction` actually matches the current pair/timeframe before drawing anything).
+  // Redraw annotations whenever the prediction, the open-position data, or the selected
+  // pair/timeframe changes -- redrawAnnotations itself decides which of the two
+  // (real position path vs. illustrative forecast) actually applies.
   useEffect(() => {
     redrawAnnotations();
   }, [redrawAnnotations]);
@@ -459,6 +588,14 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
         className="pointer-events-none absolute right-2 top-2 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400"
       >
         AI FORECAST &middot; PROJECTED PATH (illustrative, not a price prediction)
+      </div>
+      {/* Mutually exclusive with the forecast label above -- redrawAnnotations only ever
+          shows one of the two for a given pair, so they can safely share the same slot. */}
+      <div
+        ref={positionLabelRef}
+        className="pointer-events-none absolute right-2 top-2 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-emerald-400"
+      >
+        LIVE POSITION &middot; ENTRY &rarr; TARGET
       </div>
     </div>
   );

@@ -397,6 +397,12 @@ export interface OpenPosition {
   takeProfit?: number;
   profit: number; // in account currency
   clientId?: string;
+  /** When THIS app placed the trade (positionStore's own ExecutedTrade.filledAt) --
+   * undefined for a position opened directly on the broker outside the app (see
+   * /api/positions's own doc comment), since there's no matching record to derive it
+   * from. Populated by the API route, never by getOpenPositions itself (that's a raw
+   * broker read with no notion of "when," only "what's open now"). */
+  openedAt?: number;
 }
 
 export type ExecutionStatus = "pending" | "filled" | "rejected";
