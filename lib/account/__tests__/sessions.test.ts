@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { sessions, users } from "../../db/schema";
 import { createSession, getSessionUserId, revokeSession } from "../sessions";
@@ -22,7 +22,28 @@ async function createThrowawayUser(): Promise<string> {
   return id;
 }
 
-describe("sessions", () => {
+// `railway connect Postgres --tunnel-only -P 5432` (see README) is a manual, per-
+// developer/CI step -- most environments running this suite won't have it up. Skipping
+// the whole describe block when the tunnel is down turns that into a clean, honest
+// "5 skipped" instead of 5 identical ECONNREFUSED failures that look like a real
+// regression on every machine that hasn't started one. Race against a short timeout
+// too, not just the connection's own rejection -- a wrong-but-routable host could hang
+// instead of refusing fast, and that must not stall the whole test run.
+const dbAvailable = await Promise.race([
+  db
+    .execute(sql`select 1`)
+    .then(() => true)
+    .catch(() => false),
+  new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+]);
+
+if (!dbAvailable) {
+  console.warn(
+    "[sessions.test.ts] skipped -- no reachable Postgres at DATABASE_URL. Run `railway connect Postgres --tunnel-only -P 5432` in another terminal to exercise these for real (see README's 'Local database access')."
+  );
+}
+
+describe.skipIf(!dbAvailable)("sessions", () => {
   let userId: string;
 
   afterEach(async () => {
