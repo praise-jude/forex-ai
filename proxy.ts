@@ -16,6 +16,12 @@ const PUBLIC_PATHS = new Set([
   "/icon-512",
   "/icon-512-maskable",
   "/apple-icon",
+  // Temporary: the mobile APK, hosted directly from this app while the usual ngrok
+  // tunnel is bandwidth-throttled (see public/forex-ai.apk's own commit message). The
+  // installer carries no secrets, so exempting it from the dashboard password is the
+  // same tradeoff already made for the icons above -- remove this line along with the
+  // file once it's been downloaded.
+  "/forex-ai.apk",
 ]);
 
 /**
