@@ -630,7 +630,26 @@ function stateFor(accountKey: AccountKey): ConnectionState {
   return state;
 }
 
+// Bumped at the start of every connect() attempt (including forceReconnect's) and
+// checked between each staggered network call inside it -- an attempt that's been
+// superseded by a newer one stops issuing further subscribe/unsubscribe calls instead
+// of continuing to run in the background. Without this, a forceReconnect fired while the
+// previous connect() was still stuck mid-loop left BOTH attempts making calls against
+// the same account's 10-calls/60s MetaApi rate limit concurrently -- confirmed as a real
+// production incident (2026-08-30): every watchdog escalation compounded the very
+// rate-limit contention it was trying to recover from instead of clearing it, so the
+// connection never actually came back until a code fix, not just a redeploy.
+const connectGenerationKey = Symbol.for("forex-ai.metaApiConnection.connectGeneration");
+type GlobalWithConnectGeneration = typeof globalThis & { [connectGenerationKey]?: Map<AccountKey, number> };
+const connectGenerationGlobal = globalThis as GlobalWithConnectGeneration;
+const connectGeneration: Map<AccountKey, number> =
+  connectGenerationGlobal[connectGenerationKey] ?? (connectGenerationGlobal[connectGenerationKey] = new Map());
+
 async function connect(accountKey: AccountKey): Promise<void> {
+  const myGeneration = (connectGeneration.get(accountKey) ?? 0) + 1;
+  connectGeneration.set(accountKey, myGeneration);
+  const isSuperseded = () => connectGeneration.get(accountKey) !== myGeneration;
+
   const vars = ACCOUNT_ENV_VARS[accountKey];
   const token = requireEnv(vars.token);
   const accountId = requireEnv(vars.accountId);
@@ -710,6 +729,14 @@ async function connect(accountKey: AccountKey): Promise<void> {
   const historicallyStale = ALL_PAIRS.filter((pair) => !PAIRS.includes(pair)).map(brokerSymbol);
   const staleSymbols = [...new Set([...connection.subscribedSymbols.filter((symbol) => !wantedSymbols.has(symbol)), ...historicallyStale])];
   for (const [index, symbol] of staleSymbols.entries()) {
+    if (isSuperseded()) {
+      console.log(`[market] ${accountKey} connect() attempt superseded by a newer one -- abandoning mid stale-unsubscribe`);
+      // Fire-and-forget, deliberately not awaited -- this attempt is already being
+      // abandoned specifically because it's been slow/stuck, so blocking its own return
+      // on close() settling would defeat the point of superseding it in the first place.
+      void connection.close().catch(() => {});
+      return;
+    }
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
     try {
       await connection.unsubscribeFromMarketData(symbol, [{ type: "quotes" }, { type: "candles" }]);
@@ -721,6 +748,11 @@ async function connect(accountKey: AccountKey): Promise<void> {
   if (staleSymbols.length > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
 
   for (const [index, pair] of PAIRS.entries()) {
+    if (isSuperseded()) {
+      console.log(`[market] ${accountKey} connect() attempt superseded by a newer one -- abandoning mid pair-subscribe`);
+      void connection.close().catch(() => {});
+      return;
+    }
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
     await connection.subscribeToMarketData(
       brokerSymbol(pair),
@@ -729,6 +761,15 @@ async function connect(accountKey: AccountKey): Promise<void> {
       // second signal engine, see MarketSyncListener's own doc comment above).
       accountKey === "live" ? LIVE_MARKET_DATA_SUBSCRIPTIONS : [{ type: "quotes" }]
     );
+  }
+
+  // Final guard, in case this attempt was superseded right after the last loop check
+  // passed -- must never let a stale, abandoned connection clobber a fresher one that
+  // already finished and is streaming real data.
+  if (isSuperseded()) {
+    console.log(`[market] ${accountKey} connect() attempt superseded by a newer one -- discarding the connection it just finished building`);
+    void connection.close().catch(() => {});
+    return;
   }
 
   const state = stateFor(accountKey);
