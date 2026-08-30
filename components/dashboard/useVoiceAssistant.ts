@@ -139,10 +139,12 @@ export function useVoiceAssistant({
     SESSION_STATUS_POLL_MS
   );
 
+  // Created post-mount (see the settings-loading effect below) rather than during render
+  // -- even guarded by `typeof window`, creating it here made the client's first render
+  // (which runs during hydration, where window IS defined) diverge from the server-rendered
+  // HTML that has no engine and therefore no mic button, tripping a hydration mismatch.
   const engineRef = useRef<VoiceEngine | null>(null);
-  if (!engineRef.current && typeof window !== "undefined") {
-    engineRef.current = new VoiceEngine({ onStatusChange: setEngineStatus });
-  }
+  const [mounted, setMounted] = useState(false);
 
   const queueRef = useRef<Signal[]>([]);
   const pendingSignalRef = useRef<Signal | null>(null);
@@ -187,6 +189,11 @@ export function useVoiceAssistant({
     // (localStorage-less) HTML and trip a hydration mismatch instead.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSettings(loadVoiceSettings());
+    // Same reasoning applies to the voice engine -- it only exists in the browser, so it's
+    // created here rather than during render, then `mounted` flips to reveal the
+    // engine-dependent UI (mic button, sttSupported/status) on the client's second render.
+    engineRef.current = new VoiceEngine({ onStatusChange: setEngineStatus });
+    setMounted(true);
   }, []);
 
   // The JUDE AI Trade Guardian's proactive side -- speaks the moment a cooldown or daily
@@ -478,7 +485,7 @@ export function useVoiceAssistant({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statuses, pendingSignal]);
 
-  const engine = engineRef.current;
+  const engine = mounted ? engineRef.current : null;
   const sttSupported = engine?.isSttSupported() ?? false;
 
   let status: VoiceStatus;
