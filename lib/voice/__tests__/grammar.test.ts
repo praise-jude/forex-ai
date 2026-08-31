@@ -39,7 +39,7 @@ describe("buildPredictionAnnouncement", () => {
       evaluation: { status: "no_trade", reason: { code: "no_setup" } },
       time: Date.now(),
       regime: "range",
-      trends: { d1: "neutral", h4: "neutral", h1: "neutral" },
+      trends: { d1: "neutral", h4: "neutral", h1: "neutral", d1Gap: null, h4Gap: null, h1Gap: null },
     });
     expect(text).toMatch(/market regime: range/i);
     expect(text).toMatch(/no qualifying setup/i);

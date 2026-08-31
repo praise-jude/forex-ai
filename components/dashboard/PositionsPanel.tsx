@@ -59,7 +59,17 @@ function PositionRow({ position, risk }: { position: OpenPosition; risk: Positio
           <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${RISK_BADGE_CLASS[risk.level]}`}>
             {RISK_BADGE_LABEL[risk.level]}
           </span>
-          {risk.level !== "aligned" && <span className="text-[11px] leading-tight text-zinc-400">{risk.reason}</span>}
+          {risk.level !== "aligned" && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[11px] leading-tight text-zinc-400">{risk.reason}</span>
+              {/* Only ever set for "caution" (one opposing timeframe, a real gap to
+                  measure) -- a real current distance, never a time estimate for when it'll
+                  actually flip back. */}
+              {risk.distancePct !== null && (
+                <span className="text-[10px] text-zinc-500">Gap: {risk.distancePct.toFixed(2)}% (smaller = closer to clearing)</span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </li>

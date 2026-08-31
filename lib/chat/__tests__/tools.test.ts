@@ -152,7 +152,7 @@ describe("chat tools -- confirm-phrase safety gates", () => {
         evaluation: { status: "no_trade", reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bullish", h4: "bullish", h1: "bearish" } },
         time: Date.now(),
         regime: "strong_uptrend",
-        trends: { d1: "bullish", h4: "bullish", h1: "bearish" },
+        trends: { d1: "bullish", h4: "bullish", h1: "bearish", d1Gap: null, h4Gap: null, h1Gap: null },
       });
       predictionStore.set("USD/CHF", "15m", {
         pair: "USD/CHF",
@@ -161,7 +161,7 @@ describe("chat tools -- confirm-phrase safety gates", () => {
         evaluation: { status: "no_trade", reason: { code: "no_boundary_touch" } },
         time: Date.now(),
         regime: "range",
-        trends: { d1: "bullish", h4: "bullish", h1: "bearish" },
+        trends: { d1: "bullish", h4: "bullish", h1: "bearish", d1Gap: null, h4Gap: null, h1Gap: null },
       });
 
       const tools = buildTools(ctxWith("what about the range setup"));
@@ -222,7 +222,7 @@ describe("chat tools -- confirm-phrase safety gates", () => {
         evaluation: { status: "signal", signal },
         time: Date.now(),
         regime: "strong_uptrend",
-        trends: { d1: "bullish", h4: "bullish", h1: "bullish" },
+        trends: { d1: "bullish", h4: "bullish", h1: "bullish", d1Gap: null, h4Gap: null, h1Gap: null },
       });
 
       const tools = buildTools(ctxWith("just checking"));

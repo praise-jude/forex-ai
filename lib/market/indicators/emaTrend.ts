@@ -35,3 +35,24 @@ export function emaTrendDirection(candles: Candle[]): "bullish" | "bearish" | "n
   if (fast < slow) return "bearish";
   return "neutral";
 }
+
+/**
+ * How far apart the same EMA20/EMA50 read from emaTrendDirection above currently sit,
+ * as a signed percentage of the slow EMA (positive = bullish gap, negative = bearish
+ * gap). Deliberately separate from emaTrendDirection rather than folded into it -- that
+ * function's exact return shape is depended on by signalEngine.ts's hard gate and
+ * signerB.ts, both of which have no use for the gap; adding it here only serves the one
+ * caller that does (positionRiskNarration.ts's "how close is the opposing timeframe to
+ * flipping back" distance, see its own doc comment). A smaller magnitude means the fast
+ * and slow EMA are closer to crossing -- this is a real, CURRENT distance, never a time
+ * estimate for when it'll actually cross, which this app doesn't fabricate anywhere.
+ */
+export function emaTrendGapPct(candles: Candle[]): number | null {
+  if (candles.length < SLOW_PERIOD) return null;
+  const closes = candles.map((c) => c.close);
+  const index = candles.length - 1;
+  const fast = calculateEma(closes, FAST_PERIOD)[index];
+  const slow = calculateEma(closes, SLOW_PERIOD)[index];
+  if (Number.isNaN(fast) || Number.isNaN(slow) || slow === 0) return null;
+  return ((fast - slow) / slow) * 100;
+}

@@ -3,7 +3,7 @@ import { assessPositionRisk } from "../positionRiskNarration";
 import type { HigherTimeframeTrends } from "../types";
 
 function trends(overrides: Partial<HigherTimeframeTrends> = {}): HigherTimeframeTrends {
-  return { d1: "neutral", h4: "neutral", h1: "neutral", ...overrides };
+  return { d1: "neutral", h4: "neutral", h1: "neutral", d1Gap: null, h4Gap: null, h1Gap: null, ...overrides };
 }
 
 describe("assessPositionRisk", () => {
@@ -37,22 +37,37 @@ describe("assessPositionRisk", () => {
     expect(result.reason).toContain("daily and 4-hour");
   });
 
-  it("cautions a long position when only D1 turns bearish", () => {
-    const result = assessPositionRisk("long", "range", trends({ d1: "bearish" }));
+  it("cautions a long position when only D1 turns bearish, with a real distance from its own gap", () => {
+    const result = assessPositionRisk("long", "range", trends({ d1: "bearish", d1Gap: -0.42 }));
     expect(result.level).toBe("caution");
     expect(result.reason).toContain("daily");
+    expect(result.distancePct).toBe(0.42);
   });
 
-  it("cautions a long position when only H4 turns bearish", () => {
-    const result = assessPositionRisk("long", "range", trends({ h4: "bearish" }));
+  it("cautions a long position when only H4 turns bearish, with a real distance from its own gap", () => {
+    const result = assessPositionRisk("long", "range", trends({ h4: "bearish", h4Gap: -1.1 }));
     expect(result.level).toBe("caution");
     expect(result.reason).toContain("4-hour");
+    expect(result.distancePct).toBe(1.1);
   });
 
-  it("cautions on high volatility even when trends are neutral", () => {
+  it("reports no distance when the opposing timeframe's own gap wasn't available (still under warmup)", () => {
+    const result = assessPositionRisk("long", "range", trends({ d1: "bearish", d1Gap: null }));
+    expect(result.level).toBe("caution");
+    expect(result.distancePct).toBeNull();
+  });
+
+  it("cautions on high volatility even when trends are neutral, with no distance to report", () => {
     const result = assessPositionRisk("long", "high_volatility", trends());
     expect(result.level).toBe("caution");
     expect(result.reason.toLowerCase()).toContain("volatility");
+    expect(result.distancePct).toBeNull();
+  });
+
+  it("reports no distance for warning-level results -- two confirming reads, not one to measure", () => {
+    const result = assessPositionRisk("long", "range", trends({ d1: "bearish", d1Gap: -0.3, h4: "bearish", h4Gap: -0.9 }));
+    expect(result.level).toBe("warning");
+    expect(result.distancePct).toBeNull();
   });
 
   it("a bullish D1/H4 read never counts against a long position (only the opposing direction does)", () => {

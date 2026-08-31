@@ -16,6 +16,11 @@ import type { HigherTimeframeTrends, MarketRegime, PositionRiskAssessment } from
  * picked up -- an early, single-source read, not (yet) a second confirming one.
  * "aligned" -- everything else, including sitting in a range/consolidation with no
  * opposing trend read at all.
+ *
+ * "caution" also carries a real distancePct -- the single opposing timeframe's
+ * EMA20/50 gap, so a real user-facing question ("how close is this to clearing up?")
+ * gets an honest current-distance answer instead of silence. Never a time estimate --
+ * see emaTrendGapPct's own doc comment for why this app doesn't fabricate one.
  */
 export function assessPositionRisk(direction: "long" | "short", regime: MarketRegime, trends: HigherTimeframeTrends): PositionRiskAssessment {
   const opposingRegime: MarketRegime = direction === "long" ? "strong_downtrend" : "strong_uptrend";
@@ -26,6 +31,7 @@ export function assessPositionRisk(direction: "long" | "short", regime: MarketRe
     return {
       level: "warning",
       reason: `Market regime has turned to a strong ${direction === "long" ? "downtrend" : "uptrend"}, working directly against your ${sideLabel} position.`,
+      distancePct: null,
     };
   }
 
@@ -34,24 +40,30 @@ export function assessPositionRisk(direction: "long" | "short", regime: MarketRe
     return {
       level: "warning",
       reason: `Both the daily and 4-hour trend have turned ${opposingTrend}, against your ${sideLabel} position.`,
+      distancePct: null,
     };
   }
   if (opposingTimeframes.length === 1) {
-    const label = opposingTimeframes[0] === "d1" ? "daily" : "4-hour";
+    const tf = opposingTimeframes[0];
+    const label = tf === "d1" ? "daily" : "4-hour";
+    const gap = tf === "d1" ? trends.d1Gap : trends.h4Gap;
     return {
       level: "caution",
       reason: `The ${label} trend has turned ${opposingTrend} while this ${sideLabel} position is still open.`,
+      distancePct: gap === null ? null : Math.abs(gap),
     };
   }
   if (regime === "high_volatility") {
     return {
       level: "caution",
       reason: "Volatility has increased -- price swings may be larger than usual while this position is open.",
+      distancePct: null,
     };
   }
 
   return {
     level: "aligned",
     reason: `Market conditions remain aligned with your ${sideLabel} position.`,
+    distancePct: null,
   };
 }

@@ -37,7 +37,7 @@ import { assessPositionRisk } from "./positionRiskNarration";
 import { getLastPositionRiskLevel, setLastPositionRiskLevel } from "./positionRiskStore";
 import { generateTradeRetrospective } from "../chat/tradeRetrospective";
 import { checkNews } from "./newsFilter";
-import { emaTrendDirection } from "./indicators/emaTrend";
+import { emaTrendDirection, emaTrendGapPct } from "./indicators/emaTrend";
 import { scoreSetupQuality } from "./setupQualityScore";
 import {
   tradeJournal,
@@ -320,6 +320,9 @@ class MarketSyncListener extends SynchronizationListener {
           d1: emaTrendDirection(higherTimeframes.d1),
           h4: emaTrendDirection(higherTimeframes.h4),
           h1: emaTrendDirection(higherTimeframes.h1),
+          d1Gap: emaTrendGapPct(higherTimeframes.d1),
+          h4Gap: emaTrendGapPct(higherTimeframes.h4),
+          h1Gap: emaTrendGapPct(higherTimeframes.h1),
         };
         // Computed independently of evaluateSignal (see marketRegime.ts's own doc
         // comment) -- reuses the exact same closed-candle series and news check, never
@@ -413,6 +416,9 @@ class MarketSyncListener extends SynchronizationListener {
           d1: emaTrendDirection(candleStore.get(pair, "1d")),
           h4: emaTrendDirection(candleStore.get(pair, "4h")),
           h1: emaTrendDirection(candleStore.get(pair, "1h")),
+          d1Gap: emaTrendGapPct(candleStore.get(pair, "1d")),
+          h4Gap: emaTrendGapPct(candleStore.get(pair, "4h")),
+          h1Gap: emaTrendGapPct(candleStore.get(pair, "1h")),
         };
         predictionStore.set(pair, timeframe, {
           pair,

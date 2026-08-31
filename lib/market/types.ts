@@ -296,6 +296,14 @@ export interface HigherTimeframeTrends {
   d1: "bullish" | "bearish" | "neutral";
   h4: "bullish" | "bearish" | "neutral";
   h1: "bullish" | "bearish" | "neutral";
+  /** Signed EMA20/EMA50 gap (see emaTrend.ts's own emaTrendGapPct), percent of the slow
+   * EMA -- null exactly when the matching direction above is "neutral" (same warmup
+   * floor). Only consumed by positionRiskNarration.ts's "how close to flipping back"
+   * distance so far, but computed alongside the direction fields for every prediction
+   * regardless, matching how d1/h4/h1 above are already unconditional. */
+  d1Gap: number | null;
+  h4Gap: number | null;
+  h1Gap: number | null;
 }
 
 // "Is the market still backing this open position, or has it turned against it" --
@@ -307,6 +315,13 @@ export type PositionRiskLevel = "aligned" | "caution" | "warning";
 export interface PositionRiskAssessment {
   level: PositionRiskLevel;
   reason: string;
+  /** How far the SINGLE opposing timeframe (d1 or h4) is from crossing back to align
+   * with the position, as an absolute EMA20/50 gap percentage -- smaller means closer.
+   * Only ever set for "caution" (exactly one opposing read to measure a distance for);
+   * null for "warning" (already two confirming reads, a distance to just one of them
+   * would be misleading) and "aligned" (nothing opposing). A real, honest CURRENT
+   * distance, never a time estimate -- see emaTrendGapPct's own doc comment. */
+  distancePct: number | null;
 }
 
 export type StreamEvent =
