@@ -363,6 +363,17 @@ class MarketSyncListener extends SynchronizationListener {
                 body: assessment.reason,
                 data: { positionId: position.id, pair: position.pair },
               });
+            } else if (previousLevel !== undefined) {
+              // The other half of a real user request: not just "something's wrong" but
+              // "tell me the moment it's not wrong anymore". previousLevel !== undefined
+              // excludes a position's very first assessment (nothing to have cleared from
+              // yet) -- only a genuine caution/warning -> aligned transition notifies.
+              void sendNotification({
+                category: "risk_alert",
+                title: `JUDE AI — Cleared: ${position.pair}`,
+                body: `The ${previousLevel} on your ${position.direction === "long" ? "BUY" : "SELL"} position has cleared -- market conditions are aligned again.`,
+                data: { positionId: position.id, pair: position.pair },
+              });
             }
           }
         }
