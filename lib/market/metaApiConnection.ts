@@ -92,6 +92,20 @@ const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
   { type: "candles", timeframe: "1d" },
 ];
 
+// MetaApi's real documented limit (https://metaapi.cloud/docs/client/rateLimiting/) for
+// the subscribeToMarketData call itself is 10 requests per account per 60 seconds --
+// ACCOUNT-WIDE, not per-symbol. Spacing every call 6.5s apart (just past the
+// mathematical minimum of 60/10=6s, for margin) is what actually respects this for any
+// pair count -- shared here between connect()'s own initial paced subscribe loop and
+// MarketSyncListener's downgrade-recovery queue below, which used to give every
+// downgraded symbol its own fully independent retry timer instead of sharing this same
+// pacing. That was the direct cause of a real production incident (2026-08-31): when a
+// whole batch of pairs downgrades together (exactly what happens at the weekly market
+// reopen), their independent jittered retries landed back in roughly the same window
+// too, collectively re-tripping this same account-wide budget and downgrading the same
+// batch again -- an 8-hour, self-sustaining storm across every monitored pair.
+const SUBSCRIBE_STAGGER_MS = 6500;
+
 // Duck-typed, NOT `instanceof TooManyRequestsError` -- verified directly (require() the
 // package the same way webpack/Next.js's CJS interop does, not a Node ESM dynamic
 // import(), which gives a misleadingly different export set) that this package's own
@@ -127,12 +141,15 @@ export function retryDelayFromError(error: unknown, fallbackMs: number): number 
 }
 
 class MarketSyncListener extends SynchronizationListener {
-  // Symbols with a recovery already scheduled or in flight -- without this, the SAME
-  // symbol getting downgraded again before its first recovery has even fired (seen
-  // repeatedly during today's reconnect storms) stacks a second, third, fourth
-  // independent setTimeout on top, each burning its own subscribeToMarketData call
-  // against the same hourly credit budget described below for no added benefit.
+  // Symbols with a recovery already queued or in flight -- without this, the SAME
+  // symbol getting downgraded again before its first recovery has even run stacks a
+  // second, third, fourth entry in the queue for no added benefit.
   private pendingRecovery = new Set<string>();
+  // Recoveries wait here rather than each scheduling their own independent timer --
+  // see drainRecoveryQueue's own doc comment for why an uncoordinated per-symbol timer
+  // was the actual bug.
+  private recoveryQueue: { symbol: string; isRetry: boolean }[] = [];
+  private draining = false;
 
   // Only set for the "live" account (see connect() below) -- needed so
   // onSubscriptionDowngraded can re-subscribe a downgraded symbol itself, rather than
@@ -145,14 +162,11 @@ class MarketSyncListener extends SynchronizationListener {
   }
 
   /**
-   * Belt-and-suspenders on top of the paced subscribe loop below: if a symbol still
-   * gets downgraded anyway (a temporary tighter limit, a MetaApi-side policy change,
-   * anything not anticipated by today's pacing), this is what actually recovers it,
-   * instead of it silently staying broken until the next full reconnect -- which is
-   * what "candlesticks not moving" has been three times now. Waits well past a full
-   * rate-limit window (60s) before retrying, with jitter so several symbols downgraded
-   * in the same burst don't all retry in lockstep and immediately re-trip the same
-   * limit that caused this.
+   * Belt-and-suspenders on top of the paced subscribe loop in connect(): if a symbol
+   * still gets downgraded anyway (a temporary tighter limit, a MetaApi-side policy
+   * change, a whole-account resubscribe burst like the weekly market reopen), this is
+   * what actually recovers it, instead of it silently staying broken until the next
+   * full reconnect -- which is what "candlesticks not moving" has been three times now.
    */
   async onSubscriptionDowngraded(
     _instanceIndex: string,
@@ -181,29 +195,60 @@ class MarketSyncListener extends SynchronizationListener {
     if (this.pendingRecovery.has(symbol)) return;
     this.pendingRecovery.add(symbol);
 
-    console.error(`[market] ${symbol} (${pair}) candle subscription downgraded -- scheduling recovery`);
+    console.error(`[market] ${symbol} (${pair}) candle subscription downgraded -- queued for recovery`);
+    this.recoveryQueue.push({ symbol, isRetry: false });
+    void this.drainRecoveryQueue();
+  }
 
-    // At most 2 attempts total -- a bounded retry, not a loop. Past that, give up; the
-    // next real downgrade event (or the initial paced subscribe loop on the next
-    // reconnect) will pick it back up.
-    const attempt = (delayMs: number, isRetry: boolean) => {
-      setTimeout(() => {
-        void this.connection!.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS)
-          .then(() => {
-            this.pendingRecovery.delete(symbol);
-          })
-          .catch((error: unknown) => {
-            console.error(`[market] ${symbol} recovery re-subscribe failed:`, error);
-            if (!isRetry && rateLimitRetryTime(error) !== undefined) {
-              attempt(retryDelayFromError(error, 0), true);
-            } else {
-              this.pendingRecovery.delete(symbol);
-            }
-          });
-      }, delayMs);
-    };
+  /**
+   * Drains queued recoveries ONE AT A TIME, spaced SUBSCRIBE_STAGGER_MS apart -- the
+   * actual fix for a real production incident (2026-08-31): the previous version gave
+   * every downgraded symbol its own fully independent timer (a 65-95s jittered wait,
+   * then retry). That sounds staggered but isn't, because MetaApi's 10-calls/60s
+   * subscribeToMarketData limit is ACCOUNT-WIDE, not per-symbol -- when a whole batch
+   * of pairs downgrades together (exactly what happens at the weekly market reopen,
+   * when every pair's subscription re-establishes near-simultaneously), their
+   * independent jittered retries landed back in roughly the same ~30s window too,
+   * collectively re-tripping the same shared budget and downgrading the same batch
+   * again. Confirmed directly in production logs: an 8-hour, self-sustaining storm
+   * across every monitored pair, still going when this fix was written. A single
+   * serialized queue means only one recovery call is ever in flight account-wide at a
+   * time, regardless of how many symbols need it -- the same principle connect()'s own
+   * initial subscribe loop already uses, just applied to the recovery path too.
+   */
+  private async drainRecoveryQueue(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      // One settle period before the FIRST attempt of this drain cycle -- past a full
+      // rate-limit window (60s) since the downgrade(s) that started it -- paid once per
+      // drain cycle, not stacked per symbol queued into it.
+      await new Promise((resolve) => setTimeout(resolve, 65_000 + Math.random() * 10_000));
 
-    attempt(65_000 + Math.random() * 30_000, false);
+      while (this.recoveryQueue.length > 0) {
+        const next = this.recoveryQueue.shift();
+        if (!next || !this.connection) break;
+        const { symbol, isRetry } = next;
+        try {
+          await this.connection.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS);
+          this.pendingRecovery.delete(symbol);
+        } catch (error: unknown) {
+          console.error(`[market] ${symbol} recovery re-subscribe failed:`, error);
+          // At most 2 attempts total per symbol -- a bounded retry, not a loop. Past
+          // that, give up; the next real downgrade event (or the initial paced
+          // subscribe loop on the next reconnect) will pick it back up.
+          if (!isRetry && rateLimitRetryTime(error) !== undefined) {
+            await new Promise((resolve) => setTimeout(resolve, retryDelayFromError(error, 0)));
+            this.recoveryQueue.push({ symbol, isRetry: true });
+            continue;
+          }
+          this.pendingRecovery.delete(symbol);
+        }
+        if (this.recoveryQueue.length > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
+      }
+    } finally {
+      this.draining = false;
+    }
   }
 
   async onSymbolPricesUpdated(_instanceIndex: string, prices: MetatraderSymbolPrice[]): Promise<void> {
@@ -686,21 +731,6 @@ async function connect(accountKey: AccountKey): Promise<void> {
 
   await connection.connect();
   await connection.waitSynchronized();
-
-  // MetaApi's real documented limit (https://metaapi.cloud/docs/client/rateLimiting/)
-  // for the subscribeToMarketData call itself is 10 requests per account per 60
-  // seconds -- a much stricter, separate limit from the data-streaming credit budget
-  // (126,000 credits/minute) this was originally tuned against by guessing at flat
-  // delays (300ms, then 750ms). Neither guess could ever actually work for more than
-  // 10 pairs: no amount of *short* staggering avoids exceeding "10 calls in any 60s
-  // window" once there are more than 10 pairs to subscribe, since even spreading N>10
-  // calls across a few seconds still lands all of them inside the same 60s window.
-  // Spacing every call 6.5s apart (just past the mathematical minimum of 60/10=6s, for
-  // margin) is what actually respects this for any pair count, not just today's 18 --
-  // slower to finish subscribing at boot/reconnect (~2 minutes for 18 pairs) in
-  // exchange for candle subscriptions that don't get silently downgraded partway
-  // through, which is what "candlesticks not moving" has actually been three times now.
-  const SUBSCRIBE_STAGGER_MS = 6500;
 
   // A terminal that once had more symbols subscribed -- e.g. the 2026-08-28 PAIRS
   // widen-then-revert (see types.ts's own doc comment on that incident) -- keeps
