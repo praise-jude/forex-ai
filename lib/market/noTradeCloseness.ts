@@ -23,8 +23,8 @@ export interface NoTradeCloseness {
  * 0 -- everything (including independent confirmation) already agreed; only waiting
  *      on the next M5 candle to confirm direction.
  * 1 -- the setup already cleared its own confidence bar on its own engine's merits,
- *      just blocked by a genuinely separate, external gate (news timing, or Signer
- *      B's own independent read).
+ *      just blocked by a genuinely separate, external gate (news timing, the
+ *      pre-weekend-close window, or Signer B's own independent read).
  * 2 -- a real, scored setup exists, but the score itself hasn't cleared the bar yet.
  * 3 -- a real directional structure exists (a range, or a trend-aligned SMC zone),
  *      but a secondary numeric condition (ADX floor, volatility, a boundary touch)
@@ -44,6 +44,8 @@ export function rankNoTradeCloseness(reason: NoTradeReason): NoTradeCloseness {
       return { tier: 1, label: `Setup already qualified -- Signer B leans the other way (${reason.signerBConfidence.toFixed(0)}%)` };
     case "news_blackout":
       return { tier: 1, label: `Setup already qualified -- waiting out ${reason.event} (${reason.minutesUntil}m)` };
+    case "weekend_close_blackout":
+      return { tier: 1, label: `Setup already qualified -- holding off, ${reason.hoursUntilClose}h from the weekly close` };
     case "below_threshold": {
       const score = Math.min(reason.direction.total, reason.entry.total);
       return { tier: 2, label: `Scored ${score.toFixed(0)}/100 so far` };

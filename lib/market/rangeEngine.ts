@@ -7,8 +7,9 @@ import { calculateAtr } from "./indicators/atr";
 import { calculateRsi } from "./indicators/rsi";
 import { getActiveSession } from "./sessions";
 import { checkNews, type NewsStatus } from "./newsFilter";
+import { isWithinWeekendCloseWindow, nyWeekdayAndHour } from "./marketHours";
 import { tierOf } from "./confidenceScore";
-import type { HigherTimeframeCandles } from "./signalEngine";
+import { WEEKEND_CLOSE_GATE_HOURS, type HigherTimeframeCandles } from "./signalEngine";
 
 // Enough history for ADX's 2*14-candle warmup (the longest of the indicators used
 // here), with real headroom -- not a claimed-precise minimum, same "documented
@@ -128,6 +129,17 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
 
   const wantsBullish = touchedSupport; // bounced off support -> expect a move back up
   const direction: "long" | "short" = wantsBullish ? "long" : "short";
+
+  // A decisive hold, same shape/reasoning as signalEngine.ts's own weekend_close_blackout
+  // -- a genuine boundary touch was just found, but opening now would sit through the
+  // weekend gap. Driven by the candle's own time, deterministic in backtests.
+  if (isWithinWeekendCloseWindow(pair, lastCandle.time, WEEKEND_CLOSE_GATE_HOURS)) {
+    return noTrade({
+      code: "weekend_close_blackout",
+      impliedDirection: direction,
+      hoursUntilClose: Math.max(0, 17 - nyWeekdayAndHour(lastCandle.time).hour),
+    });
+  }
 
   const rsi = rsiSeries[lastIndex];
   const rsiExtreme = wantsBullish ? !Number.isNaN(rsi) && rsi <= RSI_OVERSOLD : !Number.isNaN(rsi) && rsi >= RSI_OVERBOUGHT;

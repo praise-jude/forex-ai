@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMarketClosed } from "../marketHours";
+import { isMarketClosed, isWithinWeekendCloseWindow } from "../marketHours";
 
 // All instants below are computed against America/New_York, which was EST (UTC-5, no
 // DST) throughout January 2024 -- keeps the UTC arithmetic in this file simple and
@@ -67,5 +67,57 @@ describe("isMarketClosed", () => {
       const wednesday = Date.UTC(2024, 0, 3, 12, 0);
       expect(isMarketClosed("NFLX", wednesday, null)).toBe(true);
     });
+  });
+});
+
+// Same Jan 5 2024 Friday / EST (UTC-5) fixture convention as isMarketClosed above --
+// 5pm NY close is UTC 22:00 that day.
+describe("isWithinWeekendCloseWindow", () => {
+  it("is true right at the start of the window (exactly hoursBefore hours before close)", () => {
+    const threeHoursBefore = Date.UTC(2024, 0, 5, 19, 0); // 2pm NY, hoursBefore=3 -> window starts 2pm
+    expect(isWithinWeekendCloseWindow("EUR/USD", threeHoursBefore, 3)).toBe(true);
+  });
+
+  it("is false just before the window opens", () => {
+    const justBefore = Date.UTC(2024, 0, 5, 18, 59); // 1:59pm NY
+    expect(isWithinWeekendCloseWindow("EUR/USD", justBefore, 3)).toBe(false);
+  });
+
+  it("is true in the middle of the window", () => {
+    const oneHourBefore = Date.UTC(2024, 0, 5, 21, 0); // 4pm NY
+    expect(isWithinWeekendCloseWindow("EUR/USD", oneHourBefore, 2)).toBe(true);
+  });
+
+  it("is false once the market has actually closed (isMarketClosed takes over from here)", () => {
+    const atClose = Date.UTC(2024, 0, 5, 22, 0); // exactly 5pm NY
+    expect(isWithinWeekendCloseWindow("EUR/USD", atClose, 2)).toBe(false);
+  });
+
+  it("is false on an ordinary weekday, no matter the hour", () => {
+    const wednesday = Date.UTC(2024, 0, 3, 21, 0); // 4pm NY Wednesday
+    expect(isWithinWeekendCloseWindow("EUR/USD", wednesday, 2)).toBe(false);
+  });
+
+  it("is false on Saturday/Sunday -- only the Friday-approaching-close side is checked", () => {
+    const saturdayAfternoon = Date.UTC(2024, 0, 6, 20, 0);
+    const sundayEvening = Date.UTC(2024, 0, 7, 21, 0); // 4pm NY Sunday, an hour before reopen
+    expect(isWithinWeekendCloseWindow("EUR/USD", saturdayAfternoon, 2)).toBe(false);
+    expect(isWithinWeekendCloseWindow("EUR/USD", sundayEvening, 2)).toBe(false);
+  });
+
+  it("never treats crypto as within the window -- it trades straight through the weekend", () => {
+    const oneHourBefore = Date.UTC(2024, 0, 5, 21, 0);
+    expect(isWithinWeekendCloseWindow("BTC/USD", oneHourBefore, 2)).toBe(false);
+  });
+
+  it("a zero-hour window never triggers", () => {
+    const atClose = Date.UTC(2024, 0, 5, 22, 0);
+    expect(isWithinWeekendCloseWindow("EUR/USD", atClose, 0)).toBe(false);
+  });
+
+  it("applies to metals/oil the same as forex", () => {
+    const oneHourBefore = Date.UTC(2024, 0, 5, 21, 0);
+    expect(isWithinWeekendCloseWindow("XAU/USD", oneHourBefore, 2)).toBe(true);
+    expect(isWithinWeekendCloseWindow("USOIL", oneHourBefore, 2)).toBe(true);
   });
 });

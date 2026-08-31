@@ -245,6 +245,13 @@ export type NoTradeReason =
   // fires from missing/unavailable news data (see checkNews's own "unavailable" vs
   // "clear" distinction) -- only from a genuinely detected upcoming event.
   | { code: "news_blackout"; impliedDirection: "long" | "short"; event: string; currency: string; minutesUntil: number }
+  // Same "decisive hold" shape as news_blackout above -- a qualifying setup was found,
+  // but this pair is within the pre-weekend-close window (see marketHours.ts's
+  // isWithinWeekendCloseWindow), so opening it now would sit through the weekend gap.
+  // Never fires for crypto (trades straight through the weekend, no gap). Only blocks
+  // NEW entries from the SMC/range engines -- already-open positions and the
+  // TradingView webhook path are both untouched by this gate.
+  | { code: "weekend_close_blackout"; impliedDirection: "long" | "short"; hoursUntilClose: number }
   // SMC found a qualifying setup, but Signer B's independent read (see signerB.ts) had
   // no real lean either way -- a genuine tie/insufficient-data read, not a fabricated
   // agreement. See decisionMatrix.ts.

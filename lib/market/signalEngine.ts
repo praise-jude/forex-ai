@@ -19,6 +19,7 @@ import { calculateSupertrend } from "./indicators/supertrend";
 import { emaTrendDirection } from "./indicators/emaTrend";
 import { computeUsdStrength, usdStrengthSupports as computeUsdStrengthSupport, type UsdStrength } from "./currencyStrength";
 import { checkNews, type NewsStatus } from "./newsFilter";
+import { isWithinWeekendCloseWindow, nyWeekdayAndHour } from "./marketHours";
 import { scoreSignal } from "./confidenceScore";
 import { evaluateSignerB } from "./signerB";
 import { combineSigners } from "./decisionMatrix";
@@ -40,6 +41,13 @@ const MIN_RISK_REWARD_2 = 2.5;
 const FALLBACK_RISK_REWARD_2 = 3;
 const ADX_HARD_MIN = 20;
 const ATR_AVERAGE_PERIOD = 20;
+// How many hours before the Friday 5pm New York weekly close a NEW entry is refused --
+// see marketHours.ts's isWithinWeekendCloseWindow for the reasoning. Env-configurable
+// (not per-account like executionConfig.ts's knobs -- this gates signal GENERATION,
+// before any account/execution decision even exists, the same account-agnostic
+// placement checkNews's own blackout already uses). Exported so rangeEngine.ts's own
+// identical gate reads the exact same value rather than an independently-configured copy.
+export const WEEKEND_CLOSE_GATE_HOURS = Number(process.env.WEEKEND_CLOSE_GATE_HOURS) || 2;
 
 const BULLISH_PATTERNS = new Set(["bullish_engulfing", "pin_bar_bullish", "morning_star"]);
 const BEARISH_PATTERNS = new Set(["bearish_engulfing", "pin_bar_bearish", "evening_star"]);
@@ -252,6 +260,20 @@ export function evaluateSignal(
       event: newsCheck.event,
       currency: newsCheck.currency,
       minutesUntil: newsCheck.minutesUntil,
+    });
+  }
+
+  // Same "decisive hold" shape as the news blackout just above -- a qualifying setup was
+  // found, but opening it now would sit through the weekend gap (see marketHours.ts's
+  // isWithinWeekendCloseWindow). Driven by the CANDLE's own time, not wall-clock Date.now()
+  // -- deterministic in backtests against real historical Fridays, same reasoning as
+  // checkNews(pair, lastCandle.time) just above, and needs no backtest override the way
+  // newsStatus does (no external data source involved, purely a function of the time).
+  if (isWithinWeekendCloseWindow(pair, lastCandle.time, WEEKEND_CLOSE_GATE_HOURS)) {
+    return noTrade({
+      code: "weekend_close_blackout",
+      impliedDirection: direction,
+      hoursUntilClose: Math.max(0, 17 - nyWeekdayAndHour(lastCandle.time).hour),
     });
   }
 

@@ -18,7 +18,10 @@ const NY_TIME_FORMATTER = new Intl.DateTimeFormat("en-US", {
 
 const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-function nyWeekdayAndHour(utcMs: number): { weekday: number; hour: number } {
+// Exported for signalEngine.ts's own weekend-close-blackout hoursUntilClose computation
+// -- avoids a second, independently-maintained copy of this DST-safe NY-local-time
+// conversion (including the ICU midnight-as-"24" normalization below).
+export function nyWeekdayAndHour(utcMs: number): { weekday: number; hour: number } {
   const parts = NY_TIME_FORMATTER.formatToParts(new Date(utcMs));
   const weekdayPart = parts.find((part) => part.type === "weekday")?.value ?? "Sun";
   const hourPart = parts.find((part) => part.type === "hour")?.value;
@@ -50,4 +53,24 @@ export function isMarketClosed(pair: Pair, utcMs: number, lastTickMs?: number | 
   if (isCrypto(pair)) return false;
   if (isStock(pair)) return isTickStale(lastTickMs, utcMs);
   return isForexWeeklyClose(utcMs);
+}
+
+/**
+ * Whether `pair` is within `hoursBefore` hours of the Friday 5pm New York weekly close --
+ * used to gate NEW auto-execution from opening a position that would otherwise sit
+ * through the weekend gap (see signalEngine.ts's own "weekend_close_blackout" no-trade
+ * code). Crypto is exempt (trades straight through the weekend, no gap -- see isCrypto).
+ * Deliberately one-sided: only checks the Friday-approaching-close side, never the
+ * Sunday-just-reopened side -- a position opened moments after Sunday's reopen carries
+ * no more gap risk than any other open position, there's no equivalent "just opened"
+ * danger window the way there is heading into a close. Callers should pass a small
+ * `hoursBefore` (a handful of hours, not a full day) -- this only checks Friday itself,
+ * so a `hoursBefore` large enough to reach back into Thursday would silently stop
+ * working rather than roll over correctly.
+ */
+export function isWithinWeekendCloseWindow(pair: Pair, utcMs: number, hoursBefore: number): boolean {
+  if (isCrypto(pair)) return false;
+  const { weekday, hour } = nyWeekdayAndHour(utcMs);
+  if (weekday !== 5) return false;
+  return hour >= 17 - hoursBefore && hour < 17;
 }
