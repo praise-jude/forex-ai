@@ -22,6 +22,7 @@ import { AutopilotStatus } from "./AutopilotStatus";
 import { RecentAnalysis } from "./RecentAnalysis";
 import { OnDemandSignalWidget } from "./OnDemandSignalWidget";
 import { ClosestToFiringPanel } from "./ClosestToFiringPanel";
+import { TrendDirectionBadge } from "./TrendDirectionBadge";
 
 // A plain animated block instead of a blank box while the chart's own chunk (which
 // bundles lightweight-charts, deliberately kept out of the main bundle) downloads and
@@ -288,7 +289,10 @@ export function Dashboard() {
 
         <section className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-zinc-100">{selectedPair}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-base font-semibold text-zinc-100">{selectedPair}</h2>
+              <TrendDirectionBadge trends={selectedPrediction?.trends} />
+            </div>
             <TimeframeSelector value={selectedTimeframe} onChange={setSelectedTimeframe} />
           </div>
           <div className="mb-3">
