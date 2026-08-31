@@ -11,7 +11,9 @@ export async function GET() {
 // can't go below 0) means this can only ever make execution MORE selective than today's
 // shipped behavior, never less. Nothing here can newly enable real-money trading.
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { minTier?: string; minRiskReward?: number } | null;
+  const body = (await request.json().catch(() => null)) as
+    | { minTier?: string; minRiskReward?: number; calibratedGateEnabled?: boolean }
+    | null;
   if (!body) {
     return Response.json({ error: "invalid_body", message: "Expected a JSON body." }, { status: 400 });
   }
@@ -22,10 +24,14 @@ export async function POST(request: Request) {
   if (body.minRiskReward !== undefined && (!Number.isFinite(body.minRiskReward) || body.minRiskReward < 0)) {
     return Response.json({ error: "invalid_min_risk_reward", message: "minRiskReward must be a number >= 0" }, { status: 400 });
   }
+  if (body.calibratedGateEnabled !== undefined && typeof body.calibratedGateEnabled !== "boolean") {
+    return Response.json({ error: "invalid_calibrated_gate_enabled", message: "calibratedGateEnabled must be a boolean" }, { status: 400 });
+  }
 
   const updated = setExecutionPolicy({
     minTier: body.minTier as "buy" | "strong_buy" | undefined,
     minRiskReward: body.minRiskReward,
+    calibratedGateEnabled: body.calibratedGateEnabled,
   });
   return Response.json(updated);
 }

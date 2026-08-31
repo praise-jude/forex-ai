@@ -54,8 +54,15 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
 
   // Operator-configured selectivity floor, on top of the signal's own already-computed
   // tier/riskReward -- never changes how a signal was scored or how its TP was picked
-  // (see executionPolicy.ts). Exempts TradingView-sourced signals internally.
-  const policyCheck = checkExecutionPolicy(signal, getExecutionPolicy());
+  // (see executionPolicy.ts). Exempts TradingView-sourced signals internally. Calibration
+  // is only computed when the policy's own calibratedGateEnabled toggle is on -- same
+  // "cheap but skip it for accounts that never opted in" posture as the sizing-side
+  // calibration read further below.
+  const policy = getExecutionPolicy();
+  const policyCalibration = policy.calibratedGateEnabled
+    ? getConfidenceCalibration(tradeJournal.all(), defaultCalibrationMinSamples())
+    : undefined;
+  const policyCheck = checkExecutionPolicy(signal, policy, policyCalibration);
   if (!policyCheck.allowed) {
     return { status: "blocked", code: policyCheck.code, reason: policyCheck.reason };
   }

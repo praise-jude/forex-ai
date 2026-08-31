@@ -6,6 +6,7 @@ import { usePolledResource } from "@/lib/hooks/usePolledResource";
 interface ExecutionPolicyResponse {
   minTier: "buy" | "strong_buy";
   minRiskReward: number;
+  calibratedGateEnabled: boolean;
 }
 
 const POLL_INTERVAL_MS = 15000;
@@ -24,6 +25,7 @@ export function ExecutionPolicyControl() {
   );
   const [minTier, setMinTier] = useState<"buy" | "strong_buy">("buy");
   const [minRiskRewardInput, setMinRiskRewardInput] = useState("0");
+  const [calibratedGateEnabled, setCalibratedGateEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -37,6 +39,7 @@ export function ExecutionPolicyControl() {
     if (!data) return;
     setMinTier(data.minTier);
     setMinRiskRewardInput(String(data.minRiskReward));
+    setCalibratedGateEnabled(data.calibratedGateEnabled);
   }, [data]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -53,7 +56,7 @@ export function ExecutionPolicyControl() {
       const res = await fetch("/api/execution-policy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ minTier, minRiskReward }),
+        body: JSON.stringify({ minTier, minRiskReward, calibratedGateEnabled }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -71,7 +74,10 @@ export function ExecutionPolicyControl() {
 
   if (!data) return null;
 
-  const dirty = minTier !== data.minTier || minRiskRewardInput !== String(data.minRiskReward);
+  const dirty =
+    minTier !== data.minTier ||
+    minRiskRewardInput !== String(data.minRiskReward) ||
+    calibratedGateEnabled !== data.calibratedGateEnabled;
 
   return (
     <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-zinc-800/60 px-2.5 py-1.5">
@@ -101,6 +107,21 @@ export function ExecutionPolicyControl() {
         }}
         className="w-16 rounded border border-white/10 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-zinc-500"
       />
+
+      <label
+        className="flex items-center gap-1.5 text-[11px] text-zinc-500"
+        title="Once a tier has enough real closed trades to measure and its measured expectancy has gone negative, hold new signals at that tier until performance recovers."
+      >
+        <input
+          type="checkbox"
+          checked={calibratedGateEnabled}
+          onChange={(e) => {
+            setCalibratedGateEnabled(e.target.checked);
+            setSaved(false);
+          }}
+        />
+        Hold proven-losing tiers
+      </label>
 
       <button
         type="button"

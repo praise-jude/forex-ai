@@ -1,4 +1,5 @@
 import type { ConfidenceTier, Signal } from "./types";
+import type { ConfidenceCalibrationBucket } from "./tradeJournal";
 
 export interface ExecutionPolicyState {
   /** Floor is "buy" -- watch-tier signals are already hard-blocked in executionEngine.ts
@@ -7,6 +8,16 @@ export interface ExecutionPolicyState {
   minTier: "buy" | "strong_buy";
   /** Floor is 0 -- same invariant as minTier. */
   minRiskReward: number;
+  /** Opt-in, defaults OFF -- same posture as executionConfig.ts's confidenceSizingEnabled/
+   * confluenceSizingEnabled, which this reuses the exact same calibration data source as
+   * (getConfidenceCalibration). Those two only ever SIZE differently based on real
+   * performance (clamped [0.5x, 2x], never to zero); this is the stronger, binary sibling
+   * -- once a tier has enough real closed trades to measure (see
+   * defaultCalibrationMinSamples) AND its measured expectancy has gone negative (it's
+   * been a net loser in practice, not just below some arbitrary win-rate guess), new
+   * signals at that tier are held entirely until performance recovers, the same "policy
+   * floor on top of an already-computed signal" shape minTier/minRiskReward already are. */
+  calibratedGateEnabled: boolean;
 }
 
 // Unlike engineMode.ts (which always boots to "analysis" -- reverting to the safe
@@ -26,10 +37,15 @@ function envRRDefault(): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
+function envCalibratedGateDefault(): boolean {
+  return process.env.EXEC_CALIBRATED_GATE_ENABLED === "true";
+}
+
 const globalKey = Symbol.for("forex-ai.executionPolicy");
 type GlobalWithState = typeof globalThis & { [globalKey]?: ExecutionPolicyState };
 const g = globalThis as GlobalWithState;
-const state: ExecutionPolicyState = g[globalKey] ?? (g[globalKey] = { minTier: envTierDefault(), minRiskReward: envRRDefault() });
+const state: ExecutionPolicyState = g[globalKey] ??
+  (g[globalKey] = { minTier: envTierDefault(), minRiskReward: envRRDefault(), calibratedGateEnabled: envCalibratedGateDefault() });
 
 export function getExecutionPolicy(): ExecutionPolicyState {
   return state;
@@ -40,6 +56,7 @@ export function setExecutionPolicy(next: Partial<ExecutionPolicyState>): Executi
   if (next.minRiskReward !== undefined && Number.isFinite(next.minRiskReward) && next.minRiskReward >= 0) {
     state.minRiskReward = next.minRiskReward;
   }
+  if (next.calibratedGateEnabled !== undefined) state.calibratedGateEnabled = next.calibratedGateEnabled;
   return state;
 }
 
@@ -48,11 +65,12 @@ export function setExecutionPolicy(next: Partial<ExecutionPolicyState>): Executi
 export function resetExecutionPolicyForTests(): void {
   state.minTier = envTierDefault();
   state.minRiskReward = envRRDefault();
+  state.calibratedGateEnabled = envCalibratedGateDefault();
 }
 
 const TIER_RANK: Record<ConfidenceTier, number> = { watch: 0, buy: 1, strong_buy: 2 };
 
-export type ExecutionPolicyBlockCode = "below_min_tier" | "below_min_rr";
+export type ExecutionPolicyBlockCode = "below_min_tier" | "below_min_rr" | "below_calibrated_expectancy";
 export type ExecutionPolicyCheckResult = { allowed: true } | { allowed: false; code: ExecutionPolicyBlockCode; reason: string };
 
 /**
@@ -67,10 +85,19 @@ export type ExecutionPolicyCheckResult = { allowed: true } | { allowed: false; c
  * gating it against an SMC-tuned tier floor would silently disable it whenever the
  * operator raises the floor above "buy". Matches autoExecutionListener.ts's own
  * established source==="tradingview" carve-out for the same reason.
+ *
+ * `calibration` is only consulted when policy.calibratedGateEnabled is on -- the caller
+ * (executionEngine.ts) only bothers computing it in that case, same "cheap but no reason
+ * to do it for accounts that never opted in" posture as the sizing feature's own
+ * confidenceSizingEnabled check. Never blocks on a tier that hasn't cleared its own real
+ * sample-size bar yet (bucket.status !== "calibrated") -- an early, thin sample is not
+ * evidence, the same fail-open posture calibratedMultiplier's null fallback in
+ * positionSizing.ts already uses.
  */
 export function checkExecutionPolicy(
   signal: Pick<Signal, "tier" | "riskReward" | "source">,
-  policy: ExecutionPolicyState
+  policy: ExecutionPolicyState,
+  calibration?: ConfidenceCalibrationBucket[]
 ): ExecutionPolicyCheckResult {
   if (signal.source === "tradingview") return { allowed: true };
 
@@ -88,6 +115,17 @@ export function checkExecutionPolicy(
       code: "below_min_rr",
       reason: `risk/reward ${signal.riskReward.toFixed(2)} is below the configured minimum ${policy.minRiskReward.toFixed(2)}`,
     };
+  }
+
+  if (policy.calibratedGateEnabled && (signal.tier === "buy" || signal.tier === "strong_buy")) {
+    const bucket = calibration?.find((b) => b.tier === signal.tier);
+    if (bucket?.status === "calibrated" && bucket.expectancy !== null && bucket.expectancy < 0) {
+      return {
+        allowed: false,
+        code: "below_calibrated_expectancy",
+        reason: `real trade history for tier "${signal.tier}" (${bucket.sampleSize} closed trades) shows negative expectancy (${bucket.expectancy.toFixed(2)}R average) -- held until performance recovers`,
+      };
+    }
   }
 
   return { allowed: true };
