@@ -151,6 +151,23 @@ export function retryDelayFromError(error: unknown, fallbackMs: number): number 
   return Math.min(Math.max(retryAt - Date.now(), 10_000), 20 * 60 * 1000);
 }
 
+// Circuit breaker for onSubscriptionDowngraded -- a real production incident
+// (2026-09-01, ~01:50-01:55) showed downgrade EVENTS arriving 10-24 TIMES PER SECOND,
+// sustained for minutes, with no reconnect/redeploy anywhere in that window. The
+// recovery queue below paces its own subscribeToMarketData calls one per
+// SUBSCRIBE_STAGGER_MS (6.5s) -- physically incapable of producing events that fast,
+// which rules out "our own recovery calls are re-tripping the limit" (the 2026-08-31
+// storm's actual cause) as the mechanism here. This reads as the account's own
+// server-side state thrashing independently of anything this app requests -- continuing
+// to queue paced, correctly-behaved recovery attempts into that is futile at best, and
+// at worst adds marginal load to an already-overloaded account right when it needs
+// quiet. DOWNGRADE_STORM_THRESHOLD (10 events/60s) is set well above any plausible
+// single legitimate downgrade-and-recover cycle (which should be a rare, isolated
+// event) and well below what tonight's actual storm produced.
+const DOWNGRADE_STORM_THRESHOLD = 10;
+const DOWNGRADE_STORM_WINDOW_MS = 60_000;
+const CIRCUIT_COOLDOWN_MS = 20 * 60 * 1000;
+
 class MarketSyncListener extends SynchronizationListener {
   // Symbols with a recovery already queued or in flight -- without this, the SAME
   // symbol getting downgraded again before its first recovery has even run stacks a
@@ -161,6 +178,10 @@ class MarketSyncListener extends SynchronizationListener {
   // was the actual bug.
   private recoveryQueue: { symbol: string; isRetry: boolean }[] = [];
   private draining = false;
+  // Recent downgrade-event timestamps (any symbol), pruned to the last
+  // DOWNGRADE_STORM_WINDOW_MS on every check -- see the circuit-breaker comment above.
+  private downgradeTimestamps: number[] = [];
+  private circuitOpenUntil = 0;
 
   // Only set for the "live" account (see connect() below) -- needed so
   // onSubscriptionDowngraded can re-subscribe a downgraded symbol itself, rather than
@@ -202,6 +223,33 @@ class MarketSyncListener extends SynchronizationListener {
     // THEM to downgrade next, whose own recovery attempts spend more budget in turn --
     // observed hours after the 2026-08-28 revert, with zero PAIRS change involved.
     if (!pair || !PAIRS.includes(pair)) return;
+
+    const now = Date.now();
+    this.downgradeTimestamps.push(now);
+    this.downgradeTimestamps = this.downgradeTimestamps.filter((t) => now - t < DOWNGRADE_STORM_WINDOW_MS);
+
+    if (now < this.circuitOpenUntil) {
+      // Storm already declared -- skip silently-ish (one line, not per-symbol spam).
+      // candleStore keeps serving whatever it last had (stale, never blanked -- same
+      // posture as every other failure path in this file), and the periodic
+      // higherTimeframeRefresh/seed paths are unaffected since they're independent REST
+      // polling, not this subscribe path.
+      console.error(`[market] ${symbol} (${pair}) downgraded -- circuit open until ${new Date(this.circuitOpenUntil).toISOString()}, skipping recovery`);
+      return;
+    }
+
+    if (this.downgradeTimestamps.length > DOWNGRADE_STORM_THRESHOLD) {
+      this.circuitOpenUntil = now + CIRCUIT_COOLDOWN_MS;
+      console.error(
+        `[market] downgrade storm detected (${this.downgradeTimestamps.length} events in the last ${DOWNGRADE_STORM_WINDOW_MS / 1000}s) -- ` +
+          `opening recovery circuit breaker until ${new Date(this.circuitOpenUntil).toISOString()}. This rate is far beyond what this app's own ` +
+          `paced subscribeToMarketData calls (one per ${SUBSCRIBE_STAGGER_MS}ms) could produce, so it isn't this app re-tripping its own limit -- ` +
+          `pausing recovery instead of adding more load to an account that's already thrashing server-side.`
+      );
+      this.recoveryQueue = [];
+      this.pendingRecovery.clear();
+      return;
+    }
 
     if (this.pendingRecovery.has(symbol)) return;
     this.pendingRecovery.add(symbol);
