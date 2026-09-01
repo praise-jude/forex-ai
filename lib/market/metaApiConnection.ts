@@ -25,6 +25,7 @@ import { publishSignal } from "./signalPublisher";
 import { predictionStore } from "./predictionStore";
 import { ALL_PAIRS, brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
+import { startHigherTimeframeRefresh } from "./higherTimeframeRefresh";
 import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
@@ -83,13 +84,23 @@ const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 // entry confirmation (see fetchRecentCandles below) deliberately does NOT change this --
 // it fetches on demand via REST only at the rare moment a signal is about to fire, never
 // a live stream, so it can't reintroduce the same problem.
+//
+// Also no "4h"/"1d" here anymore, for the identical reason, applied later (2026-09-01):
+// higherTimeframeRefresh.ts now keeps candleStore's 4h/1d fresh via periodic REST polling
+// instead. Those two are only ever read for the D1/H4 trend-agreement gate (an EMA20/50
+// read that only meaningfully changes once every few hours, or once a day) -- a live
+// tick-by-tick stream for them was the same class of unused subscription cost 5m was,
+// and this account's total subscription load had grown enough that MetaApi's rate-limit
+// downgrade storms were recurring repeatedly through a live evening even with the
+// serialized recovery queue (metaApiConnection.ts's own MarketSyncListener) correctly
+// containing each individual episode -- that fix makes recovery clean, it can't reduce
+// the account's total subscribed load, which is what actually needed cutting. Only H1
+// stays live among the three higherTimeframes now.
 const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
   { type: "quotes" },
   { type: "candles", timeframe: "15m" },
   { type: "candles", timeframe: "30m" },
   { type: "candles", timeframe: "1h" },
-  { type: "candles", timeframe: "4h" },
-  { type: "candles", timeframe: "1d" },
 ];
 
 // MetaApi's real documented limit (https://metaapi.cloud/docs/client/rateLimiting/) for
@@ -741,6 +752,9 @@ async function connect(accountKey: AccountKey): Promise<void> {
     void seedHistoricalCandles(account).catch((error: unknown) => {
       console.error("[market] historical candle seeding failed entirely (live streaming unaffected):", error);
     });
+    // Idempotent (state.started guard inside) -- safe to call on every connect(),
+    // including a forced reconnect, without spawning a second interval.
+    startHigherTimeframeRefresh(account);
   }
 
   const connection = account.getStreamingConnection();
