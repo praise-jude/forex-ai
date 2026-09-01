@@ -1,5 +1,5 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
-import { checkEngineModeAfterRestart } from "./engineMode";
+import { checkEngineModeAfterRestart, startEngineModeReminder } from "./engineMode";
 import { hydrateAutopilotLock } from "./autopilotLock";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
@@ -65,6 +65,11 @@ export function startMarketEngine(): void {
   checkEngineModeAfterRestart().catch((error: unknown) => {
     console.error("[market] failed to check engine mode across restart:", error);
   });
+  // Idempotent (intervalStarted guard inside) -- safe to call on every boot without
+  // spawning a second interval. See engineMode.ts's own doc comment: the one-time
+  // notification just above is easy to miss on a chaotic night; this is the recurring
+  // backstop that keeps reminding until someone actually re-enables Demo/Live.
+  startEngineModeReminder();
 
   // Fire-and-forget, same posture as every hydrate above -- restores whatever
   // lock/unlock state was last persisted, so a Railway redeploy doesn't silently drop

@@ -82,6 +82,49 @@ export function resetEngineModeForTests(): void {
   state.mode = "analysis";
 }
 
+// A real production pattern (weeks of it, confirmed 2026-09-01): the ONE notification
+// checkEngineModeAfterRestart sends when a restart drops mode out of LIVE/DEMO is easy to
+// lose in a chaotic incident night -- and this app restarts a lot (see
+// metaApiConnection.ts's own connection-instability history). Once missed, nothing ever
+// reminded anyone that autopilot was still sitting in ANALYSIS days later, generating
+// signals but executing nothing -- confirmed directly against production data: mean-
+// reversion signals that should have auto-fired on demo simply never did, for days, with
+// zero notification after the initial one. This is the fix: a recurring, impossible-to-
+// permanently-miss reminder for as long as mode stays in ANALYSIS, instead of a single
+// ping that only fires at the moment of the reset itself.
+const ANALYSIS_REMINDER_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+interface ReminderState {
+  intervalStarted: boolean;
+}
+const reminderGlobalKey = Symbol.for("forex-ai.engineMode.reminder");
+type GlobalWithReminderState = typeof globalThis & { [reminderGlobalKey]?: ReminderState };
+const gReminder = globalThis as GlobalWithReminderState;
+const reminderState: ReminderState = gReminder[reminderGlobalKey] ?? (gReminder[reminderGlobalKey] = { intervalStarted: false });
+
+/**
+ * Called once from bootstrap.ts, right after checkEngineModeAfterRestart. Fires a gentle
+ * "autopilot still isn't auto-trading" push every ANALYSIS_REMINDER_INTERVAL_MS for as
+ * long as mode remains ANALYSIS -- deliberately unconditional on WHY it's ANALYSIS
+ * (a restart reset it, or a human genuinely chose it) rather than trying to track that
+ * distinction: either way, "no auto-trading is currently happening" is the one true fact
+ * worth periodically resurfacing, and a human who deliberately wants ANALYSIS for a while
+ * loses nothing but one push every 6 hours they can ignore. Silent (no-op) the instant
+ * mode moves to DEMO/LIVE -- never fires while auto-trading is actually active.
+ */
+export function startEngineModeReminder(): void {
+  if (reminderState.intervalStarted) return;
+  reminderState.intervalStarted = true;
+  setInterval(() => {
+    if (state.mode !== "analysis") return;
+    void sendNotification({
+      category: "engine_mode_reset",
+      title: "JUDE AI — Autopilot is still Analysis-only",
+      body: "No auto-trading is happening -- Engine Mode has been sitting on Analysis. Enable Demo or Live in Settings if this isn't intentional.",
+    });
+  }, ANALYSIS_REMINDER_INTERVAL_MS);
+}
+
 /** Which account a MANUAL Buy/Sell click targets for a given mode. In ANALYSIS or LIVE
  * mode, a click targets "live" (unchanged from before DEMO mode existed -- ANALYSIS has
  * always meant "no auto-trading, but a manual click still fires for real"). In DEMO
