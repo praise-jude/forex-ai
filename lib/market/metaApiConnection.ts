@@ -26,6 +26,7 @@ import { predictionStore } from "./predictionStore";
 import { ALL_PAIRS, brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
 import { startHigherTimeframeRefresh } from "./higherTimeframeRefresh";
+import { TIMEFRAME_MS } from "./timeframes";
 import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
@@ -648,11 +649,25 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
 }
 
 const DOWNGRADED_REFRESH_INTERVAL_MS = 60_000;
-// Small on purpose -- this only ever needs to catch however many bars closed since the
-// last poll (normally one, at 15m's own cadence), not backfill a real history (that's
-// seedHistoricalCandles/higherTimeframeRefresh's job). A generous-but-cheap margin in
-// case a cycle gets skipped (e.g. this same account's own REST budget briefly busy).
-const DOWNGRADED_REFRESH_BAR_COUNT = 5;
+// A real production bug (2026-09-01): a fixed count of 5 assumed this poll is normally
+// only ever a bar or two behind, which is true for a single short downgrade but silently
+// truncated the catch-up to the last 5 bars regardless of how far behind candleStore
+// actually was -- a symbol repeatedly downgraded/circuit-blocked for hours left a
+// permanent, never-filled hole in the middle of its candle history (visible on the
+// dashboard chart as a gap), because every later poll only ever looked 5 bars back from
+// "now", never far enough to reach the actual last-known bar. Replaced with
+// barsNeededFor below, which sizes the request off the REAL elapsed gap. Capped at 500
+// (comfortably days of 15m bars) purely as a sanity bound against a runaway request, not
+// a value expected to be hit in practice.
+const DOWNGRADED_REFRESH_MAX_BARS = 500;
+const DOWNGRADED_REFRESH_MIN_BARS = 5;
+
+function barsNeededFor(timeframe: Timeframe, lastKnownTime: number): number {
+  if (!Number.isFinite(lastKnownTime)) return DOWNGRADED_REFRESH_MAX_BARS;
+  const elapsedMs = Date.now() - lastKnownTime;
+  const bars = Math.ceil(elapsedMs / TIMEFRAME_MS[timeframe]) + 1; // +1 margin for boundary rounding
+  return Math.min(DOWNGRADED_REFRESH_MAX_BARS, Math.max(DOWNGRADED_REFRESH_MIN_BARS, bars));
+}
 
 /**
  * Keeps the signal engine running for a pair even while its live candle subscription is
@@ -673,9 +688,10 @@ async function refreshDowngradedPairsOnce(account: MetatraderAccount): Promise<v
   for (const pair of downgradedPairs) {
     for (const timeframe of SIGNAL_TIMEFRAMES) {
       try {
-        const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), DOWNGRADED_REFRESH_BAR_COUNT);
         const known = candleStore.get(pair, timeframe);
         const lastKnownTime = known[known.length - 1]?.time ?? -Infinity;
+        const barCount = barsNeededFor(timeframe, lastKnownTime);
+        const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), barCount);
         const fresh = raw
           .map((c): Candle => ({ time: c.time.getTime(), open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume }))
           .filter((c) => c.time > lastKnownTime)

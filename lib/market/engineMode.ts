@@ -92,7 +92,14 @@ export function resetEngineModeForTests(): void {
 // zero notification after the initial one. This is the fix: a recurring, impossible-to-
 // permanently-miss reminder for as long as mode stays in ANALYSIS, instead of a single
 // ping that only fires at the moment of the reset itself.
-const ANALYSIS_REMINDER_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Tightened from 6h -> 30min on 2026-09-01, same day as the fix (see
+// metaApiConnection.ts's circuit breaker) for what was ACTUALLY causing mode to keep
+// dropping: not a flaw in this file, but this account force-restarting constantly from a
+// self-sustaining rate-limit storm. With restarts now rare instead of near-continuous, a
+// tighter reminder costs almost nothing in practice (it only ever fires while mode is
+// genuinely sitting on ANALYSIS) but closes the gap much faster on the rare restart that
+// still does drop it.
+const ANALYSIS_REMINDER_INTERVAL_MS = 30 * 60 * 1000;
 
 interface ReminderState {
   intervalStarted: boolean;
