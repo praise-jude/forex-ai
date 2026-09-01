@@ -53,20 +53,50 @@ async function getHistoricalCandlesWithRetry(
   }
 }
 
+export interface BacktestCredentials {
+  token: string;
+  accountId: string;
+}
+
+/**
+ * Pure env-var selection, split out from getBacktestAccount so the demo-preference
+ * logic below is directly testable without mocking the MetaApi SDK itself.
+ *
+ * Prefers DEMO credentials over LIVE when both are configured -- a real production
+ * incident (2026-09-01) showed a backtest wasn't as fully decoupled from live connection
+ * state as getBacktestAccount's own comment below claims: with realistic:true,
+ * loadSymbolSpecs opens its own genuine streaming/RPC connection
+ * (account.getRPCConnection(), a real subscribeToMarketData-based session) to whichever
+ * account this resolves to, and that connection competes for the exact same account-wide
+ * rate-limit budget the live production streaming connection uses -- confirmed directly:
+ * a backtest run's loadSymbolSpecs connection triggered live subscription downgrades
+ * within seconds of connecting, purely from opening a second client against the same
+ * account. Symbol specs and candle history are properties of the broker/symbol, not the
+ * specific account, so running against demo produces identical results -- this is a pure
+ * safety change, never a correctness one. Falls back to LIVE only when demo isn't
+ * configured, so backtesting still works for a setup with no demo account -- at that
+ * point the caller is knowingly accepting the live-contention risk this can no longer
+ * route around.
+ */
+export function resolveBacktestCredentials(env: Record<string, string | undefined>): BacktestCredentials {
+  const hasDemo = Boolean(env.METAAPI_DEMO_TOKEN && env.METAAPI_DEMO_ACCOUNT_ID);
+  const token = hasDemo ? env.METAAPI_DEMO_TOKEN : env.METAAPI_TOKEN;
+  const accountId = hasDemo ? env.METAAPI_DEMO_ACCOUNT_ID : env.METAAPI_ACCOUNT_ID;
+  if (!token || !accountId) {
+    throw new Error("METAAPI_TOKEN/METAAPI_ACCOUNT_ID (or METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID) must be set to run a backtest.");
+  }
+  return { token, accountId };
+}
+
 /**
  * A fresh, read-only account handle for historical data only -- deliberately NEVER
- * obtained through metaApiConnection.ts's stored streaming connection. This keeps a
- * running backtest fully decoupled from live connection state: it can never interfere
- * with live streaming/execution, and metaApiConnection.ts needs no changes at all to
- * support it. getHistoricalCandles is plain REST regardless of connection/streaming
- * state, so no .connect()/.waitSynchronized() call is needed on this handle.
+ * obtained through metaApiConnection.ts's stored streaming connection. getHistoricalCandles
+ * itself is plain REST regardless of connection/streaming state, so that part genuinely
+ * never touches live connection state -- see resolveBacktestCredentials above for the
+ * one real exception (realistic:true's loadSymbolSpecs) and how it's now routed around.
  */
 export async function getBacktestAccount(): Promise<MetatraderAccount> {
-  const token = process.env.METAAPI_TOKEN;
-  const accountId = process.env.METAAPI_ACCOUNT_ID;
-  if (!token || !accountId) {
-    throw new Error("METAAPI_TOKEN/METAAPI_ACCOUNT_ID must be set to run a backtest.");
-  }
+  const { token, accountId } = resolveBacktestCredentials(process.env);
   const api = new MetaApi(token);
   return api.metatraderAccountApi.getAccount(accountId);
 }
