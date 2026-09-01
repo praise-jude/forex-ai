@@ -8,6 +8,7 @@ import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 // Type-only import -- erased at build time, so this never pulls backtestRunner.ts's
 // real node:fs/MetaApi-SDK code into the client bundle.
 import type { BacktestJob, BacktestRequest } from "@/lib/market/backtest/backtestRunner";
+import type { ScoreRangeBucket } from "@/lib/market/backtest/backtestStats";
 
 const POLL_INTERVAL_MS = 3000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -37,6 +38,57 @@ function StatTile({ label, value, hint, tone }: { label: string; value: string; 
       </p>
       {hint && <p className="mt-0.5 text-[10px] text-zinc-500">{hint}</p>}
     </div>
+  );
+}
+
+/** Formats a closed timestamp the same short way the whole app already does elsewhere
+ * (SignalDiagnosticsPanel's history rows) -- date + time, no year (a backtest window is
+ * always well within the current year's context on screen). */
+function formatClosedAt(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** One score-range bucket's row, expandable to list the actual trades behind its
+ * aggregate stats -- "80-89: 100% win rate, +1.48R" on its own can't answer "which
+ * trade was that", so this names them: pair, direction, when it closed, and its own R. */
+function ScoreRangeRow({ bucket }: { bucket: ScoreRangeBucket }) {
+  const [open, setOpen] = useState(false);
+  const hasTrades = bucket.count > 0;
+
+  return (
+    <>
+      <tr
+        className={`border-t border-white/5 ${hasTrades ? "cursor-pointer hover:bg-white/5" : ""}`}
+        onClick={hasTrades ? () => setOpen((o) => !o) : undefined}
+      >
+        <td className="py-1">
+          {hasTrades && <span className="mr-1 inline-block w-3 text-zinc-500">{open ? "▾" : "▸"}</span>}
+          {bucket.range}
+        </td>
+        <td className="py-1 tabular-nums">{bucket.count}</td>
+        <td className="py-1 tabular-nums">{bucket.count === 0 ? "—" : `${bucket.winRate.toFixed(0)}%`}</td>
+        <td className="py-1 tabular-nums">{bucket.averageR === null ? "—" : `${bucket.averageR >= 0 ? "+" : ""}${bucket.averageR.toFixed(2)}R`}</td>
+      </tr>
+      {open && hasTrades && (
+        <tr className="border-t border-white/5">
+          <td colSpan={4} className="py-1.5 pl-4">
+            <div className="flex flex-col gap-1">
+              {bucket.trades.map((trade, i) => (
+                <div key={i} className="flex items-center justify-between gap-3 text-[11px]">
+                  <span className="text-zinc-300">
+                    {trade.pair} <span className="text-zinc-500">{trade.direction === "long" ? "buy" : "sell"}</span>
+                  </span>
+                  <span className="text-zinc-500">{formatClosedAt(trade.closedAt)}</span>
+                  <span className={trade.profit >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                    {trade.rMultiple === null ? "—" : `${trade.rMultiple >= 0 ? "+" : ""}${trade.rMultiple.toFixed(2)}R`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -270,12 +322,7 @@ function ResultsView({ job }: { job: BacktestJob }) {
           </thead>
           <tbody className="text-zinc-300">
             {scoreRangeBreakdown.map((bucket) => (
-              <tr key={bucket.range} className="border-t border-white/5">
-                <td className="py-1">{bucket.range}</td>
-                <td className="py-1 tabular-nums">{bucket.count}</td>
-                <td className="py-1 tabular-nums">{bucket.count === 0 ? "—" : `${bucket.winRate.toFixed(0)}%`}</td>
-                <td className="py-1 tabular-nums">{bucket.averageR === null ? "—" : `${bucket.averageR >= 0 ? "+" : ""}${bucket.averageR.toFixed(2)}R`}</td>
-              </tr>
+              <ScoreRangeRow key={bucket.range} bucket={bucket} />
             ))}
           </tbody>
         </table>

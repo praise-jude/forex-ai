@@ -211,11 +211,25 @@ export function computeStreaks(entries: JournalEntry[]): StreakStats {
   return { maxConsecutiveWins: maxWins, maxConsecutiveLosses: maxLosses };
 }
 
+/** Just enough to identify which real trade contributed to a bucket's aggregate stats --
+ * the aggregate numbers alone (count/winRate/averageR) can't answer "which trade was
+ * that", so this is a full-fidelity list, not another summary. */
+export interface ScoreRangeBucketTrade {
+  pair: Pair;
+  direction: "long" | "short";
+  closedAt: number;
+  rMultiple: number | null;
+  profit: number;
+}
+
 export interface ScoreRangeBucket {
   range: string;
   count: number;
   winRate: number;
   averageR: number | null;
+  /** Most recent first -- same ordering convention as everywhere else a trade list is
+   * shown in this app (SignalDiagnosticsPanel's history, tradeJournal itself). */
+  trades: ScoreRangeBucketTrade[];
 }
 
 const SCORE_RANGES: { range: string; min: number; max: number }[] = [
@@ -234,6 +248,9 @@ export function computeScoreRangeBreakdown(entries: JournalEntry[]): ScoreRangeB
     const wins = bucket.filter((e) => e.profit > 0).length;
     const rValues = bucket.map((e) => e.rMultiple).filter((r): r is number => r !== null);
     const averageR = rValues.length === 0 ? null : rValues.reduce((sum, r) => sum + r, 0) / rValues.length;
-    return { range, count: bucket.length, winRate: bucket.length === 0 ? 0 : (wins / bucket.length) * 100, averageR };
+    const trades = bucket
+      .map((e) => ({ pair: e.pair, direction: e.direction, closedAt: e.closedAt, rMultiple: e.rMultiple, profit: e.profit }))
+      .sort((a, b) => b.closedAt - a.closedAt);
+    return { range, count: bucket.length, winRate: bucket.length === 0 ? 0 : (wins / bucket.length) * 100, averageR, trades };
   });
 }

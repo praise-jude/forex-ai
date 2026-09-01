@@ -208,14 +208,42 @@ describe("computeScoreRangeBreakdown", () => {
     ];
     const breakdown = computeScoreRangeBreakdown(entries);
     expect(breakdown).toEqual([
-      { range: "80-89", count: 1, winRate: 100, averageR: 2 },
-      { range: "90-94", count: 1, winRate: 0, averageR: -1 },
-      { range: "95-100", count: 1, winRate: 100, averageR: 2 },
+      {
+        range: "80-89",
+        count: 1,
+        winRate: 100,
+        averageR: 2,
+        trades: [{ pair: "EUR/USD", direction: "long", closedAt: 1000, rMultiple: 2, profit: 100 }],
+      },
+      {
+        range: "90-94",
+        count: 1,
+        winRate: 0,
+        averageR: -1,
+        trades: [{ pair: "EUR/USD", direction: "long", closedAt: 1000, rMultiple: -1, profit: -50 }],
+      },
+      {
+        range: "95-100",
+        count: 1,
+        winRate: 100,
+        averageR: 2,
+        trades: [{ pair: "EUR/USD", direction: "long", closedAt: 1000, rMultiple: 2, profit: 100 }],
+      },
     ]);
   });
 
   it("excludes entries with no context from every bucket", () => {
     const breakdown = computeScoreRangeBreakdown([entry({ context: null })]);
-    expect(breakdown.every((b) => b.count === 0)).toBe(true);
+    expect(breakdown.every((b) => b.count === 0 && b.trades.length === 0)).toBe(true);
+  });
+
+  it("lists trades most-recent-first within a bucket", () => {
+    const entries = [
+      entry({ pair: "EUR/USD", closedAt: 1000, context: context({ confidence: 82 }) }),
+      entry({ pair: "GBP/USD", closedAt: 3000, context: context({ confidence: 85 }) }),
+      entry({ pair: "USD/JPY", closedAt: 2000, context: context({ confidence: 88 }) }),
+    ];
+    const bucket = computeScoreRangeBreakdown(entries).find((b) => b.range === "80-89")!;
+    expect(bucket.trades.map((t) => t.pair)).toEqual(["GBP/USD", "USD/JPY", "EUR/USD"]);
   });
 });

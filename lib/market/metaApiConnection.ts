@@ -697,7 +697,19 @@ async function refreshDowngradedPairsOnce(account: MetatraderAccount): Promise<v
         const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), barCount);
         const fresh = raw
           .map((c): Candle => ({ time: c.time.getTime(), open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume }))
-          .filter((c) => c.time > lastKnownTime)
+          // >= , not > : a real production bug (2026-09-01) -- the live tick stream can
+          // lose its subscription mid-bar, freezing whatever partial/single-tick OHLC it
+          // had captured so far as that bar's permanent value in candleStore. A strict
+          // "> lastKnownTime" filter here skips exactly that boundary bar forever (it's
+          // not NEWER than what's already stored, just wrong), so the chart kept showing
+          // a visibly broken flat/degenerate candle at the exact downgrade moment even
+          // after everything past it recovered normally. Re-including it lets
+          // candleStore.upsert (which already replaces same-timestamp entries, see its
+          // own doc comment) correct it with the broker's authoritative final OHLC.
+          // ingestCandle's own barJustClosed check (candle.time > priorLast.time) still
+          // reads false for this exact bar, so this corrects the DATA without
+          // re-triggering a second signal evaluation for a bar that already had one.
+          .filter((c) => c.time >= lastKnownTime)
           .sort((a, b) => a.time - b.time);
         // Sequential, oldest-first -- if more than one bar closed since the last poll,
         // each must be evaluated in the order it actually happened, not concurrently.
