@@ -254,7 +254,7 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
           <span className="font-medium">Realistic mode</span>
           <span> — simulates break-even/trailing-stop, real lot-size-based sizing, and spread cost, using this account&apos;s actual configured triggers. Slower to start (fetches real symbol specs first).</span>
           {demoConfigured === false && (
-            <span className="mt-0.5 block text-amber-400">
+            <span className="mt-0.5 block text-zinc-500">
               Disabled — no demo account is configured to safely route this to. This mode opens a real connection that would go
               straight to your live account instead, which has disrupted live trading before. Configuring
               METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID again re-enables it.
