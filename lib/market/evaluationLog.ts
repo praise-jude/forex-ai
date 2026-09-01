@@ -4,6 +4,7 @@ import { getOptionalDb } from "../db/optionalClient";
 import { evaluationLog as evaluationLogTable } from "../db/tradingSchema";
 import type { Pair, SignalEvaluation, Timeframe } from "./types";
 import { pipelineStages, type PipelineStage } from "./noTradeReason";
+import { sendNotification } from "./pushNotifier";
 
 // How long a row survives before startEvaluationLogPruning removes it. Generous enough
 // to browse "what happened this week", bounded enough that this genuinely high-volume
@@ -45,6 +46,11 @@ export async function logEvaluation(
   evaluation: SignalEvaluation,
   time: number
 ): Promise<void> {
+  // Recorded unconditionally, before the DB-availability check below -- the health
+  // monitor tracks that evaluations are actually HAPPENING, which has nothing to do
+  // with whether DATABASE_URL is configured to persist them.
+  recordHeartbeat();
+
   const db = getOptionalDb();
   if (!db) return;
 
@@ -133,4 +139,69 @@ export function startEvaluationLogPruning(): void {
   setInterval(() => {
     void pruneOnce().catch((error: unknown) => console.error("[evaluationLog] pruning failed:", error));
   }, PRUNE_INTERVAL_MS);
+}
+
+// --- Health monitor: catches the analysis pipeline going silent even when the MT5
+// connection itself reads perfectly healthy (an uncaught exception or stuck async chain
+// inside ingestCandle, as opposed to connectionWatchdog.ts's own concern -- a dead
+// broker connection). SIGNAL_TIMEFRAMES (15m/30m/1h) means SOME pair's SMC evaluation
+// should complete at least every 15 minutes in ordinary operation (15m candles across
+// all 9 pairs close on the same wall-clock boundaries); a 25-minute silence is already
+// well beyond that with real margin, and 10-minute checks catch it reasonably promptly
+// without being wasteful.
+
+const HEALTH_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const STALL_THRESHOLD_MS = 25 * 60 * 1000;
+
+interface HealthState {
+  lastEvaluationAt: number | null;
+  bootedAt: number;
+  alertActive: boolean;
+  intervalStarted: boolean;
+}
+const healthGlobalKey = Symbol.for("forex-ai.evaluationLog.healthState");
+type GlobalWithHealthState = typeof globalThis & { [healthGlobalKey]?: HealthState };
+const gHealth = globalThis as GlobalWithHealthState;
+const healthState: HealthState =
+  gHealth[healthGlobalKey] ?? (gHealth[healthGlobalKey] = { lastEvaluationAt: null, bootedAt: Date.now(), alertActive: false, intervalStarted: false });
+
+/** Called from every logEvaluation, unconditionally -- the one place in the codebase
+ * that fires on every completed SMC/range evaluation, which is exactly the heartbeat
+ * this monitor needs. Also clears (and announces the recovery of) an active alert, the
+ * same "tell me the moment it's not wrong anymore" posture positionRiskNarration.ts
+ * already established for Caution/Warning clearing. */
+function recordHeartbeat(): void {
+  const wasAlerting = healthState.alertActive;
+  healthState.lastEvaluationAt = Date.now();
+  healthState.alertActive = false;
+  if (wasAlerting) {
+    void sendNotification({
+      category: "engine_health",
+      title: "JUDE AI — Autopilot analysis resumed",
+      body: "The signal engine is completing evaluations again after a gap.",
+    });
+  }
+}
+
+function checkEvaluationHealth(): void {
+  if (healthState.alertActive) return;
+  const baseline = healthState.lastEvaluationAt ?? healthState.bootedAt;
+  const stalledMs = Date.now() - baseline;
+  if (stalledMs <= STALL_THRESHOLD_MS) return;
+
+  healthState.alertActive = true;
+  const stalledMinutes = Math.round(stalledMs / 60000);
+  void sendNotification({
+    category: "engine_health",
+    title: "JUDE AI — Autopilot health warning",
+    body: `No market analysis has completed in over ${stalledMinutes} minutes, even though this can normally be expected every 15. The signal engine may be stuck -- check the MT5 connection status on the dashboard.`,
+  });
+}
+
+/** Called once from bootstrap.ts. Idempotent, same pattern as every other periodic task
+ * in this file. */
+export function startEvaluationHealthMonitor(): void {
+  if (healthState.intervalStarted) return;
+  healthState.intervalStarted = true;
+  setInterval(checkEvaluationHealth, HEALTH_CHECK_INTERVAL_MS);
 }

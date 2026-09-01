@@ -496,6 +496,14 @@ export interface NotificationPrefs {
    * informational progress toward data that isn't wired into sizing until it clears that
    * bar (see positionSizing.ts's confidenceAdjustedRiskPct). Defaults ON. */
   calibrationUpdates: boolean;
+  /** Fires when the signal engine itself has gone quiet -- no evaluation (SMC or range)
+   * has completed in far longer than any real candle-close cadence would ever explain.
+   * Distinct from connectionAlerts: the MT5 connection can read perfectly healthy while
+   * the analysis pipeline itself has silently stalled (an uncaught exception, a stuck
+   * async chain) -- see evaluationLog.ts's startEvaluationHealthMonitor. Defaults ON:
+   * this is the one alert that catches "autopilot looks fine but has quietly stopped
+   * thinking", which nothing else on the dashboard would otherwise surface. */
+  engineHealthAlerts: boolean;
   minConfidence: number;
 }
 
@@ -516,6 +524,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   autopilotBlocked: true,
   sessionAlerts: true,
   calibrationUpdates: true,
+  engineHealthAlerts: true,
   minConfidence: 80,
 };
 
@@ -532,7 +541,8 @@ export type NotificationCategory =
   | "engine_mode_reset"
   | "signal_blocked"
   | "session_alert"
-  | "calibration_update";
+  | "calibration_update"
+  | "engine_health";
 
 export type DevicePlatform = "ios" | "android" | "web";
 

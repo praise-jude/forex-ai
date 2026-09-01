@@ -1,6 +1,6 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
 import { checkEngineModeAfterRestart, startEngineModeReminder } from "./engineMode";
-import { startEvaluationLogPruning } from "./evaluationLog";
+import { startEvaluationLogPruning, startEvaluationHealthMonitor } from "./evaluationLog";
 import { hydrateAutopilotLock } from "./autopilotLock";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
@@ -75,6 +75,9 @@ export function startMarketEngine(): void {
   // days (see evaluationLog.ts) so this genuinely high-volume table never grows without
   // bound.
   startEvaluationLogPruning();
+  // Idempotent, same pattern -- alerts if the signal engine itself goes quiet (see
+  // evaluationLog.ts's own doc comment on why this is distinct from connection health).
+  startEvaluationHealthMonitor();
 
   // Fire-and-forget, same posture as every hydrate above -- restores whatever
   // lock/unlock state was last persisted, so a Railway redeploy doesn't silently drop
