@@ -168,6 +168,21 @@ const DOWNGRADE_STORM_THRESHOLD = 10;
 const DOWNGRADE_STORM_WINDOW_MS = 60_000;
 const CIRCUIT_COOLDOWN_MS = 20 * 60 * 1000;
 
+// Pairs currently missing a live candle subscription -- populated by every
+// onSubscriptionDowngraded event regardless of whether the circuit breaker above is open
+// (a pair queued for normal recovery is JUST as unable to fire signals in the meantime as
+// one the breaker is holding off on), cleared when that pair's subscription is confirmed
+// restored (drainRecoveryQueue's success path) or a brand-new connection starts (connect()
+// below). Read by refreshDowngradedPairsOnce so a downgraded pair keeps getting evaluated
+// for signals off REST-polled candles instead of going dark until its live subscription
+// comes back -- see that function's own doc comment for the full reasoning. globalThis-
+// keyed for the same cross-module-instance reason every other piece of shared state in
+// this file is.
+const downgradedPairsKey = Symbol.for("forex-ai.metaApiConnection.downgradedPairs");
+type GlobalWithDowngradedPairs = typeof globalThis & { [downgradedPairsKey]?: Set<Pair> };
+const gDowngradedPairs = globalThis as GlobalWithDowngradedPairs;
+const downgradedPairs: Set<Pair> = gDowngradedPairs[downgradedPairsKey] ?? (gDowngradedPairs[downgradedPairsKey] = new Set());
+
 class MarketSyncListener extends SynchronizationListener {
   // Symbols with a recovery already queued or in flight -- without this, the SAME
   // symbol getting downgraded again before its first recovery has even run stacks a
@@ -223,6 +238,7 @@ class MarketSyncListener extends SynchronizationListener {
     // THEM to downgrade next, whose own recovery attempts spend more budget in turn --
     // observed hours after the 2026-08-28 revert, with zero PAIRS change involved.
     if (!pair || !PAIRS.includes(pair)) return;
+    downgradedPairs.add(pair);
 
     const now = Date.now();
     this.downgradeTimestamps.push(now);
@@ -291,6 +307,8 @@ class MarketSyncListener extends SynchronizationListener {
         try {
           await this.connection.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS);
           this.pendingRecovery.delete(symbol);
+          const recoveredPair = pairForBrokerSymbol(symbol);
+          if (recoveredPair) downgradedPairs.delete(recoveredPair);
         } catch (error: unknown) {
           console.error(`[market] ${symbol} recovery re-subscribe failed:`, error);
           // At most 2 attempts total per symbol -- a bounded retry, not a loop. Past
@@ -342,195 +360,7 @@ class MarketSyncListener extends SynchronizationListener {
         tickVolume: raw.tickVolume,
       };
 
-      // Snapshot the series as it stood before this update: if a new bar just
-      // started, this snapshot's last element is the bar that just closed, which
-      // is exactly what the signal engine should evaluate (never the forming bar).
-      const priorSeries = candleStore.get(pair, timeframe);
-      const priorLast = priorSeries[priorSeries.length - 1];
-      const barJustClosed = Boolean(priorLast) && candle.time > (priorLast?.time ?? -Infinity);
-
-      candleStore.upsert(pair, timeframe, candle);
-      eventBus.publish({ type: "candle", pair, timeframe, candle });
-
-      if (barJustClosed && SIGNAL_TIMEFRAMES.includes(timeframe)) {
-        const higherTimeframes = {
-          h1: candleStore.get(pair, "1h"),
-          h4: candleStore.get(pair, "4h"),
-          d1: candleStore.get(pair, "1d"),
-        };
-        let evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
-        // M5 entry confirmation -- a voluntarily-added quality gate on top of
-        // everything evaluateSignal itself already checks (see m5Confirmation.ts).
-        // Only ever runs on the rare candle that would otherwise become a signal, an
-        // on-demand REST fetch, never a live subscription (see fetchRecentCandles's
-        // own doc comment for why that distinction matters here specifically).
-        if (evaluation.status === "signal" && loadExecutionConfig(this.accountKey).m5ConfirmationEnabled) {
-          const m5Candles = await fetchRecentCandles(pair, "5m", M5_CONFIRMATION_BARS, this.accountKey);
-          if (!confirmsDirection(m5Candles, evaluation.signal.direction)) {
-            evaluation = { status: "no_trade", reason: { code: "m5_not_confirmed", impliedDirection: evaluation.signal.direction } };
-          }
-        }
-        const time = Date.now();
-        // Same emaTrendDirection call signalEngine.ts's own hard trend-agreement gate
-        // already makes on these exact series -- recomputed here (cheap: two EMAs over
-        // <=300 candles) so the dashboard can show D1/H4/H1 bias for every update, not
-        // just the ones a signal happens to fire or get blocked on for that reason.
-        const trends = {
-          d1: emaTrendDirection(higherTimeframes.d1),
-          h4: emaTrendDirection(higherTimeframes.h4),
-          h1: emaTrendDirection(higherTimeframes.h1),
-          d1Gap: emaTrendGapPct(higherTimeframes.d1),
-          h4Gap: emaTrendGapPct(higherTimeframes.h4),
-          h1Gap: emaTrendGapPct(higherTimeframes.h1),
-        };
-        // Computed independently of evaluateSignal (see marketRegime.ts's own doc
-        // comment) -- reuses the exact same closed-candle series and news check, never
-        // gates or alters `evaluation` itself, just explains the backdrop it happened
-        // against.
-        const lastClosed = priorSeries[priorSeries.length - 1];
-        const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
-        predictionStore.set(pair, timeframe, { pair, timeframe, source: "smc", evaluation, time, regime, trends });
-        eventBus.publish({ type: "prediction", pair, timeframe, source: "smc", evaluation, time, regime, trends });
-
-        // Position-risk narration -- only on the freshest timeframe (15m), so this
-        // doesn't fire the same check three times per candle-close cascade (15m/30m/1h
-        // can all close together on some minute boundaries). "live" only, matching this
-        // whole listener's own top-of-function guard -- demo never streams candles.
-        // Purely additive: narrates via a new event + notification, never touches
-        // sizing, stop loss, or execution (see positionRiskNarration.ts's own doc
-        // comment).
-        if (timeframe === "15m") {
-          for (const position of getOpenPositions("live")) {
-            if (position.pair !== pair) continue;
-            const assessment = assessPositionRisk(position.direction, regime, trends);
-            const previousLevel = getLastPositionRiskLevel(position.id);
-            setLastPositionRiskLevel(position.id, assessment.level);
-            if (previousLevel === assessment.level) continue; // no real change -- see positionRiskStore.ts
-            eventBus.publish({
-              type: "position_risk",
-              positionId: position.id,
-              pair: position.pair,
-              direction: position.direction,
-              level: assessment.level,
-              reason: assessment.reason,
-              time,
-            });
-            if (assessment.level !== "aligned") {
-              void sendNotification({
-                category: "risk_alert",
-                title: `JUDE AI — ${assessment.level === "warning" ? "Warning" : "Caution"}: ${position.pair}`,
-                body: assessment.reason,
-                data: { positionId: position.id, pair: position.pair },
-              });
-            } else if (previousLevel !== undefined) {
-              // The other half of a real user request: not just "something's wrong" but
-              // "tell me the moment it's not wrong anymore". previousLevel !== undefined
-              // excludes a position's very first assessment (nothing to have cleared from
-              // yet) -- only a genuine caution/warning -> aligned transition notifies.
-              void sendNotification({
-                category: "risk_alert",
-                title: `JUDE AI — Cleared: ${position.pair}`,
-                body: `The ${previousLevel} on your ${position.direction === "long" ? "BUY" : "SELL"} position has cleared -- market conditions are aligned again.`,
-                data: { positionId: position.id, pair: position.pair },
-              });
-            }
-          }
-        }
-
-        if (evaluation.status === "signal") {
-          publishSignal(evaluation.signal);
-          // Snapshot the decision context now, while it's still real -- signalStore
-          // itself prunes after 4 hours (far shorter than a trade can stay open), which
-          // is exactly why the trade journal can't just read it back from there later.
-          const signal = evaluation.signal;
-          tradeJournal.recordSignalContext({
-            signalId: signal.id,
-            pair: signal.pair,
-            timeframe: signal.timeframe,
-            direction: signal.direction,
-            regime,
-            setupQuality: scoreSetupQuality(signal, regime),
-            confidence: signal.confidence,
-            signerBDirection: signal.signerBDirection,
-            signerBConfidence: signal.signerBConfidence,
-            adx: signal.adx,
-            rsi: signal.rsi,
-            newsStatus: signal.newsStatus,
-            session: signal.session,
-            createdAt: signal.createdAt,
-            confluences: signal.confluences,
-            source: signal.source,
-          });
-        }
-      }
-
-      // rangeEngine.ts's mean-reversion engine, evaluated independently alongside SMC
-      // on the exact same closed candle -- 15m only for now (see rangeEngine.ts's own
-      // doc comment). No M5 confirmation gate, no trade-journal setup-quality scoring
-      // (scoreSetupQuality is SMC-shaped -- e.g. it rewards a "strong_uptrend"/
-      // "strong_downtrend" regime, the opposite of what this engine wants, so applying
-      // it here would produce a meaningless score, not a real one -- SignalContext.
-      // setupQuality is left undefined below for exactly this reason). Decision context
-      // IS still recorded (source: "mean_reversion"), same as the SMC block above -- this
-      // is what makes getPerformanceBreakdown's "source" dimension (SMC vs. range engine
-      // performance, compared head to head) and getConfidenceCalibration/
-      // getSignerBCalibration possible for range-engine trades at all; before this they
-      // closed into the journal with context: null, same as a context-less TradingView
-      // entry, and were invisible to every context-based breakdown.
-      if (barJustClosed && timeframe === "15m") {
-        const rangeEvaluation = evaluateRangeSignal(priorSeries, pair, timeframe);
-        const rangeTime = Date.now();
-        const rangeLastClosed = priorSeries[priorSeries.length - 1];
-        const rangeRegime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, rangeLastClosed.time));
-        const rangeTrends = {
-          d1: emaTrendDirection(candleStore.get(pair, "1d")),
-          h4: emaTrendDirection(candleStore.get(pair, "4h")),
-          h1: emaTrendDirection(candleStore.get(pair, "1h")),
-          d1Gap: emaTrendGapPct(candleStore.get(pair, "1d")),
-          h4Gap: emaTrendGapPct(candleStore.get(pair, "4h")),
-          h1Gap: emaTrendGapPct(candleStore.get(pair, "1h")),
-        };
-        predictionStore.set(pair, timeframe, {
-          pair,
-          timeframe,
-          source: "mean_reversion",
-          evaluation: rangeEvaluation,
-          time: rangeTime,
-          regime: rangeRegime,
-          trends: rangeTrends,
-        });
-        eventBus.publish({
-          type: "prediction",
-          pair,
-          timeframe,
-          source: "mean_reversion",
-          evaluation: rangeEvaluation,
-          time: rangeTime,
-          regime: rangeRegime,
-          trends: rangeTrends,
-        });
-        if (rangeEvaluation.status === "signal") {
-          publishSignal(rangeEvaluation.signal);
-          const rangeSignal = rangeEvaluation.signal;
-          tradeJournal.recordSignalContext({
-            signalId: rangeSignal.id,
-            pair: rangeSignal.pair,
-            timeframe: rangeSignal.timeframe,
-            direction: rangeSignal.direction,
-            regime: rangeRegime,
-            confidence: rangeSignal.confidence,
-            signerBDirection: rangeSignal.signerBDirection,
-            signerBConfidence: rangeSignal.signerBConfidence,
-            adx: rangeSignal.adx,
-            rsi: rangeSignal.rsi,
-            newsStatus: rangeSignal.newsStatus,
-            session: rangeSignal.session,
-            createdAt: rangeSignal.createdAt,
-            confluences: rangeSignal.confluences,
-            source: rangeSignal.source,
-          });
-        }
-      }
+      await ingestCandle(pair, timeframe, candle);
     }
   }
 
@@ -609,6 +439,277 @@ class MarketSyncListener extends SynchronizationListener {
       });
     }
   }
+}
+
+/**
+ * The actual candle-close processing pipeline -- signal evaluation (SMC + mean-reversion),
+ * trend/regime computation, position-risk narration, trade-journal context recording.
+ * Extracted out of MarketSyncListener.onCandlesUpdated (which now just maps the SDK's raw
+ * candle shape and calls this) so refreshDowngradedPairsOnce below can feed it REST-polled
+ * candles through the EXACT same pipeline live ticks use -- one code path, two sources.
+ * Hardcoded to "live" throughout (getOpenPositions, fetchRecentCandles) rather than taking
+ * an accountKey param: both of this function's callers only ever process live-account data
+ * (onCandlesUpdated's own top-of-function guard; the downgraded-pair refresh only ever
+ * exists for the account that runs the signal engine -- see this file's own top-of-file
+ * comment on why demo never streams candles or generates signals).
+ */
+async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): Promise<void> {
+  // Snapshot the series as it stood before this update: if a new bar just started, this
+  // snapshot's last element is the bar that just closed, which is exactly what the signal
+  // engine should evaluate (never the forming bar). Also what makes this function safe to
+  // call twice for the same bar close (once from a live tick, once from a REST poll that
+  // hasn't learned the live path already got there first) -- candleStore.upsert already
+  // recorded that bar's time, so the second call's own barJustClosed check reads false and
+  // it's a no-op past this point.
+  const priorSeries = candleStore.get(pair, timeframe);
+  const priorLast = priorSeries[priorSeries.length - 1];
+  const barJustClosed = Boolean(priorLast) && candle.time > (priorLast?.time ?? -Infinity);
+
+  candleStore.upsert(pair, timeframe, candle);
+  eventBus.publish({ type: "candle", pair, timeframe, candle });
+
+  if (barJustClosed && SIGNAL_TIMEFRAMES.includes(timeframe)) {
+    const higherTimeframes = {
+      h1: candleStore.get(pair, "1h"),
+      h4: candleStore.get(pair, "4h"),
+      d1: candleStore.get(pair, "1d"),
+    };
+    let evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
+    // M5 entry confirmation -- a voluntarily-added quality gate on top of
+    // everything evaluateSignal itself already checks (see m5Confirmation.ts).
+    // Only ever runs on the rare candle that would otherwise become a signal, an
+    // on-demand REST fetch, never a live subscription (see fetchRecentCandles's
+    // own doc comment for why that distinction matters here specifically).
+    if (evaluation.status === "signal" && loadExecutionConfig("live").m5ConfirmationEnabled) {
+      const m5Candles = await fetchRecentCandles(pair, "5m", M5_CONFIRMATION_BARS, "live");
+      if (!confirmsDirection(m5Candles, evaluation.signal.direction)) {
+        evaluation = { status: "no_trade", reason: { code: "m5_not_confirmed", impliedDirection: evaluation.signal.direction } };
+      }
+    }
+    const time = Date.now();
+    // Same emaTrendDirection call signalEngine.ts's own hard trend-agreement gate
+    // already makes on these exact series -- recomputed here (cheap: two EMAs over
+    // <=300 candles) so the dashboard can show D1/H4/H1 bias for every update, not
+    // just the ones a signal happens to fire or get blocked on for that reason.
+    const trends = {
+      d1: emaTrendDirection(higherTimeframes.d1),
+      h4: emaTrendDirection(higherTimeframes.h4),
+      h1: emaTrendDirection(higherTimeframes.h1),
+      d1Gap: emaTrendGapPct(higherTimeframes.d1),
+      h4Gap: emaTrendGapPct(higherTimeframes.h4),
+      h1Gap: emaTrendGapPct(higherTimeframes.h1),
+    };
+    // Computed independently of evaluateSignal (see marketRegime.ts's own doc
+    // comment) -- reuses the exact same closed-candle series and news check, never
+    // gates or alters `evaluation` itself, just explains the backdrop it happened
+    // against.
+    const lastClosed = priorSeries[priorSeries.length - 1];
+    const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
+    predictionStore.set(pair, timeframe, { pair, timeframe, source: "smc", evaluation, time, regime, trends });
+    eventBus.publish({ type: "prediction", pair, timeframe, source: "smc", evaluation, time, regime, trends });
+
+    // Position-risk narration -- only on the freshest timeframe (15m), so this
+    // doesn't fire the same check three times per candle-close cascade (15m/30m/1h
+    // can all close together on some minute boundaries). Purely additive: narrates
+    // via a new event + notification, never touches sizing, stop loss, or execution
+    // (see positionRiskNarration.ts's own doc comment).
+    if (timeframe === "15m") {
+      for (const position of getOpenPositions("live")) {
+        if (position.pair !== pair) continue;
+        const assessment = assessPositionRisk(position.direction, regime, trends);
+        const previousLevel = getLastPositionRiskLevel(position.id);
+        setLastPositionRiskLevel(position.id, assessment.level);
+        if (previousLevel === assessment.level) continue; // no real change -- see positionRiskStore.ts
+        eventBus.publish({
+          type: "position_risk",
+          positionId: position.id,
+          pair: position.pair,
+          direction: position.direction,
+          level: assessment.level,
+          reason: assessment.reason,
+          time,
+        });
+        if (assessment.level !== "aligned") {
+          void sendNotification({
+            category: "risk_alert",
+            title: `JUDE AI — ${assessment.level === "warning" ? "Warning" : "Caution"}: ${position.pair}`,
+            body: assessment.reason,
+            data: { positionId: position.id, pair: position.pair },
+          });
+        } else if (previousLevel !== undefined) {
+          // The other half of a real user request: not just "something's wrong" but
+          // "tell me the moment it's not wrong anymore". previousLevel !== undefined
+          // excludes a position's very first assessment (nothing to have cleared from
+          // yet) -- only a genuine caution/warning -> aligned transition notifies.
+          void sendNotification({
+            category: "risk_alert",
+            title: `JUDE AI — Cleared: ${position.pair}`,
+            body: `The ${previousLevel} on your ${position.direction === "long" ? "BUY" : "SELL"} position has cleared -- market conditions are aligned again.`,
+            data: { positionId: position.id, pair: position.pair },
+          });
+        }
+      }
+    }
+
+    if (evaluation.status === "signal") {
+      publishSignal(evaluation.signal);
+      // Snapshot the decision context now, while it's still real -- signalStore
+      // itself prunes after 4 hours (far shorter than a trade can stay open), which
+      // is exactly why the trade journal can't just read it back from there later.
+      const signal = evaluation.signal;
+      tradeJournal.recordSignalContext({
+        signalId: signal.id,
+        pair: signal.pair,
+        timeframe: signal.timeframe,
+        direction: signal.direction,
+        regime,
+        setupQuality: scoreSetupQuality(signal, regime),
+        confidence: signal.confidence,
+        signerBDirection: signal.signerBDirection,
+        signerBConfidence: signal.signerBConfidence,
+        adx: signal.adx,
+        rsi: signal.rsi,
+        newsStatus: signal.newsStatus,
+        session: signal.session,
+        createdAt: signal.createdAt,
+        confluences: signal.confluences,
+        source: signal.source,
+      });
+    }
+  }
+
+  // rangeEngine.ts's mean-reversion engine, evaluated independently alongside SMC
+  // on the exact same closed candle -- 15m only for now (see rangeEngine.ts's own
+  // doc comment). No M5 confirmation gate, no trade-journal setup-quality scoring
+  // (scoreSetupQuality is SMC-shaped -- e.g. it rewards a "strong_uptrend"/
+  // "strong_downtrend" regime, the opposite of what this engine wants, so applying
+  // it here would produce a meaningless score, not a real one -- SignalContext.
+  // setupQuality is left undefined below for exactly this reason). Decision context
+  // IS still recorded (source: "mean_reversion"), same as the SMC block above -- this
+  // is what makes getPerformanceBreakdown's "source" dimension (SMC vs. range engine
+  // performance, compared head to head) and getConfidenceCalibration/
+  // getSignerBCalibration possible for range-engine trades at all; before this they
+  // closed into the journal with context: null, same as a context-less TradingView
+  // entry, and were invisible to every context-based breakdown.
+  if (barJustClosed && timeframe === "15m") {
+    const rangeEvaluation = evaluateRangeSignal(priorSeries, pair, timeframe);
+    const rangeTime = Date.now();
+    const rangeLastClosed = priorSeries[priorSeries.length - 1];
+    const rangeRegime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, rangeLastClosed.time));
+    const rangeTrends = {
+      d1: emaTrendDirection(candleStore.get(pair, "1d")),
+      h4: emaTrendDirection(candleStore.get(pair, "4h")),
+      h1: emaTrendDirection(candleStore.get(pair, "1h")),
+      d1Gap: emaTrendGapPct(candleStore.get(pair, "1d")),
+      h4Gap: emaTrendGapPct(candleStore.get(pair, "4h")),
+      h1Gap: emaTrendGapPct(candleStore.get(pair, "1h")),
+    };
+    predictionStore.set(pair, timeframe, {
+      pair,
+      timeframe,
+      source: "mean_reversion",
+      evaluation: rangeEvaluation,
+      time: rangeTime,
+      regime: rangeRegime,
+      trends: rangeTrends,
+    });
+    eventBus.publish({
+      type: "prediction",
+      pair,
+      timeframe,
+      source: "mean_reversion",
+      evaluation: rangeEvaluation,
+      time: rangeTime,
+      regime: rangeRegime,
+      trends: rangeTrends,
+    });
+    if (rangeEvaluation.status === "signal") {
+      publishSignal(rangeEvaluation.signal);
+      const rangeSignal = rangeEvaluation.signal;
+      tradeJournal.recordSignalContext({
+        signalId: rangeSignal.id,
+        pair: rangeSignal.pair,
+        timeframe: rangeSignal.timeframe,
+        direction: rangeSignal.direction,
+        regime: rangeRegime,
+        confidence: rangeSignal.confidence,
+        signerBDirection: rangeSignal.signerBDirection,
+        signerBConfidence: rangeSignal.signerBConfidence,
+        adx: rangeSignal.adx,
+        rsi: rangeSignal.rsi,
+        newsStatus: rangeSignal.newsStatus,
+        session: rangeSignal.session,
+        createdAt: rangeSignal.createdAt,
+        confluences: rangeSignal.confluences,
+        source: rangeSignal.source,
+      });
+    }
+  }
+}
+
+const DOWNGRADED_REFRESH_INTERVAL_MS = 60_000;
+// Small on purpose -- this only ever needs to catch however many bars closed since the
+// last poll (normally one, at 15m's own cadence), not backfill a real history (that's
+// seedHistoricalCandles/higherTimeframeRefresh's job). A generous-but-cheap margin in
+// case a cycle gets skipped (e.g. this same account's own REST budget briefly busy).
+const DOWNGRADED_REFRESH_BAR_COUNT = 5;
+
+/**
+ * Keeps the signal engine running for a pair even while its live candle subscription is
+ * down -- a real gap identified in production (2026-09-01): once onSubscriptionDowngraded
+ * fires (or the circuit breaker above is open), that pair stops receiving live candle
+ * ticks entirely, so onCandlesUpdated never runs for it and no signal can fire, potentially
+ * for as long as CIRCUIT_COOLDOWN_MS. This polls the SAME REST endpoint
+ * higherTimeframeRefresh.ts already uses, but only for pairs currently in downgradedPairs
+ * and only for SIGNAL_TIMEFRAMES (15m/30m/1h -- the ones a signal actually evaluates on;
+ * 4h/1d are already covered unconditionally by higherTimeframeRefresh regardless of
+ * subscription state). Uses getHistoricalCandles, a completely different rate-limit
+ * dimension from subscribeToMarketData (the one actually storming) -- polling this doesn't
+ * add any load to the budget that's already in trouble. Every fresh candle found gets
+ * fed through the exact same ingestCandle pipeline live ticks use, so a signal born from a
+ * REST-polled candle is indistinguishable downstream from one born off a live tick.
+ */
+async function refreshDowngradedPairsOnce(account: MetatraderAccount): Promise<void> {
+  for (const pair of downgradedPairs) {
+    for (const timeframe of SIGNAL_TIMEFRAMES) {
+      try {
+        const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), DOWNGRADED_REFRESH_BAR_COUNT);
+        const known = candleStore.get(pair, timeframe);
+        const lastKnownTime = known[known.length - 1]?.time ?? -Infinity;
+        const fresh = raw
+          .map((c): Candle => ({ time: c.time.getTime(), open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume }))
+          .filter((c) => c.time > lastKnownTime)
+          .sort((a, b) => a.time - b.time);
+        // Sequential, oldest-first -- if more than one bar closed since the last poll,
+        // each must be evaluated in the order it actually happened, not concurrently.
+        for (const candle of fresh) {
+          await ingestCandle(pair, timeframe, candle);
+        }
+      } catch (error) {
+        console.error(`[market] downgraded-pair REST refresh failed for ${pair} ${timeframe} (will retry next cycle):`, error);
+      }
+    }
+  }
+}
+
+const downgradedRefreshStateKey = Symbol.for("forex-ai.metaApiConnection.downgradedRefreshState");
+type GlobalWithDowngradedRefreshState = typeof globalThis & { [downgradedRefreshStateKey]?: { account: MetatraderAccount | null; intervalStarted: boolean } };
+const gDowngradedRefreshState = globalThis as GlobalWithDowngradedRefreshState;
+const downgradedRefreshState: { account: MetatraderAccount | null; intervalStarted: boolean } =
+  gDowngradedRefreshState[downgradedRefreshStateKey] ?? (gDowngradedRefreshState[downgradedRefreshStateKey] = { account: null, intervalStarted: false });
+
+/** Same idempotent, always-refresh-the-account-reference pattern as
+ * startHigherTimeframeRefresh -- see that function's own doc comment. Only ever polls
+ * when downgradedPairs is non-empty, which is the overwhelmingly common case (nothing to
+ * do), so this interval firing every minute is normally a single Set.size check and
+ * nothing else. */
+function startDowngradedCandleRefresh(account: MetatraderAccount): void {
+  downgradedRefreshState.account = account;
+  if (downgradedRefreshState.intervalStarted) return;
+  downgradedRefreshState.intervalStarted = true;
+  setInterval(() => {
+    if (downgradedRefreshState.account && downgradedPairs.size > 0) void refreshDowngradedPairsOnce(downgradedRefreshState.account);
+  }, DOWNGRADED_REFRESH_INTERVAL_MS);
 }
 
 /** Checked before the broker's own deal.reason mapping -- an API-initiated invalidation
@@ -797,12 +898,18 @@ async function connect(accountKey: AccountKey): Promise<void> {
   // disconnected until the next redeploy, since ensureMetaApiConnection is only ever
   // attempted once at boot.
   if (accountKey === "live") {
+    // A brand-new connection's own subscribe loop (below) hasn't had a chance to downgrade
+    // anything yet -- whatever this set held is from the connection being replaced, and
+    // would otherwise leave refreshDowngradedPairsOnce REST-polling pairs that may already
+    // be fine again under the fresh connection.
+    downgradedPairs.clear();
     void seedHistoricalCandles(account).catch((error: unknown) => {
       console.error("[market] historical candle seeding failed entirely (live streaming unaffected):", error);
     });
     // Idempotent (state.started guard inside) -- safe to call on every connect(),
     // including a forced reconnect, without spawning a second interval.
     startHigherTimeframeRefresh(account);
+    startDowngradedCandleRefresh(account);
   }
 
   const connection = account.getStreamingConnection();
