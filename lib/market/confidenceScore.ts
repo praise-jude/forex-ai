@@ -62,8 +62,6 @@ export const WATCH_THRESHOLD = 70;
 const ADX_STRONG = 25;
 const ADX_ADEQUATE = 20;
 
-const TIER_RANK: Record<DimensionTier, number> = { strong_buy: 3, buy: 2, watch: 1, no_trade: 0 };
-
 /** Exported for reuse by signerB.ts (Signer B's own confidence bucketing) and
  * decisionMatrix.ts (comparing tiers) -- one shared 90/80/70 bucketing rule for every
  * tiered score in the app, never redefined per-caller. */
@@ -75,23 +73,27 @@ export function tierOf(total: number): DimensionTier {
 }
 
 /**
- * A strongly-trending market doesn't mean *this moment* is a good entry, and a
- * perfect entry trigger doesn't matter if the higher-timeframe trend isn't really
- * there -- so trend/structure evidence (direction) and entry-timing evidence (entry)
- * are scored independently, each against the same 90/80/70 tier thresholds, and the
- * result is only as good as whichever of the two is weaker. Pure function -- the
- * caller (signalEngine) is responsible for the hard pre-gates (killzone, D1/H4/H1
- * agreement, ADX floor, ATR health, the SMC trigger itself) before this is ever
- * called, and for combining this result with Signer B's independent read afterward
- * (see decisionMatrix.ts) -- external confirmation never bottlenecks this score.
+ * Direction and entry are still scored independently -- trend/structure evidence
+ * (direction) and entry-timing evidence (entry) answer different questions, and both
+ * are computed and returned for transparency, confluences, and dashboard display.
+ *
+ * The final tier/total is driven by ENTRY ALONE (changed 2026-09-01). Direction used to
+ * also bottleneck the tier, on the theory that a strong trend doesn't guarantee a good
+ * entry and vice versa -- true in principle, but direction's own inputs
+ * (emaStackAligned, marketStructureMatches) turned out to be RE-testing a question
+ * signalEngine.ts's own hard pre-gates (D1/H4 trend agreement, ADX floor) had already
+ * answered, at a stricter bar than those gates use. A production investigation found
+ * this was the dominant reason SMC produced zero signals across 9 pairs for 30 straight
+ * days: real, well-formed setups that had already cleared every hard trend/structure
+ * gate kept failing the SAME question again in scoring, at a rate where emaStackAligned
+ * and marketStructureMatches were almost never both true even once. Direction no longer
+ * gates the tier -- the hard pre-gates already are the trend/structure requirement; this
+ * score's job is entry-timing confirmation on top of a setup already known to be valid.
  */
 export function scoreSignal(input: DirectionScoreInput & EntryScoreInput): ScoreBreakdown {
   const direction = scoreDirection(input);
   const entry = scoreEntry(input);
-  const tier = TIER_RANK[direction.tier] < TIER_RANK[entry.tier] ? direction.tier : entry.tier;
-  const total = Math.min(direction.total, entry.total);
-
-  return { direction, entry, tier, total };
+  return { direction, entry, tier: entry.tier, total: entry.total };
 }
 
 function scoreDirection(input: DirectionScoreInput): DimensionScore {

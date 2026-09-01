@@ -53,14 +53,18 @@ describe("scoreSignal", () => {
     expect(result.total).toBe(result.entry.total);
   });
 
-  it("bottlenecks the final tier to a weak direction even when entry is perfect", () => {
-    // The symmetric case -- a textbook entry trigger doesn't matter if the
-    // higher-timeframe trend evidence isn't actually there.
+  it("does NOT bottleneck the final tier to a weak direction when entry is perfect -- direction's own trend/structure question is already a hard pre-gate upstream, not re-litigated here", () => {
+    // 2026-09-01: this used to assert the opposite (direction bottlenecks the tier).
+    // Changed after a production investigation found real, well-formed setups that had
+    // already cleared signalEngine.ts's own hard D1/H4 trend-agreement + ADX gates were
+    // failing the SAME trend question again here, at a stricter bar -- direction and
+    // marketStructureMatches were almost never both true even once across 30 days/9
+    // pairs, killing setups whose entry side scored 90+ on the exact same candidate.
     const result = scoreSignal(buildInput({ emaStackAligned: false, marketStructureMatches: false, adx: 10 }));
     expect(result.entry.tier).toBe("strong_buy");
     expect(result.direction.tier).toBe("no_trade");
-    expect(result.tier).toBe("no_trade");
-    expect(result.total).toBe(result.direction.total);
+    expect(result.tier).toBe("strong_buy");
+    expect(result.total).toBe(result.entry.total);
   });
 
   it("tiers buy at 80-89 on both dimensions", () => {
