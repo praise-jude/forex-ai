@@ -27,6 +27,7 @@ import { ALL_PAIRS, brokerSymbol, pairForBrokerSymbol } from "./symbols";
 import { seedHistoricalCandles } from "./seedHistory";
 import { startHigherTimeframeRefresh } from "./higherTimeframeRefresh";
 import { TIMEFRAME_MS } from "./timeframes";
+import { logEvaluation } from "./evaluationLog";
 import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
@@ -508,6 +509,7 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
     const regime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, lastClosed.time));
     predictionStore.set(pair, timeframe, { pair, timeframe, source: "smc", evaluation, time, regime, trends });
     eventBus.publish({ type: "prediction", pair, timeframe, source: "smc", evaluation, time, regime, trends });
+    void logEvaluation(pair, timeframe, "smc", evaluation, time);
 
     // Position-risk narration -- only on the freshest timeframe (15m), so this
     // doesn't fire the same check three times per candle-close cascade (15m/30m/1h
@@ -624,6 +626,7 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
       regime: rangeRegime,
       trends: rangeTrends,
     });
+    void logEvaluation(pair, timeframe, "mean_reversion", rangeEvaluation, rangeTime);
     if (rangeEvaluation.status === "signal") {
       publishSignal(rangeEvaluation.signal);
       const rangeSignal = rangeEvaluation.signal;

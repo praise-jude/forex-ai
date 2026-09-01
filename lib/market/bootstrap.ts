@@ -1,5 +1,6 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
 import { checkEngineModeAfterRestart, startEngineModeReminder } from "./engineMode";
+import { startEvaluationLogPruning } from "./evaluationLog";
 import { hydrateAutopilotLock } from "./autopilotLock";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
@@ -70,6 +71,10 @@ export function startMarketEngine(): void {
   // notification just above is easy to miss on a chaotic night; this is the recurring
   // backstop that keeps reminding until someone actually re-enables Demo/Live.
   startEngineModeReminder();
+  // Idempotent, same pattern -- periodically prunes evaluation_log rows older than 30
+  // days (see evaluationLog.ts) so this genuinely high-volume table never grows without
+  // bound.
+  startEvaluationLogPruning();
 
   // Fire-and-forget, same posture as every hydrate above -- restores whatever
   // lock/unlock state was last persisted, so a Railway redeploy doesn't silently drop

@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline } from "@/lib/market/predictionLabel";
 import { describeNoTradeReason, pipelineStages, REGIME_LABEL, type PipelineStage } from "@/lib/market/noTradeReason";
+import type { EvaluationLogEntry } from "@/lib/market/evaluationLog";
 import { DirectionBadge } from "./DirectionBadge";
 import { HEADLINE_TONE } from "./PredictionCard";
 
@@ -58,6 +60,77 @@ function PipelineStrip({ stages }: { stages: PipelineStage[] }) {
           {stage.label}
         </span>
       ))}
+    </div>
+  );
+}
+
+function timeAgo(ms: number): string {
+  const diffMin = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.round(diffHr / 24)}d ago`;
+}
+
+/** One past evaluation row -- same PipelineStrip the live card above uses, so a
+ * historical entry reads identically to a live one, just timestamped. */
+function HistoryEntryRow({ entry }: { entry: EvaluationLogEntry }) {
+  return (
+    <div className="rounded border border-white/5 bg-zinc-900/50 px-2 py-1.5">
+      <div className="flex items-center justify-between gap-2 text-[11px]">
+        <span className={entry.status === "signal" ? "font-medium text-emerald-400" : "text-zinc-400"}>
+          {entry.timeframe} — {entry.status === "signal" ? `${entry.signalTier?.replace("_", " ")} (${entry.signalConfidence?.toFixed(0)}%)` : "no trade"}
+        </span>
+        <span className="shrink-0 text-zinc-600">{timeAgo(entry.createdAt)}</span>
+      </div>
+      <PipelineStrip stages={entry.pipelineStages} />
+    </div>
+  );
+}
+
+/** On-demand (fetched only once expanded, never polled) browse of past evaluations for
+ * this pair+engine -- backed by evaluationLog.ts's persisted history, distinct from the
+ * live card above it (which only ever shows the LATEST evaluation, overwritten on the
+ * next candle close). Answers "what did this signal actually go through an hour/a day
+ * ago", which nothing else on the dashboard can. */
+function HistoryToggle({ pair, source }: { pair: Pair; source: "smc" | "mean_reversion" }) {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<EvaluationLogEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (entries === null) {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/evaluation-log?pair=${encodeURIComponent(pair)}&source=${source}&limit=10`);
+        const body = (await res.json()) as { entries: EvaluationLogEntry[] };
+        setEntries(body.entries);
+      } catch {
+        setEntries([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+  }
+
+  return (
+    <div className="mt-1.5">
+      <button type="button" onClick={toggle} className="text-[11px] text-zinc-500 underline decoration-dotted hover:text-zinc-300">
+        {open ? "Hide history" : "View history"}
+      </button>
+      {open && (
+        <div className="mt-1.5 flex flex-col gap-1">
+          {loading && <span className="text-[11px] text-zinc-500">Loading…</span>}
+          {!loading && entries?.length === 0 && <span className="text-[11px] text-zinc-500">No history yet.</span>}
+          {!loading && entries?.map((entry) => <HistoryEntryRow key={entry.id} entry={entry} />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -119,6 +192,7 @@ function EngineRow({ pair, source, data }: { pair: Pair; source: "smc" | "mean_r
           <ExecutionStatus trade={trade} />
         </div>
       )}
+      <HistoryToggle pair={pair} source={source} />
     </div>
   );
 }

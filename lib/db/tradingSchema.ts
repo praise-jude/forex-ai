@@ -1,5 +1,6 @@
 import { boolean, doublePrecision, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 import type { NotificationPrefs } from "../market/types";
+import type { PipelineStage } from "../market/noTradeReason";
 
 // Durability/audit persistence for two of lib/market/*.ts's in-memory stores --
 // signalStore.ts (every fired signal) and positionStore.ts (the execution ledger, "which
@@ -185,4 +186,25 @@ export const processedDeals = pgTable("processed_deals", {
   dealId: text("deal_id").primaryKey(),
   account: text("account").notNull(),
   processedAt: timestamp("processed_at", { withTimezone: true }).notNull(),
+});
+
+// Persisted history of EVERY signal evaluation (both a real signal and a no_trade hold),
+// not just the ones that fired -- see lib/market/evaluationLog.ts. predictionStore.ts
+// only ever keeps the LATEST evaluation per pair/timeframe/source in memory, overwritten
+// on the next candle close, so there was previously no way to look back at what a signal
+// actually went through minutes or days after the fact. reasonDetail/pipelineStages are
+// jsonb rather than normalized columns for the same reason journalPendingContexts.context
+// is above -- read back whole, never queried by an individual nested field.
+export const evaluationLog = pgTable("evaluation_log", {
+  id: text("id").primaryKey(),
+  pair: text("pair").notNull(),
+  timeframe: text("timeframe").notNull(),
+  source: text("source").notNull(),
+  status: text("status").notNull(),
+  reasonCode: text("reason_code"),
+  reasonDetail: jsonb("reason_detail").$type<Record<string, unknown> | null>(),
+  signalTier: text("signal_tier"),
+  signalConfidence: doublePrecision("signal_confidence"),
+  pipelineStages: jsonb("pipeline_stages").notNull().$type<PipelineStage[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
