@@ -3,7 +3,7 @@
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { PAIRS, type ExecutedTrade, type Pair, type PredictionUpdate, type Signal } from "@/lib/market/types";
 import { predictionHeadline, predictionSubline } from "@/lib/market/predictionLabel";
-import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
+import { describeNoTradeReason, pipelineStages, REGIME_LABEL, type PipelineStage } from "@/lib/market/noTradeReason";
 import { DirectionBadge } from "./DirectionBadge";
 import { HEADLINE_TONE } from "./PredictionCard";
 
@@ -32,6 +32,34 @@ const ENGINE_LABEL: Record<"smc" | "mean_reversion", string> = { smc: "SMC", mea
  * awaiting a click, or ANALYSIS mode where nothing auto-executes). Never fabricated. */
 function executionFor(executedTrades: ExecutedTrade[], signalId: string): ExecutedTrade | undefined {
   return executedTrades.filter((t) => t.signalId === signalId).sort((a, b) => b.attemptedAt - a.attemptedAt)[0];
+}
+
+const STAGE_DOT: Record<PipelineStage["status"], string> = {
+  pass: "bg-emerald-400",
+  fail: "bg-rose-400",
+  not_reached: "bg-zinc-600",
+};
+const STAGE_TEXT: Record<PipelineStage["status"], string> = {
+  pass: "text-emerald-400",
+  fail: "text-rose-400",
+  not_reached: "text-zinc-600",
+};
+
+/** The stage-by-stage PASS/FAIL/NOT-REACHED breakdown behind the single-sentence
+ * `describeNoTradeReason` text above it -- built from the exact same evaluation, just
+ * showing which gates a candidate actually cleared before the one that held it, instead
+ * of only the final blocking reason. See noTradeReason.ts's pipelineStages doc comment. */
+function PipelineStrip({ stages }: { stages: PipelineStage[] }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+      {stages.map((stage) => (
+        <span key={stage.label} className={`flex items-center gap-1 text-[10px] ${STAGE_TEXT[stage.status]}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${STAGE_DOT[stage.status]}`} />
+          {stage.label}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function ExecutionStatus({ trade }: { trade: ExecutedTrade | undefined }) {
@@ -85,6 +113,7 @@ function EngineRow({ pair, source, data }: { pair: Pair; source: "smc" | "mean_r
             ? describeNoTradeReason(evaluation.reason, update.regime)
             : null}
       </p>
+      <PipelineStrip stages={pipelineStages(evaluation, source)} />
       {signal && (
         <div className="mt-1">
           <ExecutionStatus trade={trade} />

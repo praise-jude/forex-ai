@@ -1,4 +1,4 @@
-import type { Confluence, MarketRegime, NoTradeReason } from "./types";
+import type { Confluence, MarketRegime, NoTradeReason, SignalEvaluation } from "./types";
 
 // Plain-language labels for MarketRegime -- see marketRegime.ts for how each is
 // derived (existing ADX/ATR/EMA reads only). Exported so the dashboard's own regime
@@ -113,4 +113,59 @@ function describeReason(reason: NoTradeReason): string {
       return `A ${directionWord} boundary touch happened, but the combined confidence (${reason.total.toFixed(0)}%) didn't clear the threshold -- not enough RSI extremity, rejection strength, or range cleanliness together.`;
     }
   }
+}
+
+export type PipelineStageStatus = "pass" | "fail" | "not_reached";
+
+export interface PipelineStage {
+  label: string;
+  status: PipelineStageStatus;
+}
+
+// Mirrors evaluateSignal's OWN real gate order in signalEngine.ts -- not a separate,
+// hand-maintained checklist that can drift out of sync with the actual code. Each entry
+// names the exact NoTradeReason code(s) that stage produces on failure; a reason not
+// listed for a stage can never have been that stage's own failure.
+const SMC_STAGES: { label: string; codes: NoTradeReason["code"][] }[] = [
+  { label: "Killzone window", codes: ["outside_killzone"] },
+  { label: "SMC setup trigger", codes: ["no_setup"] },
+  { label: "D1/H4 trend agreement", codes: ["trend_disagreement"] },
+  { label: "Trend strength (ADX)", codes: ["weak_trend_adx"] },
+  { label: "Volatility (ATR)", codes: ["low_volatility"] },
+  { label: "News blackout", codes: ["news_blackout"] },
+  { label: "Weekend gap", codes: ["weekend_close_blackout"] },
+  { label: "Confidence score", codes: ["below_threshold"] },
+  { label: "Independent confirmation", codes: ["signer_b_neutral", "signer_conflict"] },
+  { label: "M5 entry confirmation", codes: ["m5_not_confirmed"] },
+];
+
+// Mirrors evaluateRangeSignal's own gate order in rangeEngine.ts.
+const RANGE_STAGES: { label: string; codes: NoTradeReason["code"][] }[] = [
+  { label: "Range detected", codes: ["no_range_detected"] },
+  { label: "Ranging regime", codes: ["not_ranging"] },
+  { label: "Boundary touch", codes: ["no_boundary_touch"] },
+  { label: "Weekend gap", codes: ["weekend_close_blackout"] },
+  { label: "Confidence score", codes: ["range_below_threshold"] },
+];
+
+/**
+ * Turns one evaluation into an ordered PASS/FAIL/NOT-REACHED checklist -- the "why isn't
+ * this firing" breakdown a plain no_trade reason alone doesn't show: which gates this
+ * candidate actually cleared before hitting the one that held it. Built entirely from
+ * evaluateSignal/evaluateRangeSignal's own real, fixed gate order (see the two stage
+ * lists above) -- every stage before the failing one passed by construction (the
+ * function returns at the first gate that fails), and nothing after it ever ran.
+ * A `signal` evaluation means every stage for that source passed.
+ */
+export function pipelineStages(evaluation: SignalEvaluation, source: "smc" | "mean_reversion"): PipelineStage[] {
+  const order = source === "smc" ? SMC_STAGES : RANGE_STAGES;
+  if (evaluation.status === "signal") {
+    return order.map((s) => ({ label: s.label, status: "pass" as const }));
+  }
+  const code = evaluation.reason.code;
+  const failIndex = order.findIndex((s) => s.codes.includes(code));
+  return order.map((s, i) => ({
+    label: s.label,
+    status: failIndex === -1 ? "not_reached" : i < failIndex ? "pass" : i === failIndex ? "fail" : "not_reached",
+  }));
 }

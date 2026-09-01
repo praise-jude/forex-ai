@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeNoTradeReason } from "../noTradeReason";
+import { describeNoTradeReason, pipelineStages } from "../noTradeReason";
+import type { SignalEvaluation } from "../types";
 
 describe("describeNoTradeReason", () => {
   it("describes outside_killzone", () => {
@@ -100,5 +101,57 @@ describe("describeNoTradeReason", () => {
     expect(text).toContain("USD");
     expect(text).toContain("Non-Farm Payrolls");
     expect(text).toContain("12 minutes");
+  });
+});
+
+describe("pipelineStages", () => {
+  it("marks every SMC stage pass for a real signal", () => {
+    const evaluation = { status: "signal" } as unknown as SignalEvaluation;
+    const stages = pipelineStages(evaluation, "smc");
+    expect(stages.length).toBeGreaterThan(0);
+    expect(stages.every((s) => s.status === "pass")).toBe(true);
+  });
+
+  it("marks the failing SMC stage 'fail', everything before it 'pass', everything after 'not_reached'", () => {
+    const evaluation: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 12 } };
+    const stages = pipelineStages(evaluation, "smc");
+    const killzone = stages.find((s) => s.label === "Killzone window")!;
+    const setup = stages.find((s) => s.label === "SMC setup trigger")!;
+    const trend = stages.find((s) => s.label === "D1/H4 trend agreement")!;
+    const adx = stages.find((s) => s.label === "Trend strength (ADX)")!;
+    const volatility = stages.find((s) => s.label === "Volatility (ATR)")!;
+    const confidence = stages.find((s) => s.label === "Confidence score")!;
+    expect(killzone.status).toBe("pass");
+    expect(setup.status).toBe("pass");
+    expect(trend.status).toBe("pass");
+    expect(adx.status).toBe("fail");
+    expect(volatility.status).toBe("not_reached");
+    expect(confidence.status).toBe("not_reached");
+  });
+
+  it("marks the failing stage first among two codes sharing one stage (signer_conflict)", () => {
+    const evaluation: SignalEvaluation = {
+      status: "no_trade",
+      reason: { code: "signer_conflict", impliedDirection: "long", signerBDirection: "short", signerBConfidence: 70 },
+    };
+    const stages = pipelineStages(evaluation, "smc");
+    expect(stages.find((s) => s.label === "Confidence score")!.status).toBe("pass");
+    expect(stages.find((s) => s.label === "Independent confirmation")!.status).toBe("fail");
+    expect(stages.find((s) => s.label === "M5 entry confirmation")!.status).toBe("not_reached");
+  });
+
+  it("uses the range engine's own stage order for mean_reversion", () => {
+    const evaluation: SignalEvaluation = { status: "no_trade", reason: { code: "no_boundary_touch" } };
+    const stages = pipelineStages(evaluation, "mean_reversion");
+    expect(stages.find((s) => s.label === "Range detected")!.status).toBe("pass");
+    expect(stages.find((s) => s.label === "Ranging regime")!.status).toBe("pass");
+    expect(stages.find((s) => s.label === "Boundary touch")!.status).toBe("fail");
+    expect(stages.find((s) => s.label === "Confidence score")!.status).toBe("not_reached");
+  });
+
+  it("marks every range stage pass for a real range signal", () => {
+    const evaluation = { status: "signal" } as unknown as SignalEvaluation;
+    const stages = pipelineStages(evaluation, "mean_reversion");
+    expect(stages.every((s) => s.status === "pass")).toBe(true);
   });
 });
