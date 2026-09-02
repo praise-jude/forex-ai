@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AreaSeries,
   BarSeries,
@@ -14,6 +14,7 @@ import {
   type IRange,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
+  type MouseEventParams,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
@@ -21,6 +22,13 @@ import type { Candle, OpenPosition, Pair, PredictionUpdate, StreamEvent, Timefra
 import { decimals } from "@/lib/market/symbols";
 import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
+import { describeMeasurement, measureCandleRange } from "@/lib/market/chartMeasurement";
+
+interface MeasureSelection {
+  pair: Pair;
+  timeframe: Timeframe;
+  points: Candle[];
+}
 
 interface PriceChartProps {
   pair: Pair;
@@ -44,6 +52,16 @@ const LINE_COLOR = "#38bdf8";
 // "projected ahead" rather than overlapping the candles. Same spirit as
 // signalEngine.ts's ATR_BUFFER_FRACTION-style tunable constants.
 const FORECAST_BAR_SPACING = 8;
+// Distinct from UP_COLOR/DOWN_COLOR/LINE_COLOR on purpose -- a range measurement is
+// neither "the AI's forecast" nor "a live position," it's the operator's own retrospective
+// question about candles that already closed, so it gets its own visual identity rather
+// than borrowing a color that would imply one of those other two meanings.
+const MEASURE_COLOR = "#a78bfa";
+// A single stable reference for "no measurement selected" -- see measurePoints' own
+// derivation below for why a fresh [] literal there would defeat redrawMeasurement's
+// memoization and re-run on every unrelated poll-driven re-render (this component
+// already re-renders roughly every second from the positions poll).
+const EMPTY_CANDLES: Candle[] = [];
 
 // Same shared "positions" key/interval PositionsPanel.tsx already polls -- usePolledResource
 // dedupes them onto one request either way, but matching the interval here too means
@@ -163,6 +181,11 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   // real broker data, not a signal-specific concept.
   const positionPathSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const positionLabelRef = useRef<HTMLDivElement>(null);
+  // The operator's own retrospective "what happened from here to here" range check --
+  // see MEASURE_COLOR's own doc comment for why this gets a distinct color/series from
+  // both the forecast curve and the live position path.
+  const measureSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const measureLabelRef = useRef<HTMLDivElement>(null);
   // v5's markers are a primitive returned by createSeriesMarkers, not a method on the
   // series itself (series.setMarkers() was removed in v5) -- recreated alongside the
   // main series every time it's (re)created, updated in place via .setMarkers() from
@@ -199,6 +222,29 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   useEffect(() => {
     chartTypeRef.current = chartType;
   }, [chartType]);
+
+  // Off by default -- ordinary chart interaction (crosshair, zoom, pan) is unaffected
+  // either way, this only gates whether the click handler (wired up once, in the
+  // mount-only effect below) treats a click as a measurement point. Same "ref mirrors
+  // state for an effect that can't depend on it directly" pattern as chartTypeRef above.
+  const [measureMode, setMeasureMode] = useState(false);
+  const measureModeRef = useRef(measureMode);
+  useEffect(() => {
+    measureModeRef.current = measureMode;
+  }, [measureMode]);
+  // Tagged with the pair/timeframe it was picked under -- a selection made on one chart
+  // is meaningless on another, and rather than clearing it via a setState-in-an-effect
+  // (an anti-pattern React itself now lints against, see
+  // https://react.dev/learn/you-might-not-need-an-effect), a stale selection just stops
+  // matching the current pair/timeframe and is treated as empty everywhere it's read
+  // below -- the render itself is the source of truth, not a synchronization step.
+  // 0, 1, or 2 points; a third click starts a fresh selection from that click rather
+  // than accumulating, see handleChartClick below.
+  const [measureSelection, setMeasureSelection] = useState<MeasureSelection | null>(null);
+  const measurePoints = useMemo(
+    () => (measureSelection && measureSelection.pair === pair && measureSelection.timeframe === timeframe ? measureSelection.points : EMPTY_CANDLES),
+    [measureSelection, pair, timeframe]
+  );
 
   // Only ever the FIRST open position for this pair -- a real account could theoretically
   // hold more than one on the same pair, and drawing a path per position would just be
@@ -418,6 +464,24 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     [pair, createMainSeries, renderAll, redrawAnnotations]
   );
 
+  // Reacts to a click only while Measure mode is on (see measureModeRef's own doc
+  // comment for why that's read via a ref rather than a dependency here) -- subscribed
+  // once, in the mount-only effect below, rather than re-subscribing on every toggle.
+  // A third click starts a fresh selection rather than accumulating a third point.
+  const handleChartClick = useCallback((param: MouseEventParams<Time>) => {
+    if (!measureModeRef.current || param.time === undefined) return;
+    const clicked = candlesRef.current.find((c) => toTime(c.time) === param.time);
+    if (!clicked) return;
+    const currentPair = pairRef.current;
+    const currentTimeframe = timeframeRef.current;
+    setMeasureSelection((prev) => {
+      if (!prev || prev.pair !== currentPair || prev.timeframe !== currentTimeframe || prev.points.length >= 2) {
+        return { pair: currentPair, timeframe: currentTimeframe, points: [clicked] };
+      }
+      return { ...prev, points: [...prev.points, clicked] };
+    });
+  }, []);
+
   // Chart + series lifecycle: created once per mount.
   useEffect(() => {
     if (!containerRef.current) return;
@@ -455,9 +519,22 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       crosshairMarkerVisible: false,
     });
 
+    // Solid line, own color -- see MEASURE_COLOR's own doc comment. Also unaffected by
+    // chart-type switching.
+    const measure = chart.addSeries(LineSeries, {
+      lineWidth: 2,
+      lineStyle: LineStyle.Solid,
+      color: MEASURE_COLOR,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
     chartRef.current = chart;
     forecastSeriesRef.current = forecast;
     positionPathSeriesRef.current = positionPath;
+    measureSeriesRef.current = measure;
+    chart.subscribeClick(handleChartClick);
 
     // Persists the user's own zoom/pan so it survives a page refresh (and switching back
     // to a pair/timeframe they'd already zoomed earlier) instead of always resetting to
@@ -474,16 +551,19 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
 
     return () => {
       chart.timeScale().unsubscribeVisibleTimeRangeChange(handleVisibleRangeChange);
+      chart.unsubscribeClick(handleChartClick);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
       forecastSeriesRef.current = null;
       positionPathSeriesRef.current = null;
+      measureSeriesRef.current = null;
       seriesMarkersRef.current = null;
       priceLinesRef.current = [];
     };
-    // createMainSeries is stable (its own useCallback has an empty dep array) --
-    // intentionally excluded so this effect still only ever runs once per mount.
+    // createMainSeries and handleChartClick are both stable (their own useCallbacks have
+    // empty dep arrays) -- intentionally excluded so this effect still only ever runs
+    // once per mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -555,6 +635,47 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     redrawAnnotations();
   }, [redrawAnnotations]);
 
+  // Draws (or clears) the retrospective measurement line + readout between the two
+  // operator-picked candles -- purely a report of what already happened (see
+  // chartMeasurement.ts's own doc comment), never a prediction.
+  const redrawMeasurement = useCallback(() => {
+    const series = measureSeriesRef.current;
+    if (!series) return;
+
+    if (measurePoints.length < 2) {
+      series.setData([]);
+      if (measureLabelRef.current) measureLabelRef.current.style.display = "none";
+      return;
+    }
+
+    // Same auto-fit-on-first-populate behavior redrawAnnotations already works around
+    // (see its own doc comment) -- series.setData() going from empty to populated would
+    // otherwise snap the chart's visible range to just these two points.
+    const rangeBefore = chartRef.current?.timeScale().getVisibleRange() ?? null;
+    suppressRangePersistRef.current = true;
+
+    const [a, b] = measurePoints;
+    const result = measureCandleRange(a, b, pair, timeframe);
+    const color = result.direction === "up" ? UP_COLOR : result.direction === "down" ? DOWN_COLOR : MEASURE_COLOR;
+    series.applyOptions({ color });
+    series.setData([
+      { time: toTime(result.fromTime), value: result.fromClose },
+      { time: toTime(result.toTime), value: result.toClose },
+    ]);
+    if (measureLabelRef.current) {
+      measureLabelRef.current.textContent = describeMeasurement(result);
+      measureLabelRef.current.style.display = "block";
+      measureLabelRef.current.style.color = color;
+    }
+
+    if (rangeBefore) chartRef.current?.timeScale().setVisibleRange(rangeBefore);
+    suppressRangePersistRef.current = false;
+  }, [measurePoints, pair, timeframe]);
+
+  useEffect(() => {
+    redrawMeasurement();
+  }, [redrawMeasurement]);
+
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
@@ -582,7 +703,38 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
         >
           Reset zoom
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMeasureMode((on) => !on);
+            setMeasureSelection(null);
+          }}
+          title="Click two candles to see what actually happened between them"
+          className={`rounded px-2 py-1 text-[10px] font-medium transition ${
+            measureMode ? "bg-violet-600/80 text-white" : "bg-zinc-900/80 text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          📏 Range
+        </button>
+        {measurePoints.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setMeasureSelection(null)}
+            className="rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400 hover:text-zinc-200"
+          >
+            Clear range
+          </button>
+        )}
       </div>
+      {measureMode && measurePoints.length < 2 && (
+        <div className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-violet-300">
+          Click {measurePoints.length === 0 ? "a candle to start" : "a second candle to finish"}
+        </div>
+      )}
+      <div
+        ref={measureLabelRef}
+        className="pointer-events-none absolute bottom-2 left-2 z-10 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-violet-300"
+      />
       <div
         ref={forecastLabelRef}
         className="pointer-events-none absolute right-2 top-2 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400"
