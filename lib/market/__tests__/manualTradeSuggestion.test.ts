@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { suggestManualTradeLevels } from "../manualTradeSuggestion";
+import { describeManualTradePlan, suggestManualTradeLevels } from "../manualTradeSuggestion";
 import type { Candle } from "../types";
 
 // 20 candles with a steady, real true-range so calculateAtr (period 14) has enough
@@ -48,5 +48,21 @@ describe("suggestManualTradeLevels", () => {
     const stopDistance = 1.1 - result.stopLoss;
     const takeProfitDistance = result.takeProfit - 1.1;
     expect(takeProfitDistance).toBeCloseTo(stopDistance * 2, 6);
+  });
+});
+
+describe("describeManualTradePlan", () => {
+  it("describes a long in plain language: exit lower on loss, exit higher on profit", () => {
+    const text = describeManualTradePlan("EUR/USD", "long", 1.085, 1.083, 1.089);
+    expect(text).toContain("Buy EUR/USD now, around 1.08500");
+    expect(text).toContain("falls to 1.08300");
+    expect(text).toContain("rises to 1.08900");
+  });
+
+  it("describes a short in plain language: exit higher on loss, exit lower on profit", () => {
+    const text = describeManualTradePlan("EUR/USD", "short", 1.085, 1.087, 1.081);
+    expect(text).toContain("Sell EUR/USD now, around 1.08500");
+    expect(text).toContain("rises to 1.08700");
+    expect(text).toContain("falls to 1.08100");
   });
 });

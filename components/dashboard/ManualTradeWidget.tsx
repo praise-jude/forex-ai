@@ -5,6 +5,7 @@ import { PAIRS, type Pair, type Signal, type StreamEvent } from "@/lib/market/ty
 import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executionClient";
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
 import { decimals } from "@/lib/market/symbols";
+import { describeManualTradePlan } from "@/lib/market/manualTradeSuggestion";
 import { describeExecuteResponse } from "./TradeProposalCard";
 import { PriceChart } from "./PriceChart";
 
@@ -14,6 +15,7 @@ interface ManualSignalResponse {
 }
 
 interface SuggestResponse {
+  entry?: number;
   stopLoss?: number;
   takeProfit?: number;
   error?: string;
@@ -39,6 +41,7 @@ interface ManualTradeWidgetProps {
 export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps) {
   const [pair, setPair] = useState<Pair>(PAIRS[0]);
   const [direction, setDirection] = useState<"long" | "short">("long");
+  const [entry, setEntry] = useState<number | null>(null);
   const [stopLoss, setStopLoss] = useState("");
   const [takeProfit, setTakeProfit] = useState("");
   const [riskPct, setRiskPct] = useState(1);
@@ -70,6 +73,7 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
       .then((res) => res.json())
       .then((body: SuggestResponse) => {
         if (cancelled) return;
+        if (typeof body.entry === "number") setEntry(body.entry);
         if (typeof body.stopLoss === "number" && typeof body.takeProfit === "number") {
           const dp = decimals(pair);
           setStopLoss(body.stopLoss.toFixed(dp));
@@ -170,9 +174,20 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
       <div className="mt-2.5 h-64 overflow-hidden rounded-lg border border-white/10">
         <PriceChart pair={pair} timeframe="15m" streamEvent={streamEvent} prediction={null} />
       </div>
-      <p className="mt-1 text-[11px] text-zinc-500">
-        Stop-loss and take-profit below are AI-suggested from this pair’s recent volatility -- review or edit before placing.
-      </p>
+
+      {/* The plain-language "just look and click" summary -- recomputed live from
+          whatever's actually in the fields below (the AI's own suggestion by default,
+          or the operator's own edit), so it never describes a plan that's out of sync
+          with what Place Buy/Sell would actually submit. */}
+      {entry !== null && Number.isFinite(Number(stopLoss)) && Number.isFinite(Number(takeProfit)) ? (
+        <p className="mt-2.5 rounded-lg border border-sky-800/60 bg-sky-950/30 px-3 py-2 text-sm text-sky-200">
+          {describeManualTradePlan(pair, direction, entry, Number(stopLoss), Number(takeProfit))}
+        </p>
+      ) : (
+        <p className="mt-1 text-[11px] text-zinc-500">
+          Stop-loss and take-profit below are AI-suggested from this pair’s recent volatility -- review or edit before placing.
+        </p>
+      )}
 
       <div className="mt-2.5 flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1 text-xs text-zinc-400">

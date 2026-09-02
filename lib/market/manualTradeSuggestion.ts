@@ -1,5 +1,6 @@
-import type { Candle } from "./types";
+import type { Candle, Pair } from "./types";
 import { calculateAtr } from "./indicators/atr";
+import { formatPrice } from "./format";
 
 export interface ManualTradeSuggestion {
   stopLoss: number;
@@ -36,4 +37,20 @@ export function suggestManualTradeLevels(candles: Candle[], direction: "long" | 
   return direction === "long"
     ? { stopLoss: entry - stopDistance, takeProfit: entry + takeProfitDistance }
     : { stopLoss: entry + stopDistance, takeProfit: entry - takeProfitDistance };
+}
+
+/**
+ * One plain-English sentence covering exactly what will happen at each price level --
+ * for someone who wants to glance at the numbers and click, not read a chart. Pure
+ * text only; never called anywhere that actually places or changes a trade.
+ */
+export function describeManualTradePlan(pair: Pair, direction: "long" | "short", entry: number, stopLoss: number, takeProfit: number): string {
+  const action = direction === "long" ? "Buy" : "Sell";
+  const worseWord = direction === "long" ? "falls" : "rises";
+  const betterWord = direction === "long" ? "rises" : "falls";
+  return (
+    `${action} ${pair} now, around ${formatPrice(pair, entry)}. ` +
+    `If price ${worseWord} to ${formatPrice(pair, stopLoss)}, this trade exits automatically to limit the loss. ` +
+    `If price ${betterWord} to ${formatPrice(pair, takeProfit)}, this trade exits automatically to lock in the profit.`
+  );
 }
