@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PAIRS, type Pair, type PredictionUpdate, type Timeframe } from "@/lib/market/types";
+import { PAIRS, type Pair, type PredictionUpdate, type StreamEvent, type Timeframe } from "@/lib/market/types";
 import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executionClient";
 import { describeExecuteResponse } from "./TradeProposalCard";
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
 import { PredictionCard } from "./PredictionCard";
 import { TimeframeSelector } from "./TimeframeSelector";
+import { PriceChart } from "./PriceChart";
 
 /**
  * Pick any tracked pair, press Analyze, get the real SMC engine's current read for it
@@ -15,7 +16,16 @@ import { TimeframeSelector } from "./TimeframeSelector";
  * (via /api/signals/evaluate) against the same live candle data; nothing here is a
  * separate or simplified analysis.
  */
-export function OnDemandSignalWidget() {
+interface OnDemandSignalWidgetProps {
+  /** The main dashboard's live SSE stream, threaded through purely so this widget's own
+   * embedded chart (see below) can tick live too, same as the main chart -- optional,
+   * and PriceChart already no-ops cleanly on a null/mismatched-pair event, so this
+   * widget works fine standalone (e.g. in a future page without the main dashboard's
+   * stream) without a caller ever having to supply it. */
+  streamEvent?: StreamEvent | null;
+}
+
+export function OnDemandSignalWidget({ streamEvent = null }: OnDemandSignalWidgetProps) {
   const [pair, setPair] = useState<Pair>(PAIRS[0]);
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [result, setResult] = useState<PredictionUpdate | null>(null);
@@ -120,6 +130,14 @@ export function OnDemandSignalWidget() {
       {result && (
         <div className="mt-2.5">
           <PredictionCard update={result} />
+          {/* Same PriceChart the main dashboard uses -- draws the real entry/SL/TP
+              price lines and, on a qualifying signal, the dotted "where it's projected
+              to end up" forecast path to TP1/TP2, against this pair's actual candles.
+              Nothing chart-specific is computed here; it's the identical component fed
+              this widget's own on-demand result instead of the main selected pair. */}
+          <div className="mt-2.5 h-80 overflow-hidden rounded-lg border border-white/10">
+            <PriceChart pair={pair} timeframe={timeframe} streamEvent={streamEvent} prediction={result} />
+          </div>
         </div>
       )}
 

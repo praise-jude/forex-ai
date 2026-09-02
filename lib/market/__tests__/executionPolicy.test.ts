@@ -91,6 +91,11 @@ describe("executionPolicy", () => {
       expect(checkExecutionPolicy(signal, policy({ minTier: "strong_buy", minRiskReward: 10 }))).toEqual({ allowed: true });
     });
 
+    it("always allows a manual (hand-entered) signal, regardless of policy", () => {
+      const signal = buildSignal({ source: "manual", tier: "buy", riskReward: 0.1 });
+      expect(checkExecutionPolicy(signal, policy({ minTier: "strong_buy", minRiskReward: 10 }))).toEqual({ allowed: true });
+    });
+
     describe("calibrated expectancy gate", () => {
       it("is a no-op when calibratedGateEnabled is off, even with proven-negative calibration data", () => {
         const signal = buildSignal({ tier: "buy", riskReward: 2 });

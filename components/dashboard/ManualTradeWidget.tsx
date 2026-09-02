@@ -1,0 +1,195 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { PAIRS, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
+import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executionClient";
+import { buildConfirmPhrase } from "@/lib/voice/grammar";
+import { describeExecuteResponse } from "./TradeProposalCard";
+import { PriceChart } from "./PriceChart";
+
+interface ManualSignalResponse {
+  signal?: Signal;
+  error?: string;
+}
+
+interface ManualTradeWidgetProps {
+  /** Same live SSE stream the main dashboard chart uses -- purely so this widget's own
+   * embedded chart ticks live too. Optional; the chart still shows real (just not
+   * live-updating) candles without it. */
+  streamEvent?: StreamEvent | null;
+}
+
+/**
+ * A trade the operator builds entirely by hand -- pair, direction, stop-loss, take-profit
+ * -- independent of whether the SMC/range engines currently see a qualifying setup.
+ * Two-step, same as every other manual execution path in this app: this only registers
+ * the hand-entered trade as a real signal (via /api/signals/manual), then executes it
+ * through the exact same /api/signals/{id}/execute route (and all its risk checks --
+ * sizing, correlation, daily-loss, spread, price-drift) every other signal uses. Fills as
+ * a market order at whatever the price is when Place Trade is clicked -- this app has no
+ * limit-order concept, so there's no "entry" field here to fill in, only SL/TP.
+ */
+export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps) {
+  const [pair, setPair] = useState<Pair>(PAIRS[0]);
+  const [direction, setDirection] = useState<"long" | "short">("long");
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [riskPct, setRiskPct] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [placeResult, setPlaceResult] = useState<ExecuteResponse | null>(null);
+
+  // Same default source OnDemandSignalWidget/Dashboard.tsx already read -- a risk % typed
+  // here matches whatever the account is actually configured to risk per trade.
+  useEffect(() => {
+    fetch("/api/engine-mode")
+      .then((res) => res.json())
+      .then((body) => {
+        if (typeof body?.riskPerTradePct === "number") setRiskPct(body.riskPerTradePct);
+      })
+      .catch(() => {});
+  }, []);
+
+  const placeTrade = async () => {
+    setError(null);
+    setPlaceResult(null);
+    const stopLossNum = Number(stopLoss);
+    const takeProfitNum = Number(takeProfit);
+    if (!stopLoss || !Number.isFinite(stopLossNum)) {
+      setError("Enter a stop-loss price.");
+      return;
+    }
+    if (!takeProfit || !Number.isFinite(takeProfitNum)) {
+      setError("Enter a take-profit price.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const buildRes = await fetch("/api/signals/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pair, direction, stopLoss: stopLossNum, takeProfit: takeProfitNum }),
+      });
+      const body = (await buildRes.json()) as ManualSignalResponse;
+      if (!buildRes.ok || !body.signal) {
+        setError(body.error ?? "Couldn't place that trade.");
+        return;
+      }
+      const execResult = await executeSignalRequest(body.signal.id, buildConfirmPhrase(body.signal), riskPct);
+      setPlaceResult(execResult);
+      if (execResult.status === "filled") {
+        setStopLoss("");
+        setTakeProfit("");
+      }
+    } catch {
+      setError("Couldn't reach the server -- check your connection and try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Manual trade</h2>
+      <p className="mb-2.5 text-xs text-zinc-500">
+        Place a trade you decide on yourself -- pair, direction, stop-loss, and take-profit are entirely your call, whether or not
+        the AI currently sees a qualifying setup. Fills at the current market price; still goes through every safety check
+        (daily loss limit, correlation, spread, sizing) a signal-based trade does.
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={pair}
+          onChange={(e) => setPair(e.target.value as Pair)}
+          className="rounded-lg border border-white/10 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-100"
+        >
+          {PAIRS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <div className="flex overflow-hidden rounded-lg border border-white/10">
+          <button
+            type="button"
+            onClick={() => setDirection("long")}
+            className={`px-3 py-1.5 text-sm font-semibold transition ${
+              direction === "long" ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Buy
+          </button>
+          <button
+            type="button"
+            onClick={() => setDirection("short")}
+            className={`px-3 py-1.5 text-sm font-semibold transition ${
+              direction === "short" ? "bg-rose-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Sell
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-2.5 h-64 overflow-hidden rounded-lg border border-white/10">
+        <PriceChart pair={pair} timeframe="15m" streamEvent={streamEvent} prediction={null} />
+      </div>
+      <p className="mt-1 text-[11px] text-zinc-500">
+        Read the current price off the chart&rsquo;s right-hand scale, then set your stop-loss and take-profit below.
+      </p>
+
+      <div className="mt-2.5 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Stop-loss
+          <input
+            type="number"
+            step="any"
+            value={stopLoss}
+            onChange={(e) => setStopLoss(e.target.value)}
+            placeholder="price"
+            className="w-28 rounded border border-white/10 bg-zinc-800 px-1.5 py-1 text-zinc-100 outline-none focus:border-sky-500"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Take-profit
+          <input
+            type="number"
+            step="any"
+            value={takeProfit}
+            onChange={(e) => setTakeProfit(e.target.value)}
+            placeholder="price"
+            className="w-28 rounded border border-white/10 bg-zinc-800 px-1.5 py-1 text-zinc-100 outline-none focus:border-sky-500"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-zinc-400">
+          Risk
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min={0.01}
+              step={0.01}
+              value={riskPct}
+              onChange={(e) => setRiskPct(Number(e.target.value) || riskPct)}
+              className="w-16 rounded border border-white/10 bg-zinc-800 px-1.5 py-1 text-zinc-100 outline-none focus:border-sky-500"
+            />
+            <span className="text-zinc-500">% of equity</span>
+          </div>
+        </label>
+        <button
+          type="button"
+          onClick={placeTrade}
+          disabled={submitting}
+          className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
+            direction === "long" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500"
+          }`}
+        >
+          {submitting ? "Placing order…" : direction === "long" ? "🟢 Place Buy" : "🔴 Place Sell"}
+        </button>
+      </div>
+
+      {error && <p className="mt-2 text-xs font-semibold text-amber-400">{error}</p>}
+      {placeResult && <p className="mt-2 text-xs font-semibold text-zinc-300">{describeExecuteResponse(placeResult)}</p>}
+    </div>
+  );
+}

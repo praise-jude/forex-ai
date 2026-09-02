@@ -158,18 +158,21 @@ export const CONFLUENCES: Confluence[] = [
 
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
-export type SignalSource = "smc" | "tradingview" | "mean_reversion" | "manual_test";
+export type SignalSource = "smc" | "tradingview" | "mean_reversion" | "manual_test" | "manual";
 
 /** Sources whose `confidence`/`directionScore`/`entryScore` are placeholders rather than
  * a real weighted score -- TradingView hardcodes tier "buy" by design (see
- * executionPolicy.ts), and "manual_test" (see lib/market/testTrade.ts) is a deliberately
- * synthetic order for verifying the DEMO execution pipeline, not a scored setup at all.
- * Shared so every place that would otherwise show a fabricated-looking percentage (
- * SignalToast.tsx, SignalsPanel.tsx) shows this label instead, in one place rather than
- * two separately hand-written ternaries. */
+ * executionPolicy.ts), "manual_test" (see lib/market/testTrade.ts) is a deliberately
+ * synthetic order for verifying the DEMO execution pipeline, not a scored setup at all,
+ * and "manual" (see manualSignal.ts) is a hand-entered trade -- the operator's own
+ * pair/direction/SL/TP judgment standing in for the SMC/range engines' scoring, not a
+ * bug or a missing computation. Shared so every place that would otherwise show a
+ * fabricated-looking percentage (SignalToast.tsx, SignalsPanel.tsx) shows this label
+ * instead, in one place rather than three separately hand-written ternaries. */
 export const UNSCORED_SOURCE_LABEL: Partial<Record<SignalSource, string>> = {
   tradingview: "Source: TradingView",
   manual_test: "Source: Manual test order",
+  manual: "Source: Manual trade",
 };
 
 /** The current candle's classified market condition -- see marketRegime.ts for how

@@ -80,12 +80,14 @@ export type ExecutionPolicyCheckResult = { allowed: true } | { allowed: false; c
  * fixed, tested constants. This only decides whether an otherwise-valid signal clears
  * the operator's own configured selectivity bar before being allowed to execute.
  *
- * Exempts source === "tradingview": that integration hardcodes tier "buy" by design
- * (see tradingViewWebhook.ts) and has its own dedicated, always-live execution path --
- * gating it against an SMC-tuned tier floor would silently disable it whenever the
- * operator raises the floor above "buy". Matches autoExecutionListener.ts's own
- * established source==="tradingview" carve-out for the same reason.
+ * Exempts source === "tradingview" and source === "manual": both hardcode tier "buy" by
+ * design (see tradingViewWebhook.ts and manualSignal.ts) since neither goes through the
+ * SMC scoring this floor is tuned against -- gating either against it would silently
+ * disable it whenever the operator raises the floor above "buy". A hand-entered manual
+ * trade is the operator's own explicit, one-off judgment call; a tier floor meant to
+ * filter the AUTOPILOT's own signal stream was never meant to second-guess that.
  *
+
  * `calibration` is only consulted when policy.calibratedGateEnabled is on -- the caller
  * (executionEngine.ts) only bothers computing it in that case, same "cheap but no reason
  * to do it for accounts that never opted in" posture as the sizing feature's own
@@ -99,7 +101,7 @@ export function checkExecutionPolicy(
   policy: ExecutionPolicyState,
   calibration?: ConfidenceCalibrationBucket[]
 ): ExecutionPolicyCheckResult {
-  if (signal.source === "tradingview") return { allowed: true };
+  if (signal.source === "tradingview" || signal.source === "manual") return { allowed: true };
 
   if (TIER_RANK[signal.tier] < TIER_RANK[policy.minTier]) {
     return {
