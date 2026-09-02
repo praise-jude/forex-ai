@@ -27,11 +27,17 @@ export type Pair =
 // a sustained, self-perpetuating candle-subscription-downgrade storm (nearly every
 // symbol repeatedly downgraded, hundreds of events, not settling over 7+ minutes) --
 // the app's own bounded 2-attempt recovery (see MarketSyncListener.onSubscriptionDowngraded)
-// couldn't keep up at this pair count, unlike at 9. Going back to 13 (or beyond) needs
-// that recovery/subscription-pacing story solved FIRST, verified on demo, before ever
-// touching the live account's pair count again -- not just re-adding pairs and hoping.
-// See the "widen tracked pairs" and its revert commit for the full incident.
-export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD"];
+// couldn't keep up at this pair count, unlike at 9. See the "widen tracked pairs" and its
+// revert commit for the full incident.
+//
+// USOIL added back on 2026-09-02 -- a single-pair step, not a return to 13, and only
+// after the actual subscription-pacing story this comment asks for was solved: the
+// serialized recovery queue (no more independent per-symbol retry timers re-tripping the
+// shared rate limit), the circuit breaker (backs off entirely during a storm instead of
+// feeding it), and dropping 5m/4h/1d from live streaming (cut live subscriptions ~40%).
+// Still a real load increase on an account with a documented history of exactly this
+// failure mode -- watch the first deploy closely, same discipline as before.
+export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD", "USOIL"];
 
 export interface Candle {
   time: number; // unix ms, candle open time
