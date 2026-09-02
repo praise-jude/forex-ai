@@ -49,8 +49,11 @@ const ATR_AVERAGE_PERIOD = 20;
 // identical gate reads the exact same value rather than an independently-configured copy.
 export const WEEKEND_CLOSE_GATE_HOURS = Number(process.env.WEEKEND_CLOSE_GATE_HOURS) || 2;
 
-const BULLISH_PATTERNS = new Set(["bullish_engulfing", "pin_bar_bullish", "morning_star"]);
-const BEARISH_PATTERNS = new Set(["bearish_engulfing", "pin_bar_bearish", "evening_star"]);
+// "doji" is direction-agnostic by design (see candlestickPatterns.ts's own doc comment
+// on isDoji) -- its own open/close is too weak a signal to call a side, so it counts
+// toward whichever direction the zone/structure already want, same as any other match.
+const BULLISH_PATTERNS = new Set(["bullish_engulfing", "pin_bar_bullish", "morning_star", "doji"]);
+const BEARISH_PATTERNS = new Set(["bearish_engulfing", "pin_bar_bearish", "evening_star", "doji"]);
 
 interface Zone {
   top: number;

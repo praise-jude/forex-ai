@@ -39,6 +39,16 @@ describe("detectCandlestickPattern", () => {
     expect(detectCandlestickPattern([a, b, c], 2)).toBe("evening_star");
   });
 
+  it("detects a doji (tiny body, substantial wicks on both sides)", () => {
+    const c = candle(0, 1.1, 1.106, 1.094, 1.101);
+    expect(detectCandlestickPattern([c], 0)).toBe("doji");
+  });
+
+  it("prefers pin bar over doji when only one side has a long wick", () => {
+    const c = candle(0, 1.095, 1.101, 1.05, 1.1);
+    expect(detectCandlestickPattern([c], 0)).toBe("pin_bar_bullish");
+  });
+
   it("returns null when no pattern matches", () => {
     const candles = [candle(0, 1.0, 1.003, 0.998, 1.001), candle(1, 1.001, 1.004, 0.999, 1.002)];
     expect(detectCandlestickPattern(candles, 1)).toBeNull();

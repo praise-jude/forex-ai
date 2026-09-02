@@ -6,12 +6,29 @@ export type CandlestickPattern =
   | "pin_bar_bullish"
   | "pin_bar_bearish"
   | "morning_star"
-  | "evening_star";
+  | "evening_star"
+  | "doji";
 
 const SMALL_BODY_RATIO = 0.3;
 const LONG_WICK_RATIO = 0.6;
 const STRONG_BODY_RATIO = 0.6;
 const INDECISION_BODY_RATIO = 0.4;
+// A doji's body -- much smaller than a pin bar's already-small SMALL_BODY_RATIO
+// threshold -- with wicks on BOTH sides (unlike a pin bar's one dominant wick), added
+// 2026-09-02 after a production investigation of real near-miss candles found a genuine
+// gap: a small-body, both-sided-wick candle sitting at a local extreme after a real
+// directional run (a textbook exhaustion/indecision reversal signal) matched none of
+// the existing 6 patterns, since it's neither a strong-bodied engulfing candle nor a
+// one-sided pin bar. Deliberately a single direction-agnostic pattern, not
+// doji_bullish/doji_bearish -- a doji's own open-vs-close is too small a signal to
+// trust for direction (checked against a real near-miss: reading direction off which
+// half of the range the close sat in called the WRONG direction, price continued the
+// opposite way immediately after). What a doji genuinely signals is that the momentum
+// that had been moving price away from the zone has stalled, which supports the SMC
+// setup's own already-established implied direction either way -- see signalEngine.ts's
+// BULLISH_PATTERNS/BEARISH_PATTERNS, which both include "doji" for exactly this reason.
+const DOJI_BODY_RATIO = 0.12;
+const DOJI_MIN_WICK_RATIO = 0.2;
 
 const isBullish = (c: Candle) => c.close > c.open;
 const isBearish = (c: Candle) => c.close < c.open;
@@ -42,6 +59,16 @@ function isPinBarBearish(c: Candle): boolean {
   return body(c) <= r * SMALL_BODY_RATIO && upperWick >= r * LONG_WICK_RATIO;
 }
 
+/** Tiny body with wicks on BOTH sides, each substantial -- the shape that distinguishes
+ * a doji from a pin bar (one dominant wick, the other negligible). */
+function isDoji(c: Candle): boolean {
+  const r = range(c);
+  if (r <= 0) return false;
+  const upperWick = c.high - Math.max(c.open, c.close);
+  const lowerWick = Math.min(c.open, c.close) - c.low;
+  return body(c) <= r * DOJI_BODY_RATIO && upperWick >= r * DOJI_MIN_WICK_RATIO && lowerWick >= r * DOJI_MIN_WICK_RATIO;
+}
+
 function isMorningStar(a: Candle, b: Candle, c: Candle): boolean {
   const aRange = range(a);
   const bRange = range(b);
@@ -68,8 +95,9 @@ function isEveningStar(a: Candle, b: Candle, c: Candle): boolean {
 
 /**
  * Checked only at the signal candle. Priority: the more specific 3-candle star
- * patterns first, then 2-candle engulfing, then the single-candle pin bar (which is
- * the easiest shape to satisfy by chance, so it loses to a more specific match).
+ * patterns first, then 2-candle engulfing, then the single-candle pin bar, then doji
+ * last of all -- both pin bar and doji are single-candle shapes satisfiable by chance,
+ * but doji's tiny-body requirement is the least specific of the two.
  */
 export function detectCandlestickPattern(candles: Candle[], index: number): CandlestickPattern | null {
   const cur = candles[index];
@@ -89,6 +117,7 @@ export function detectCandlestickPattern(candles: Candle[], index: number): Cand
 
   if (isPinBarBullish(cur)) return "pin_bar_bullish";
   if (isPinBarBearish(cur)) return "pin_bar_bearish";
+  if (isDoji(cur)) return "doji";
 
   return null;
 }
