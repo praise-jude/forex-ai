@@ -35,9 +35,18 @@ export type Pair =
 // serialized recovery queue (no more independent per-symbol retry timers re-tripping the
 // shared rate limit), the circuit breaker (backs off entirely during a storm instead of
 // feeding it), and dropping 5m/4h/1d from live streaming (cut live subscriptions ~40%).
-// Still a real load increase on an account with a documented history of exactly this
-// failure mode -- watch the first deploy closely, same discipline as before.
-export const PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD", "USOIL"];
+//
+// EUR/USD, USD/JPY, and AUD/USD dropped later the same night -- not a subscription-storm
+// incident this time, but real, sustained MetaApi credit-limit throttling specifically on
+// BTC/USD and USOIL (see https://metaapi.cloud/docs/client/rateLimiting/: a shared,
+// account-wide credit budget, 2 credits per candle/quote update -- BTC and oil both tick
+// far more often and more erratically than a forex major, so they were burning a
+// disproportionate share of it and getting server-side downgraded repeatedly). The
+// operator explicitly prioritized keeping BTC/USD, USOIL, and XAU/USD over these three --
+// removing them frees up shared credit budget for the pairs that actually matter here,
+// same lever MetaApi's own docs suggest ("distribute subscriptions" -- the only version of
+// that available on a single account is tracking fewer symbols).
+export const PAIRS: Pair[] = ["GBP/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD", "USOIL"];
 
 export interface Candle {
   time: number; // unix ms, candle open time

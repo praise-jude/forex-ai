@@ -26,6 +26,18 @@ interface ManualTradeWidgetProps {
    * embedded chart ticks live too. Optional; the chart still shows real (just not
    * live-updating) candles without it. */
   streamEvent?: StreamEvent | null;
+  /** The shared voice assistant's own onSignal (see useVoiceAssistant.ts) -- feeding a
+   * hand-built manual signal through it puts it through the exact same announce ->
+   * pending -> confirm flow (voice "yes"/exact phrase, or VoiceAssistantPanel's own
+   * Confirm button) a live-detected SMC/range signal already gets, instead of building
+   * a second, parallel confirm mechanism. Only used while voice mode is actually on (see
+   * placeTrade) -- with it off, this widget falls back to executing directly on click,
+   * same as before voice support existed here. Optional so this widget still works
+   * standalone (e.g. a future page without the voice assistant mounted at all). */
+  onSignal?: (signal: Signal) => void;
+  /** Whether voice mode is currently off -- see onSignal's own doc comment for why this
+   * decides which of the two placeTrade paths runs. */
+  voiceModeOff?: boolean;
 }
 
 /**
@@ -38,7 +50,7 @@ interface ManualTradeWidgetProps {
  * a market order at whatever the price is when Place Trade is clicked -- this app has no
  * limit-order concept, so there's no "entry" field here to fill in, only SL/TP.
  */
-export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps) {
+export function ManualTradeWidget({ streamEvent = null, onSignal, voiceModeOff = true }: ManualTradeWidgetProps) {
   const [pair, setPair] = useState<Pair>(PAIRS[0]);
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [entry, setEntry] = useState<number | null>(null);
@@ -114,11 +126,22 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
         setError(body.error ?? "Couldn't place that trade.");
         return;
       }
-      const execResult = await executeSignalRequest(body.signal.id, buildConfirmPhrase(body.signal), riskPct);
-      setPlaceResult(execResult);
-      if (execResult.status === "filled") {
-        setStopLoss("");
-        setTakeProfit("");
+
+      // Voice on: hand it to the shared voice assistant instead of executing directly --
+      // it announces the trade and waits for "yes"/the exact confirm phrase (or a click
+      // on VoiceAssistantPanel's own Confirm button), the same two-step flow every
+      // algorithm-detected signal already goes through. Voice off: unchanged, immediate
+      // one-click execution (see onSignal's own doc comment).
+      if (!voiceModeOff && onSignal) {
+        onSignal(body.signal);
+        setPlaceResult(null);
+      } else {
+        const execResult = await executeSignalRequest(body.signal.id, buildConfirmPhrase(body.signal), riskPct);
+        setPlaceResult(execResult);
+        if (execResult.status === "filled") {
+          setStopLoss("");
+          setTakeProfit("");
+        }
       }
     } catch {
       setError("Couldn't reach the server -- check your connection and try again.");
@@ -234,9 +257,23 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
             direction === "long" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500"
           }`}
         >
-          {submitting ? "Placing order…" : direction === "long" ? "🟢 Place Buy" : "🔴 Place Sell"}
+          {submitting
+            ? voiceModeOff
+              ? "Placing order…"
+              : "Announcing…"
+            : direction === "long"
+              ? "🟢 Place Buy"
+              : "🔴 Place Sell"}
         </button>
       </div>
+
+      {!voiceModeOff && (
+        <p className="mt-2 text-[11px] text-zinc-500">
+          Voice mode is on -- clicking Place {direction === "long" ? "Buy" : "Sell"} announces this trade and waits for you to say
+          &ldquo;yes&rdquo; (or the exact confirm phrase) before it actually fires. Turn voice off in the panel above to place
+          immediately on click instead.
+        </p>
+      )}
 
       {error && <p className="mt-2 text-xs font-semibold text-amber-400">{error}</p>}
       {placeResult && <p className="mt-2 text-xs font-semibold text-zinc-300">{describeExecuteResponse(placeResult)}</p>}
