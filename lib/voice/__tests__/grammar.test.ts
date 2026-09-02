@@ -145,7 +145,17 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("snowball effect", expected).kind).not.toBe("decline");
     // The real words must still match on their own.
     expect(parseVoiceCommand("no", expected)).toEqual({ kind: "decline" });
-    expect(parseVoiceCommand("yes", expected)).toEqual({ kind: "soft_confirm" });
+    expect(parseVoiceCommand("yes", expected)).toEqual({ kind: "hard_confirm" });
+  });
+
+  it("hard-confirms on a bare 'yes' while a trade is genuinely pending", () => {
+    expect(parseVoiceCommand("yes", expected)).toEqual({ kind: "hard_confirm" });
+    expect(parseVoiceCommand("Yes!", expected)).toEqual({ kind: "hard_confirm" });
+  });
+
+  it("does NOT hard-confirm on 'yes' when nothing is pending -- there's nothing to confirm", () => {
+    expect(parseVoiceCommand("yes", null)).not.toEqual({ kind: "hard_confirm" });
+    expect(parseVoiceCommand("yes", null)).toEqual({ kind: "soft_confirm" });
   });
 
   it("recognizes the emergency stop phrases ahead of decline/soft matches", () => {

@@ -102,7 +102,8 @@ export function VoiceAssistantPanel(voice: VoiceAssistantState) {
           <p className="mt-2 text-[11px] text-zinc-500">Status: waiting for confirmation</p>
           {settings.confirmationMode !== "button_only" && showMicButton && (
             <p className="text-[11px] text-sky-400">
-              Say: &ldquo;CONFIRM {pendingSignal.direction === "long" ? "BUY" : "SELL"} {pendingSignal.pair.replace("/", "")}&rdquo;
+              Say &ldquo;yes&rdquo;, or the full phrase: &ldquo;CONFIRM {pendingSignal.direction === "long" ? "BUY" : "SELL"}{" "}
+              {pendingSignal.pair.replace("/", "")}&rdquo;
             </p>
           )}
           <div className="mt-2 flex gap-2">
