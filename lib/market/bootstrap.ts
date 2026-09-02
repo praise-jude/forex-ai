@@ -12,6 +12,7 @@ import { startPositionManager } from "./positionManager";
 import { startPositionInvalidation } from "./positionInvalidation";
 import { startWeeklyDigest } from "./weeklyDigest";
 import { startDailyDigest } from "./dailyDigest";
+import { startHourlyActivitySummary } from "./hourlyActivitySummary";
 import { startSessionAlerts } from "./sessionAlerts";
 import { signalStore } from "./signalStore";
 import { positionStore } from "./positionStore";
@@ -115,5 +116,6 @@ export function startMarketEngine(): void {
   startPositionInvalidation();
   startWeeklyDigest();
   startDailyDigest();
+  startHourlyActivitySummary();
   startSessionAlerts();
 }
