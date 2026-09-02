@@ -4,11 +4,18 @@ import { useEffect, useState } from "react";
 import { PAIRS, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
 import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executionClient";
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
+import { decimals } from "@/lib/market/symbols";
 import { describeExecuteResponse } from "./TradeProposalCard";
 import { PriceChart } from "./PriceChart";
 
 interface ManualSignalResponse {
   signal?: Signal;
+  error?: string;
+}
+
+interface SuggestResponse {
+  stopLoss?: number;
+  takeProfit?: number;
   error?: string;
 }
 
@@ -49,6 +56,33 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
       })
       .catch(() => {});
   }, []);
+
+  // Auto-fills a starting stop-loss/take-profit from this pair's own real recent
+  // volatility (see manualTradeSuggestion.ts) whenever the pair or direction changes --
+  // the operator's job is then just to glance at it and click Buy/Sell, not compute
+  // levels from scratch, though both fields below stay ordinary editable inputs if they
+  // want something different. Never overwrites a value while the request is in flight
+  // for a pair/direction combo that's already been superseded (the `cancelled` guard) --
+  // switching pairs quickly must not have an older suggestion land after a newer one.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/signals/manual/suggest?pair=${encodeURIComponent(pair)}&direction=${direction}`)
+      .then((res) => res.json())
+      .then((body: SuggestResponse) => {
+        if (cancelled) return;
+        if (typeof body.stopLoss === "number" && typeof body.takeProfit === "number") {
+          const dp = decimals(pair);
+          setStopLoss(body.stopLoss.toFixed(dp));
+          setTakeProfit(body.takeProfit.toFixed(dp));
+        }
+      })
+      .catch(() => {
+        // Best-effort -- the operator can still type their own levels if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pair, direction]);
 
   const placeTrade = async () => {
     setError(null);
@@ -93,9 +127,10 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
     <div className="rounded-xl border border-white/10 bg-zinc-900 p-3.5">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">Manual trade</h2>
       <p className="mb-2.5 text-xs text-zinc-500">
-        Place a trade you decide on yourself -- pair, direction, stop-loss, and take-profit are entirely your call, whether or not
-        the AI currently sees a qualifying setup. Fills at the current market price; still goes through every safety check
-        (daily loss limit, correlation, spread, sizing) a signal-based trade does.
+        Place a trade you decide on yourself, whether or not the AI currently sees a qualifying setup. Pick a pair and Buy/Sell --
+        the AI fills in a suggested stop-loss and take-profit for you (based on this pair&rsquo;s own recent volatility), which you
+        can leave as-is or edit before placing. Fills at the current market price; still goes through every safety check (daily
+        loss limit, correlation, spread, sizing) a signal-based trade does.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -136,7 +171,7 @@ export function ManualTradeWidget({ streamEvent = null }: ManualTradeWidgetProps
         <PriceChart pair={pair} timeframe="15m" streamEvent={streamEvent} prediction={null} />
       </div>
       <p className="mt-1 text-[11px] text-zinc-500">
-        Read the current price off the chart&rsquo;s right-hand scale, then set your stop-loss and take-profit below.
+        Stop-loss and take-profit below are AI-suggested from this pair’s recent volatility -- review or edit before placing.
       </p>
 
       <div className="mt-2.5 flex flex-wrap items-end gap-2">
