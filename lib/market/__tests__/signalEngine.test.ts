@@ -194,9 +194,14 @@ describe("assembleSignals", () => {
     expect(assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual([]);
   });
 
-  it("suppresses an otherwise-valid signal when D1 and H4 trend disagree", () => {
-    const higherTimeframes = { ...buildHigherTimeframes("up"), h4: buildHigherTf(210, "down") };
+  it("suppresses an otherwise-valid signal when D1 itself disagrees with the zone direction", () => {
+    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down") };
     expect(assembleSignals(buildCandles(), "EUR/USD", "15m", higherTimeframes)).toEqual([]);
+  });
+
+  it("does NOT suppress an otherwise-valid signal just because H4 disagrees with an agreeing D1", () => {
+    const higherTimeframes = { ...buildHigherTimeframes("up"), h4: buildHigherTf(210, "down") };
+    expect(assembleSignals(buildCandles(), "EUR/USD", "15m", higherTimeframes)).toHaveLength(1);
   });
 
   it("downgrades to a buy-tier signal when volume confirmation is missing", () => {
@@ -269,23 +274,32 @@ describe("evaluateSignal", () => {
     });
   });
 
-  it("reports trend_disagreement with the real per-timeframe readings when D1/H4 disagree", () => {
+  // The trend-agreement gate deliberately only requires D1 to match the zone's own
+  // direction -- a production data pull of every trend_disagreement rejection ever
+  // logged found 69% of genuine D1-vs-H4 splits had the zone siding with D1, the
+  // textbook "trade with the daily trend, enter on an H4 pullback" pattern that
+  // requiring all-timeframes-agree was blocking outright (see signalEngine.ts's own
+  // doc comment on this gate). So H4 disagreeing alone must never block a setup D1
+  // supports, same treatment H1 already had.
+  it("still fires when only H4 disagrees with an agreeing D1", () => {
     const higherTimeframes = { ...buildHigherTimeframes("up"), h4: buildHigherTf(210, "down") };
     const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", higherTimeframes);
-    expect(evaluation).toMatchObject({
-      status: "no_trade",
-      reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bullish", h4: "bearish" },
-    });
+    expect(evaluation.status).toBe("signal");
   });
 
-  // The trend-agreement gate deliberately only requires D1/H4 -- a live check of the
-  // lone-disagreement pattern across all 9 tracked pairs found H1 was the sole holdout
-  // in 5 of 7 blocked setups (D1: 2, H4: 0), so H1 disagreeing alone must never block a
-  // setup that D1/H4 both support.
-  it("still fires when only H1 disagrees with an agreeing D1/H4", () => {
+  it("still fires when only H1 disagrees with an agreeing D1", () => {
     const higherTimeframes = { ...buildHigherTimeframes("up"), h1: buildHigherTf(210, "down") };
     const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", higherTimeframes);
     expect(evaluation.status).toBe("signal");
+  });
+
+  it("reports trend_disagreement with the real per-timeframe readings when D1 itself disagrees with the zone", () => {
+    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down") };
+    const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", higherTimeframes);
+    expect(evaluation).toMatchObject({
+      status: "no_trade",
+      reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bearish", h4: "bullish" },
+    });
   });
 
   it("reports no_setup when price has already tagged the zone once", () => {
