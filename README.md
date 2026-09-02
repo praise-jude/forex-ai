@@ -147,6 +147,8 @@ The one exception to "nothing trades automatically": `POST /api/webhooks/trading
 
 The dashboard keeps one persistent MetaApi streaming connection and an in-memory candle/signal store per server process (started once from `instrumentation.ts` on boot). That needs a single **always-on Node process** — `next build && next start` on a VPS, Docker container, or a "web service" host (Railway, Render, Fly, etc.) — not Vercel serverless functions, which are ephemeral per-request and would never keep the connection alive. Run a single instance only: multiple replicas would each open a duplicate MetaApi connection against the same account.
 
+`npm start` passes `--keepAliveTimeout 65000` to `next start` -- Node's own HTTP server default (5s) is shorter than most reverse-proxy/edge idle timeouts (Railway's included, commonly ~60s), so the proxy can forward a request on a connection Node already silently closed, which a browser surfaces as a hard "page couldn't load" rather than a transparent retry. Confirmed as a real, repeatedly-reported symptom on this exact deployment: a long-open tab hitting it after the app restarted (a redeploy, or the connection watchdog's own automatic restart, see `connectionWatchdog.ts`), fixed by any single reload since that just opens a fresh connection. 65s is comfortably longer than a typical proxy timeout without being so long it wastes server resources on truly dead connections.
+
 ### Tests
 
 The SMC detectors, the signal engine, and the position sizing/risk-limit logic are unit tested with fixtures — no live MetaApi connection needed. (The execution engine's broker-facing orchestration itself isn't unit tested, same as `metaApiConnection.ts` — both are verified against a demo account instead, per "Manual execution" above.)
