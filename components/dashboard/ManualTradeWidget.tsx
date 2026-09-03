@@ -21,21 +21,6 @@ interface SuggestResponse {
   error?: string;
 }
 
-interface ManualTradeWidgetProps {
-  /** The shared voice assistant's own onSignal (see useVoiceAssistant.ts) -- feeding a
-   * hand-built manual signal through it puts it through the exact same announce ->
-   * pending -> confirm flow (voice "yes"/exact phrase, or VoiceAssistantPanel's own
-   * Confirm button) a live-detected SMC/range signal already gets, instead of building
-   * a second, parallel confirm mechanism. Only used while voice mode is actually on (see
-   * placeTrade) -- with it off, this widget falls back to executing directly on click,
-   * same as before voice support existed here. Optional so this widget still works
-   * standalone (e.g. a future page without the voice assistant mounted at all). */
-  onSignal?: (signal: Signal) => void;
-  /** Whether voice mode is currently off -- see onSignal's own doc comment for why this
-   * decides which of the two placeTrade paths runs. */
-  voiceModeOff?: boolean;
-}
-
 /**
  * A trade the operator builds entirely by hand -- pair, direction, stop-loss, take-profit
  * -- independent of whether the SMC/range engines currently see a qualifying setup.
@@ -44,9 +29,12 @@ interface ManualTradeWidgetProps {
  * through the exact same /api/signals/{id}/execute route (and all its risk checks --
  * sizing, correlation, daily-loss, spread, price-drift) every other signal uses. Fills as
  * a market order at whatever the price is when Place Trade is clicked -- this app has no
- * limit-order concept, so there's no "entry" field here to fill in, only SL/TP.
+ * limit-order concept, so there's no "entry" field here to fill in, only SL/TP. Always
+ * executes immediately on click, regardless of the voice assistant's own mode -- see the
+ * doc comment inline at the execute call for why this deliberately does NOT route through
+ * voice's own announce-then-wait-for-confirmation flow the way an AI-detected signal does.
  */
-export function ManualTradeWidget({ onSignal, voiceModeOff = true }: ManualTradeWidgetProps) {
+export function ManualTradeWidget() {
   const [pair, setPair] = useState<Pair>(PAIRS[0]);
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [entry, setEntry] = useState<number | null>(null);
@@ -123,21 +111,20 @@ export function ManualTradeWidget({ onSignal, voiceModeOff = true }: ManualTrade
         return;
       }
 
-      // Voice on: hand it to the shared voice assistant instead of executing directly --
-      // it announces the trade and waits for "yes"/the exact confirm phrase (or a click
-      // on VoiceAssistantPanel's own Confirm button), the same two-step flow every
-      // algorithm-detected signal already goes through. Voice off: unchanged, immediate
-      // one-click execution (see onSignal's own doc comment).
-      if (!voiceModeOff && onSignal) {
-        onSignal(body.signal);
-        setPlaceResult(null);
-      } else {
-        const execResult = await executeSignalRequest(body.signal.id, buildConfirmPhrase(body.signal), riskPct);
-        setPlaceResult(execResult);
-        if (execResult.status === "filled") {
-          setStopLoss("");
-          setTakeProfit("");
-        }
+      // Always executes immediately on click -- this used to branch into the voice
+      // assistant's own announce-then-wait-for-"yes" flow when voice mode was on, but
+      // that produced a confusing, silent-feeling two-step interaction that directly
+      // contradicted this panel's whole point ("pick a pair, click Buy/Sell, done").
+      // Confirmed as a real problem live: a real Sell attempt registered successfully
+      // (a pending context row exists) but never executed, because voice mode being on
+      // by default routed it into that wait-for-confirmation state instead. A hand-built
+      // manual trade is already the operator's own explicit, deliberate decision -- it
+      // doesn't need a second confirmation gate the way an AI-detected signal does.
+      const execResult = await executeSignalRequest(body.signal.id, buildConfirmPhrase(body.signal), riskPct);
+      setPlaceResult(execResult);
+      if (execResult.status === "filled") {
+        setStopLoss("");
+        setTakeProfit("");
       }
     } catch {
       setError("Couldn't reach the server -- check your connection and try again.");
@@ -264,23 +251,9 @@ export function ManualTradeWidget({ onSignal, voiceModeOff = true }: ManualTrade
             direction === "long" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-rose-600 hover:bg-rose-500"
           }`}
         >
-          {submitting
-            ? voiceModeOff
-              ? "Placing order…"
-              : "Announcing…"
-            : direction === "long"
-              ? "🟢 Place Buy"
-              : "🔴 Place Sell"}
+          {submitting ? "Placing order…" : direction === "long" ? "🟢 Place Buy" : "🔴 Place Sell"}
         </button>
       </div>
-
-      {!voiceModeOff && (
-        <p className="mt-2 text-[11px] text-zinc-500">
-          Voice mode is on -- clicking Place {direction === "long" ? "Buy" : "Sell"} announces this trade and waits for you to say
-          &ldquo;yes&rdquo; (or the exact confirm phrase) before it actually fires. Turn voice off in the panel above to place
-          immediately on click instead.
-        </p>
-      )}
 
       {error && <p className="mt-2 text-xs font-semibold text-amber-400">{error}</p>}
       {placeResult && <p className="mt-2 text-xs font-semibold text-zinc-300">{describeExecuteResponse(placeResult)}</p>}
