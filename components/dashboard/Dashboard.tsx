@@ -286,7 +286,7 @@ export function Dashboard() {
       <AutopilotStatus predictions={flatPredictions} signals={signals} marketsMonitored={PAIRS.length} />
       <ClosestToFiringPanel predictions={flatPredictions} />
       <OnDemandSignalWidget streamEvent={latestEvent} />
-      <ManualTradeWidget streamEvent={latestEvent} onSignal={voice.onSignal} voiceModeOff={voice.settings.voiceMode === "off"} />
+      <ManualTradeWidget onSignal={voice.onSignal} voiceModeOff={voice.settings.voiceMode === "off"} />
 
       <div className="grid gap-4 lg:grid-cols-[220px_1fr_260px]">
         <Watchlist entries={watchlist} selectedPair={selectedPair} onSelect={selectPair} />

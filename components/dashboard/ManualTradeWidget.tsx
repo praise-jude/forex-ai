@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PAIRS, type Pair, type Signal, type StreamEvent } from "@/lib/market/types";
+import { PAIRS, type Pair, type Signal } from "@/lib/market/types";
 import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executionClient";
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
 import { decimals } from "@/lib/market/symbols";
+import { formatPrice } from "@/lib/market/format";
 import { describeManualTradePlan } from "@/lib/market/manualTradeSuggestion";
 import { describeExecuteResponse } from "./TradeProposalCard";
-import { PriceChart } from "./PriceChart";
 
 interface ManualSignalResponse {
   signal?: Signal;
@@ -22,10 +22,6 @@ interface SuggestResponse {
 }
 
 interface ManualTradeWidgetProps {
-  /** Same live SSE stream the main dashboard chart uses -- purely so this widget's own
-   * embedded chart ticks live too. Optional; the chart still shows real (just not
-   * live-updating) candles without it. */
-  streamEvent?: StreamEvent | null;
   /** The shared voice assistant's own onSignal (see useVoiceAssistant.ts) -- feeding a
    * hand-built manual signal through it puts it through the exact same announce ->
    * pending -> confirm flow (voice "yes"/exact phrase, or VoiceAssistantPanel's own
@@ -50,7 +46,7 @@ interface ManualTradeWidgetProps {
  * a market order at whatever the price is when Place Trade is clicked -- this app has no
  * limit-order concept, so there's no "entry" field here to fill in, only SL/TP.
  */
-export function ManualTradeWidget({ streamEvent = null, onSignal, voiceModeOff = true }: ManualTradeWidgetProps) {
+export function ManualTradeWidget({ onSignal, voiceModeOff = true }: ManualTradeWidgetProps) {
   const [pair, setPair] = useState<Pair>(PAIRS[0]);
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [entry, setEntry] = useState<number | null>(null);
@@ -194,9 +190,20 @@ export function ManualTradeWidget({ streamEvent = null, onSignal, voiceModeOff =
         </div>
       </div>
 
-      <div className="mt-2.5 h-64 overflow-hidden rounded-lg border border-white/10">
-        <PriceChart pair={pair} timeframe="15m" streamEvent={streamEvent} prediction={null} />
-      </div>
+      {/* A plain price readout instead of a full live chart here -- this panel used to
+          embed one so the operator could read the current price off it, but the
+          AI-suggested SL/TP below already resolves that same price server-side, so the
+          chart was pure extra background load (its own candle fetch, its own SSE
+          handling) duplicating what the main dashboard chart and Check-a-pair already
+          show, for no remaining purpose once auto-suggest existed. Confirmed real user
+          report of intermittent page-load failures specifically since this panel was
+          added -- removing the redundant chart instance is a direct, concrete reduction
+          in what a page visit here actually has to load. */}
+      {entry !== null && (
+        <p className="mt-2.5 text-xs text-zinc-400">
+          Current price: <span className="font-semibold text-zinc-200 tabular-nums">{formatPrice(pair, entry)}</span>
+        </p>
+      )}
 
       {/* The plain-language "just look and click" summary -- recomputed live from
           whatever's actually in the fields below (the AI's own suggestion by default,
