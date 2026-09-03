@@ -1,9 +1,10 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
-import type { AccountKey, OpenPosition, PositionRiskAssessment } from "@/lib/market/types";
-import { formatPrice } from "@/lib/market/format";
+import type { AccountKey, OpenPosition, Pair, PositionRiskAssessment } from "@/lib/market/types";
+import { formatDurationRange, formatPrice } from "@/lib/market/format";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
+import type { DurationStats } from "@/lib/market/tradeJournal";
 
 interface PositionsResponse {
   account: AccountKey;
@@ -45,9 +46,45 @@ function formatDuration(openedAt: number, now: number): string {
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
+// Real closed-trade duration data changes only when a trade actually closes -- a rare
+// event relative to POLL_INTERVAL_MS's 1s cadence, so this gets its own far slower
+// interval, same as PriceChart.tsx's own DURATION_STATS_POLL_MS.
+const DURATION_POLL_MS = 5 * 60_000;
+
+async function fetchDurationStatsForPair(pair: Pair): Promise<DurationStats> {
+  const res = await fetch(`/api/trade-journal/duration?pair=${encodeURIComponent(pair)}`);
+  return res.json();
+}
+
+/** Whether an open, currently-losing position has already run longer than 75% of past
+ * trades on this pair took to hit their own stop -- a real, data-grounded "this is
+ * taking longer than usual to turn around" cue for the operator to review manually,
+ * never an automated close (see this feature's own request: "enable me to stop the
+ * trade if it's moving out of my direction" -- the app surfaces the signal, the human
+ * decides). Requires openedAt (undefined for a position opened outside this app, see
+ * OpenPosition's own doc comment) and a calibrated stop-loss bucket; returns false
+ * (never a guess) when either is missing. */
+function isRunningLongForALoss(position: OpenPosition, stats: DurationStats | null, now: number): boolean {
+  if (position.profit >= 0 || position.openedAt === undefined) return false;
+  if (stats?.stopLoss.status !== "calibrated" || stats.stopLoss.p75Ms === null) return false;
+  return now - position.openedAt > stats.stopLoss.p75Ms;
+}
+
 function PositionRow({ position, risk, now }: { position: OpenPosition; risk: PositionRiskAssessment | undefined; now: number }) {
   const isLong = position.direction === "long";
   const inProfit = position.profit >= 0;
+  const { data: durationStats } = usePolledResource<DurationStats>(
+    `duration:${position.pair}`,
+    () => fetchDurationStatsForPair(position.pair),
+    DURATION_POLL_MS
+  );
+  const runningLong = isRunningLongForALoss(position, durationStats ?? null, now);
+  // Whichever side is actually relevant right now: a losing position wants to know how
+  // long losses on this pair typically take to hit stop (the "how much longer might
+  // this drag on" question); a winning one wants the take-profit window instead. Never
+  // both at once -- showing the side that doesn't match the current direction of travel
+  // would just be noise.
+  const relevantBucket = inProfit ? durationStats?.takeProfit : durationStats?.stopLoss;
 
   return (
     <li className="rounded-lg border border-white/10 bg-zinc-800/60 p-2.5 text-xs">
@@ -74,6 +111,22 @@ function PositionRow({ position, risk, now }: { position: OpenPosition; risk: Po
         <div className="mt-1 flex items-center justify-between text-zinc-500">
           <span>Open for</span>
           <span className="tabular-nums">{formatDuration(position.openedAt, now)}</span>
+        </div>
+      )}
+      {/* A real, historically-grounded read on this pair's own past trades -- never a
+          timing prediction for THIS specific position (see computeDurationStats' own
+          doc comment). Reassuring context on a winner (typical time-to-target), an
+          explicit caution cue on a loser that's already run past the typical
+          time-to-stop window. */}
+      {relevantBucket?.status === "calibrated" && relevantBucket.p25Ms !== null && relevantBucket.p75Ms !== null && (
+        <div className="mt-1 flex items-center justify-between text-zinc-500">
+          <span>Typical {inProfit ? "time to target" : "time to stop"}</span>
+          <span className="tabular-nums">{formatDurationRange(relevantBucket.p25Ms, relevantBucket.p75Ms)}</span>
+        </div>
+      )}
+      {runningLong && (
+        <div className="mt-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] leading-tight text-amber-400">
+          Open longer than 75% of past losses on this pair took to hit stop -- worth a manual look.
         </div>
       )}
       {risk && (

@@ -24,7 +24,7 @@ import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { describeMeasurement, measureCandleRange } from "@/lib/market/chartMeasurement";
 import type { DurationStats } from "@/lib/market/tradeJournal";
-import { formatDurationApprox } from "@/lib/market/format";
+import { formatDurationRange } from "@/lib/market/format";
 
 interface MeasureSelection {
   pair: Pair;
@@ -99,11 +99,11 @@ async function fetchDurationStats(pair: Pair, timeframe: Timeframe): Promise<Dur
  * data" rather than simply absent. */
 function describeDurationStats(stats: DurationStats | null): string {
   const parts: string[] = [];
-  if (stats?.takeProfit.status === "calibrated" && stats.takeProfit.medianMs !== null) {
-    parts.push(`TP in ~${formatDurationApprox(stats.takeProfit.medianMs)} (${stats.takeProfit.sampleSize} trades)`);
+  if (stats?.takeProfit.status === "calibrated" && stats.takeProfit.p25Ms !== null && stats.takeProfit.p75Ms !== null) {
+    parts.push(`TP in ${formatDurationRange(stats.takeProfit.p25Ms, stats.takeProfit.p75Ms)} (${stats.takeProfit.sampleSize} trades)`);
   }
-  if (stats?.stopLoss.status === "calibrated" && stats.stopLoss.medianMs !== null) {
-    parts.push(`SL in ~${formatDurationApprox(stats.stopLoss.medianMs)} (${stats.stopLoss.sampleSize} trades)`);
+  if (stats?.stopLoss.status === "calibrated" && stats.stopLoss.p25Ms !== null && stats.stopLoss.p75Ms !== null) {
+    parts.push(`SL in ${formatDurationRange(stats.stopLoss.p25Ms, stats.stopLoss.p75Ms)} (${stats.stopLoss.sampleSize} trades)`);
   }
   if (parts.length > 0) return `Similar past trades: ${parts.join(" · ")}`;
   return "Similar-trade timing: not enough closed trades on this pair yet";

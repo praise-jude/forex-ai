@@ -20,3 +20,15 @@ export function formatDurationApprox(ms: number): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
+
+/** A "typical window" readout (e.g. computeDurationStats' p25Ms-p75Ms) -- deliberately
+ * two numbers, not one: most past trades in a bucket resolved somewhere in this range,
+ * which is what "caution, this one's already taking longer than usual" needs to compare
+ * an open position's real elapsed time against. Collapses to a single figure when the
+ * two round to the same display string (e.g. both land in "0m" for a very tight, very
+ * fast bucket), rather than showing a meaningless "12m-12m". */
+export function formatDurationRange(loMs: number, hiMs: number): string {
+  const lo = formatDurationApprox(loMs);
+  const hi = formatDurationApprox(hiMs);
+  return lo === hi ? lo : `${lo}–${hi}`;
+}

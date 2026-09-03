@@ -394,14 +394,14 @@ describe("computeDurationStats", () => {
     });
   }
 
-  it("reports insufficient_data (and null medianMs) below the minimum sample size", () => {
+  it("reports insufficient_data (and null medianMs/p25Ms/p75Ms) below the minimum sample size", () => {
     const entries = [entryWithDuration("take_profit", 2), entryWithDuration("take_profit", 4)];
     const { takeProfit, stopLoss } = computeDurationStats(entries, {}, 5);
-    expect(takeProfit).toEqual({ sampleSize: 2, status: "insufficient_data", medianMs: null });
-    expect(stopLoss).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null });
+    expect(takeProfit).toEqual({ sampleSize: 2, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
+    expect(stopLoss).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
   });
 
-  it("reports a real median once minSamples is met, independently for take-profit and stop-loss", () => {
+  it("reports a real median and 25th/75th percentile window once minSamples is met, independently for take-profit and stop-loss", () => {
     const entries = [
       entryWithDuration("take_profit", 2),
       entryWithDuration("take_profit", 4),
@@ -411,8 +411,8 @@ describe("computeDurationStats", () => {
       entryWithDuration("stop_loss", 5),
     ];
     const { takeProfit, stopLoss } = computeDurationStats(entries, {}, 3);
-    expect(takeProfit).toEqual({ sampleSize: 3, status: "calibrated", medianMs: 4 * HOUR });
-    expect(stopLoss).toEqual({ sampleSize: 3, status: "calibrated", medianMs: 3 * HOUR });
+    expect(takeProfit).toEqual({ sampleSize: 3, status: "calibrated", medianMs: 4 * HOUR, p25Ms: 3 * HOUR, p75Ms: 5 * HOUR });
+    expect(stopLoss).toEqual({ sampleSize: 3, status: "calibrated", medianMs: 3 * HOUR, p25Ms: 2 * HOUR, p75Ms: 4 * HOUR });
   });
 
   it("filters by pair, same as getPerformanceStats", () => {
@@ -422,26 +422,26 @@ describe("computeDurationStats", () => {
       entryWithDuration("take_profit", 100, { pair: "GBP/USD" }),
     ];
     const { takeProfit } = computeDurationStats(entries, { pair: "EUR/USD" }, 2);
-    expect(takeProfit).toEqual({ sampleSize: 2, status: "calibrated", medianMs: 3 * HOUR });
+    expect(takeProfit).toEqual({ sampleSize: 2, status: "calibrated", medianMs: 3 * HOUR, p25Ms: 2.5 * HOUR, p75Ms: 3.5 * HOUR });
   });
 
   it("excludes entries with no context -- there's no createdAt to measure duration from", () => {
     const entries = [entryWithDuration("take_profit", 2), entryWithDuration("take_profit", 4, { context: null })];
     const { takeProfit } = computeDurationStats(entries, {}, 1);
-    expect(takeProfit).toEqual({ sampleSize: 1, status: "calibrated", medianMs: 2 * HOUR });
+    expect(takeProfit).toEqual({ sampleSize: 1, status: "calibrated", medianMs: 2 * HOUR, p25Ms: 2 * HOUR, p75Ms: 2 * HOUR });
   });
 
   it("excludes a non-positive duration as bad/clock-skewed data, never a real reading", () => {
     const entries = [entryWithDuration("take_profit", 2), entryWithDuration("take_profit", -1)];
     const { takeProfit } = computeDurationStats(entries, {}, 1);
-    expect(takeProfit).toEqual({ sampleSize: 1, status: "calibrated", medianMs: 2 * HOUR });
+    expect(takeProfit).toEqual({ sampleSize: 1, status: "calibrated", medianMs: 2 * HOUR, p25Ms: 2 * HOUR, p75Ms: 2 * HOUR });
   });
 
   it("ignores reasons other than take_profit/stop_loss (invalidation, manual, other)", () => {
     const entries = [entryWithDuration("take_profit", 2, { reason: "invalidation" }), entryWithDuration("take_profit", 4, { reason: "manual" })];
     const { takeProfit, stopLoss } = computeDurationStats(entries, {}, 1);
-    expect(takeProfit).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null });
-    expect(stopLoss).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null });
+    expect(takeProfit).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
+    expect(stopLoss).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
   });
 });
 

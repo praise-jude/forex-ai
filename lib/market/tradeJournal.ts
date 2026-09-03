@@ -473,6 +473,15 @@ export interface DurationBucket {
    * "insufficient_data" -- same "never a misleadingly-precise figure from too few
    * trades" posture as ConfidenceCalibrationBucket's own winRate/averageR. */
   medianMs: number | null;
+  /** 25th/75th percentile duration -- a real "typical window" (most past trades in
+   * this bucket resolved somewhere between these two), not a bare min/max, which a
+   * single unusually-fast or unusually-slow trade would blow out to something no
+   * longer representative of "typical". Both null under the same condition as
+   * medianMs. Powers the mobile/web "caution" read on an open position: still open
+   * well past p75Ms of the stop-loss bucket while currently losing is a real,
+   * data-grounded signal worth a manual look -- never an automated close. */
+  p25Ms: number | null;
+  p75Ms: number | null;
 }
 
 export interface DurationStats {
@@ -480,10 +489,14 @@ export interface DurationStats {
   stopLoss: DurationBucket;
 }
 
-function median(values: number[]): number {
-  const sorted = values.slice().sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+/** Linear-interpolated percentile over an already-sorted array (the standard
+ * "R-7"/Excel-style method) -- p in [0, 1]. */
+function percentile(sorted: number[], p: number): number {
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
 function durationsFor(entries: JournalEntry[], filter: PerformanceFilter, reason: "take_profit" | "stop_loss"): number[] {
@@ -512,7 +525,9 @@ function durationsFor(entries: JournalEntry[], filter: PerformanceFilter, reason
 function durationBucket(durations: number[], minSamples: number): DurationBucket {
   const sampleSize = durations.length;
   const status: CalibrationStatus = sampleSize >= minSamples ? "calibrated" : "insufficient_data";
-  return { sampleSize, status, medianMs: status === "calibrated" ? median(durations) : null };
+  if (status !== "calibrated") return { sampleSize, status, medianMs: null, p25Ms: null, p75Ms: null };
+  const sorted = durations.slice().sort((a, b) => a - b);
+  return { sampleSize, status, medianMs: percentile(sorted, 0.5), p25Ms: percentile(sorted, 0.25), p75Ms: percentile(sorted, 0.75) };
 }
 
 /**
