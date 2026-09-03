@@ -227,5 +227,7 @@ export function describeExecuteResponse(result: ExecuteResponse): string {
       return "Could not confirm this trade — try again";
     case "network_error":
       return "Network error — try again";
+    case "timeout":
+      return "Broker is responding slowly — check your open positions before retrying, this trade may still go through.";
   }
 }

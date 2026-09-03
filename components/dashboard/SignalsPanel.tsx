@@ -58,7 +58,7 @@ function statusMessage(result: ExecuteResponse): { text: string; tone: "positive
   if (result.status === "blocked" || result.status === "skipped_sizing" || result.status === "expired") {
     return { text: describeExecuteResponse(result), tone: "negative" };
   }
-  if (result.status === "rejected" || result.status === "not_found" || result.status === "network_error") {
+  if (result.status === "rejected" || result.status === "not_found" || result.status === "network_error" || result.status === "timeout") {
     return { text: describeExecuteResponse(result), tone: "negative" };
   }
   return { text: describeExecuteResponse(result), tone: "neutral" };
