@@ -23,6 +23,8 @@ import { decimals } from "@/lib/market/symbols";
 import { TIMEFRAME_MS } from "@/lib/market/timeframes";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { describeMeasurement, measureCandleRange } from "@/lib/market/chartMeasurement";
+import type { DurationStats } from "@/lib/market/tradeJournal";
+import { formatDurationApprox } from "@/lib/market/format";
 
 interface MeasureSelection {
   pair: Pair;
@@ -76,6 +78,35 @@ interface PositionsResponse {
 async function fetchPositions(): Promise<PositionsResponse> {
   const res = await fetch("/api/positions");
   return res.json();
+}
+
+// Real closed-trade duration data changes only when a trade actually closes -- a rare
+// event relative to POSITIONS_POLL_MS's 1s cadence, so this gets its own far slower
+// interval rather than piggybacking on that one.
+const DURATION_STATS_POLL_MS = 5 * 60_000;
+
+async function fetchDurationStats(pair: Pair, timeframe: Timeframe): Promise<DurationStats> {
+  const res = await fetch(`/api/trade-journal/duration?pair=${encodeURIComponent(pair)}&timeframe=${encodeURIComponent(timeframe)}`);
+  return res.json();
+}
+
+/** Formats the "how long has this typically taken" readout from real closed-trade
+ * history -- deliberately never a time-to-target claim for THIS specific open signal
+ * (see FORECAST_BAR_SPACING's own doc comment on why the forecast curve itself makes
+ * no timing claim at all). Returns a real reading when at least one side of
+ * computeDurationStats' minSamples bar is cleared, an honest "not enough data yet"
+ * otherwise -- never silently omitted, so the feature reads as "still collecting
+ * data" rather than simply absent. */
+function describeDurationStats(stats: DurationStats | null): string {
+  const parts: string[] = [];
+  if (stats?.takeProfit.status === "calibrated" && stats.takeProfit.medianMs !== null) {
+    parts.push(`TP in ~${formatDurationApprox(stats.takeProfit.medianMs)} (${stats.takeProfit.sampleSize} trades)`);
+  }
+  if (stats?.stopLoss.status === "calibrated" && stats.stopLoss.medianMs !== null) {
+    parts.push(`SL in ~${formatDurationApprox(stats.stopLoss.medianMs)} (${stats.stopLoss.sampleSize} trades)`);
+  }
+  if (parts.length > 0) return `Similar past trades: ${parts.join(" · ")}`;
+  return "Similar-trade timing: not enough closed trades on this pair yet";
 }
 
 function toTime(ms: number): UTCTimestamp {
@@ -202,6 +233,12 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
   // the short-position screenshot came back to the narrow, candle-less view).
   const suppressRangePersistRef = useRef(false);
   const forecastLabelRef = useRef<HTMLDivElement>(null);
+  // Shares the same visibility moments as forecastLabelRef/positionLabelRef (see
+  // redrawAnnotations) but never mutually exclusive with them the way those two are with
+  // each other -- this reads real closed-trade history, which is exactly as relevant to
+  // an already-open position (how much longer might this take) as to a not-yet-real
+  // forecast signal.
+  const durationLabelRef = useRef<HTMLDivElement>(null);
   // Kept current via the effect below so the visible-range-change subscription (wired up
   // once, in the mount-only effect) always saves under today's pair/timeframe rather than
   // whatever was selected when the chart was first created.
@@ -265,6 +302,12 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     ? `${openPosition.id}:${openPosition.direction}:${openPosition.openPrice}:${openPosition.takeProfit}:${openPosition.stopLoss}:${openPosition.openedAt}`
     : null;
 
+  const { data: durationStats } = usePolledResource<DurationStats>(
+    `duration:${pair}:${timeframe}`,
+    () => fetchDurationStats(pair, timeframe),
+    DURATION_STATS_POLL_MS
+  );
+
   const renderAll = useCallback((candles: Candle[]) => {
     const type = chartTypeRef.current;
     seriesRef.current?.setData(candles.map((c) => toSeriesPoint(c, type)));
@@ -313,6 +356,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     seriesMarkersRef.current?.setMarkers([]);
     if (forecastLabelRef.current) forecastLabelRef.current.style.display = "none";
     if (positionLabelRef.current) positionLabelRef.current.style.display = "none";
+    if (durationLabelRef.current) durationLabelRef.current.style.display = "none";
 
     const addLine = (price: number, color: string, title: string) => {
       priceLinesRef.current.push(
@@ -344,6 +388,10 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
         { time: toTime(Math.max(pointBTime, pointATime + barMs)), value: openPosition.takeProfit },
       ]);
       if (positionLabelRef.current) positionLabelRef.current.style.display = "block";
+      if (durationLabelRef.current) {
+        durationLabelRef.current.textContent = describeDurationStats(durationStats);
+        durationLabelRef.current.style.display = "block";
+      }
       if (rangeBeforeAnnotations) chartRef.current?.timeScale().setVisibleRange(rangeBeforeAnnotations);
       suppressRangePersistRef.current = false;
       return;
@@ -392,6 +440,10 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       { time: toTime(lastCandle.time + barMs * FORECAST_BAR_SPACING * 2), value: signal.takeProfit2 },
     ]);
     if (forecastLabelRef.current) forecastLabelRef.current.style.display = "block";
+    if (durationLabelRef.current) {
+      durationLabelRef.current.textContent = describeDurationStats(durationStats);
+      durationLabelRef.current.style.display = "block";
+    }
     if (rangeBeforeAnnotations) chartRef.current?.timeScale().setVisibleRange(rangeBeforeAnnotations);
     suppressRangePersistRef.current = false;
     // openPosition itself (not just openPositionKey) is read in the body above -- safe
@@ -400,7 +452,7 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
     // the key is built from), so re-running with it produces an identical result. This
     // is the whole point -- see openPositionKey's own doc comment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prediction, pair, timeframe, openPositionKey]);
+  }, [prediction, pair, timeframe, openPositionKey, durationStats]);
 
   // Creates (or re-creates, on a chart-type switch) the main price series, bound to
   // whichever ONE of the four TradingView-style chart types is currently selected --
@@ -749,6 +801,14 @@ export function PriceChart({ pair, timeframe, streamEvent, prediction }: PriceCh
       >
         LIVE POSITION &middot; ENTRY &rarr; TARGET
       </div>
+      {/* Stacks below whichever of the two labels above is showing -- real closed-trade
+          duration history, not a claim about this specific signal/position's own timing.
+          Content is set imperatively in redrawAnnotations (describeDurationStats), same
+          pattern as the two labels above. */}
+      <div
+        ref={durationLabelRef}
+        className="pointer-events-none absolute right-2 top-9 hidden rounded bg-zinc-900/80 px-2 py-1 text-[10px] font-medium text-zinc-400"
+      />
     </div>
   );
 }

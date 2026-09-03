@@ -461,6 +461,83 @@ export function getPerformanceBreakdown(
   return breakdown;
 }
 
+export const DEFAULT_DURATION_MIN_SAMPLES = 5;
+
+export interface DurationBucket {
+  sampleSize: number;
+  status: CalibrationStatus;
+  /** Median wall-clock time from signal creation (context.createdAt) to close
+   * (closedAt), in ms -- median rather than mean, since trade duration is typically
+   * right-skewed (a handful of trades held open far longer than typical would pull a
+   * mean well away from what "typical" actually looks like). Null when status is
+   * "insufficient_data" -- same "never a misleadingly-precise figure from too few
+   * trades" posture as ConfidenceCalibrationBucket's own winRate/averageR. */
+  medianMs: number | null;
+}
+
+export interface DurationStats {
+  takeProfit: DurationBucket;
+  stopLoss: DurationBucket;
+}
+
+function median(values: number[]): number {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function durationsFor(entries: JournalEntry[], filter: PerformanceFilter, reason: "take_profit" | "stop_loss"): number[] {
+  return entries
+    .filter((e) => {
+      if (e.reason !== reason || !e.context) return false;
+      if (filter.pair && e.pair !== filter.pair) return false;
+      if (filter.timeframe && e.timeframe !== filter.timeframe) return false;
+      if (filter.session && e.context.session !== filter.session) return false;
+      if (filter.regime && e.context.regime !== filter.regime) return false;
+      if (filter.signerBAgreement !== undefined) {
+        const agreed = e.context.signerBDirection === e.direction;
+        if (agreed !== filter.signerBAgreement) return false;
+      }
+      return true;
+    })
+    .map((e) => e.closedAt - e.context!.createdAt)
+    // A non-positive duration can only mean bad/clock-skewed data (a close can't
+    // predate its own signal) -- excluded rather than let it drag a median toward
+    // zero, same "never let a data anomaly masquerade as a real reading" posture the
+    // rest of this app already follows (see e.g. metaApiConnection.ts's spread-cost
+    // guards).
+    .filter((ms) => ms > 0);
+}
+
+function durationBucket(durations: number[], minSamples: number): DurationBucket {
+  const sampleSize = durations.length;
+  const status: CalibrationStatus = sampleSize >= minSamples ? "calibrated" : "insufficient_data";
+  return { sampleSize, status, medianMs: status === "calibrated" ? median(durations) : null };
+}
+
+/**
+ * How long similar past trades actually took to resolve, split by which way they
+ * resolved -- "how long has this typically taken to reach take-profit" vs "how long
+ * before a losing trade typically hits its stop", both grounded in real closed trades
+ * (JournalEntry, shared by live executions and backtest-derived entries alike). This
+ * is deliberately NOT a time-to-target prediction for the live open signal itself (the
+ * signal engine makes no such estimate, see PriceChart.tsx's forecast curve doc
+ * comment) -- it's a historical read on setups like this one, presented as exactly
+ * that. Below minSamples, honestly reports "insufficient_data" rather than a number
+ * computed from too few trades to mean anything, same posture as
+ * getConfidenceCalibration.
+ */
+export function computeDurationStats(
+  entries: JournalEntry[],
+  filter: PerformanceFilter = {},
+  minSamples = DEFAULT_DURATION_MIN_SAMPLES
+): DurationStats {
+  return {
+    takeProfit: durationBucket(durationsFor(entries, filter, "take_profit"), minSamples),
+    stopLoss: durationBucket(durationsFor(entries, filter, "stop_loss"), minSamples),
+  };
+}
+
 export interface SignalFunnelStats {
   approved: number;
   rejected: number;
