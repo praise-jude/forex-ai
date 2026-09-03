@@ -18,12 +18,12 @@ function buildInput(overrides: Partial<FullInput> = {}): FullInput {
 }
 
 describe("tierOf", () => {
-  it("buckets at the documented 90/75/70 thresholds", () => {
+  it("buckets at the documented 90/80/70 thresholds", () => {
     expect(tierOf(100)).toBe("strong_buy");
     expect(tierOf(90)).toBe("strong_buy");
     expect(tierOf(89.9)).toBe("buy");
-    expect(tierOf(75)).toBe("buy");
-    expect(tierOf(74.9)).toBe("watch");
+    expect(tierOf(80)).toBe("buy");
+    expect(tierOf(79.9)).toBe("watch");
     expect(tierOf(70)).toBe("watch");
     expect(tierOf(69.9)).toBe("no_trade");
     expect(tierOf(0)).toBe("no_trade");
