@@ -169,6 +169,17 @@ export function retryDelayFromError(error: unknown, fallbackMs: number): number 
 const DOWNGRADE_STORM_THRESHOLD = 10;
 const DOWNGRADE_STORM_WINDOW_MS = 60_000;
 const CIRCUIT_COOLDOWN_MS = 20 * 60 * 1000;
+// While the circuit is open, every single downgrade event still reaches
+// onSubscriptionDowngraded (MetaApi doesn't stop sending them just because this app has
+// stopped reacting) -- previously each one logged its own line unconditionally, so a
+// storm producing hundreds of events in seconds produced hundreds of synchronous
+// console.error calls in that same span. Real cost, not theoretical: console.error is a
+// blocking write, and this app's own HTTP request handling shares the same single event
+// loop, so a burst like that can measurably compete with serving an unrelated page load
+// at the exact moment a storm is happening. The circuit-open STATE doesn't change
+// between these redundant logs anyway, so throttling to once per this interval loses no
+// real information.
+const CIRCUIT_OPEN_LOG_THROTTLE_MS = 5_000;
 
 // Pairs currently missing a live candle subscription -- populated by every
 // onSubscriptionDowngraded event regardless of whether the circuit breaker above is open
@@ -199,6 +210,8 @@ class MarketSyncListener extends SynchronizationListener {
   // DOWNGRADE_STORM_WINDOW_MS on every check -- see the circuit-breaker comment above.
   private downgradeTimestamps: number[] = [];
   private circuitOpenUntil = 0;
+  // See CIRCUIT_OPEN_LOG_THROTTLE_MS's own doc comment.
+  private lastCircuitOpenLogAt = 0;
 
   // Only set for the "live" account (see connect() below) -- needed so
   // onSubscriptionDowngraded can re-subscribe a downgraded symbol itself, rather than
@@ -247,12 +260,17 @@ class MarketSyncListener extends SynchronizationListener {
     this.downgradeTimestamps = this.downgradeTimestamps.filter((t) => now - t < DOWNGRADE_STORM_WINDOW_MS);
 
     if (now < this.circuitOpenUntil) {
-      // Storm already declared -- skip silently-ish (one line, not per-symbol spam).
+      // Storm already declared -- skip, logged at most once per CIRCUIT_OPEN_LOG_THROTTLE_MS
+      // (its own doc comment explains why: MetaApi keeps sending these regardless of
+      // whether this app reacts, and the circuit-open state doesn't change between them).
       // candleStore keeps serving whatever it last had (stale, never blanked -- same
       // posture as every other failure path in this file), and the periodic
       // higherTimeframeRefresh/seed paths are unaffected since they're independent REST
       // polling, not this subscribe path.
-      console.error(`[market] ${symbol} (${pair}) downgraded -- circuit open until ${new Date(this.circuitOpenUntil).toISOString()}, skipping recovery`);
+      if (now - this.lastCircuitOpenLogAt >= CIRCUIT_OPEN_LOG_THROTTLE_MS) {
+        this.lastCircuitOpenLogAt = now;
+        console.error(`[market] ${symbol} (${pair}) downgraded -- circuit open until ${new Date(this.circuitOpenUntil).toISOString()}, skipping recovery`);
+      }
       return;
     }
 
