@@ -147,8 +147,25 @@ export function confluenceAdjustedMultiplier(
  * lots sized off the pair's real HISTORICAL exchange rate for USD-base pairs
  * (USD/JPY, USD/CAD, USD/CHF), not today's live one. Every live call site omits this
  * argument entirely, so live execution's own behavior is completely unchanged.
+ *
+ * `floorToBrokerMinimum`, when true, does the opposite in exactly the one case this
+ * function would otherwise skip: instead of refusing the trade, it places the broker's
+ * own smallest tradeable size. An explicit, operator-requested tradeoff for a small
+ * account balance -- the real dollar risk on that one trade can end up above `riskPct`
+ * of equity, because the broker's minimum lot is a hard floor that can't be split
+ * smaller. Only ever set true for a signal the operator built and reviewed themselves
+ * (see executionEngine.ts's own call site) -- the fully-automated SMC/range engines
+ * keep the protective skip behavior unchanged, since those fire without a human
+ * reviewing each one first.
  */
-export function computeLotSize(signal: Signal, equity: number, riskPct: number, spec: SymbolSpec, pipValueOverride?: number): LotSizeResult {
+export function computeLotSize(
+  signal: Signal,
+  equity: number,
+  riskPct: number,
+  spec: SymbolSpec,
+  pipValueOverride?: number,
+  floorToBrokerMinimum = false
+): LotSizeResult {
   const riskAmount = equity * (riskPct / 100);
   const pips = Math.abs(signal.entry - signal.stopLoss) / pipSize(signal.pair);
   if (pips <= 0) return { skipped: true, reason: "entry and stop loss are equal (zero pip distance)" };
@@ -162,6 +179,7 @@ export function computeLotSize(signal: Signal, equity: number, riskPct: number, 
   const lots = roundDownToStep(rawLots, spec.volumeStep);
 
   if (lots < spec.volumeMin) {
+    if (floorToBrokerMinimum) return { lots: spec.volumeMin };
     return {
       skipped: true,
       reason: `computed lot size ${lots} is below the broker minimum ${spec.volumeMin} for this risk %`,

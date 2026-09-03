@@ -173,7 +173,14 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
       : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config, calibration) *
         correlationCheck.sizeMultiplier *
         confluenceAdjustedMultiplier(signal.confluences, config, confluenceBreakdown);
-  const sizing = computeLotSize(signal, account.equity, riskPct, spec);
+  // See positionSizing.ts's own doc comment on floorToBrokerMinimum -- only ever true for
+  // a "manual" signal (the operator's own hand-built trade, reviewed and clicked by them
+  // directly), never for an SMC/range/TradingView signal firing on its own. Confirmed real
+  // user request: a small live account balance was silently skipping every manual trade
+  // (computed lots always below the broker minimum at the configured risk %), and the
+  // operator explicitly wants to be able to trade with whatever balance they currently
+  // have rather than be blocked outright.
+  const sizing = computeLotSize(signal, account.equity, riskPct, spec, undefined, signal.source === "manual");
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);
     return { status: "skipped_sizing", reason: sizing.reason };

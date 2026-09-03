@@ -62,6 +62,20 @@ describe("computeLotSize", () => {
 
     expect(result).toEqual({ skipped: true, reason: expect.stringContaining("zero pip distance") });
   });
+
+  it("floors to the broker minimum instead of skipping when floorToBrokerMinimum is true", () => {
+    const signal = buildSignal({ entry: 1.105, stopLoss: 1.103 });
+    const result = computeLotSize(signal, 100, 1, buildSpec({ volumeMin: 0.01 }), undefined, true);
+
+    expect(result).toEqual({ lots: 0.01 });
+  });
+
+  it("still skips a zero pip distance even with floorToBrokerMinimum -- that's a different, unfixable problem", () => {
+    const signal = buildSignal({ entry: 1.105, stopLoss: 1.105 });
+    const result = computeLotSize(signal, 10000, 1, buildSpec(), undefined, true);
+
+    expect(result).toEqual({ skipped: true, reason: expect.stringContaining("zero pip distance") });
+  });
 });
 
 describe("confidenceAdjustedRiskPct", () => {
