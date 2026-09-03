@@ -184,6 +184,8 @@ export function buildResultAnnouncement(signal: Signal, result: ExecuteResponse)
       return "I couldn't confirm that trade. No trade has been placed.";
     case "network_error":
       return "I couldn't reach the server to place that trade. No trade has been placed.";
+    case "timeout":
+      return "Jude, the broker is responding slowly. I'm not certain yet whether that trade went through -- check your open positions before trying again.";
   }
 }
 
