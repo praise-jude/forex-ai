@@ -46,7 +46,15 @@ export type Pair =
 // removing them frees up shared credit budget for the pairs that actually matter here,
 // same lever MetaApi's own docs suggest ("distribute subscriptions" -- the only version of
 // that available on a single account is tracking fewer symbols).
-export const PAIRS: Pair[] = ["GBP/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD", "USOIL"];
+//
+// USD/CAD and NZD/USD dropped the same night, a few hours later -- confirmed the 7-pair
+// cut above didn't fully clear the throttling, it just moved which symbol absorbed it
+// next (NZD/USD hit the same "downgraded -- circuit open" pattern BTC/USD and USOIL
+// had). Real evidence the account's overall MetaApi tier is under sustained pressure
+// independent of which specific symbols are tracked, not something fixable by picking a
+// different 7. Down to 5 now; BTC/USD, USOIL, and XAU/USD stay non-negotiable per the
+// operator's own priority above.
+export const PAIRS: Pair[] = ["GBP/USD", "USD/CHF", "XAU/USD", "BTC/USD", "USOIL"];
 
 export interface Candle {
   time: number; // unix ms, candle open time

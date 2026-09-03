@@ -58,11 +58,11 @@ describe("recomputeCorrelationMatrix / getCorrelation", () => {
 
   it("reports a near-perfect positive correlation for two series with identical returns", () => {
     const returns = sampleReturns(20);
-    seedDaily("NZD/USD", closesFromReturns(1, returns));
+    seedDaily("USOIL", closesFromReturns(1, returns));
     seedDaily("GBP/USD", closesFromReturns(1, returns));
 
     recomputeCorrelationMatrix();
-    const entry = getCorrelation("NZD/USD", "GBP/USD");
+    const entry = getCorrelation("USOIL", "GBP/USD");
     expect(entry).not.toBeNull();
     expect(entry!.correlation).toBeGreaterThan(0.99);
     expect(entry!.sampleSize).toBeGreaterThanOrEqual(15);
@@ -70,41 +70,41 @@ describe("recomputeCorrelationMatrix / getCorrelation", () => {
 
   it("reports a near-perfect negative correlation for two series with exactly negated returns", () => {
     const returns = sampleReturns(20);
-    seedDaily("NZD/USD", closesFromReturns(1, returns));
-    seedDaily("USD/CAD", closesFromReturns(1, returns.map((r) => -r)));
+    seedDaily("USOIL", closesFromReturns(1, returns));
+    seedDaily("USD/CHF", closesFromReturns(1, returns.map((r) => -r)));
 
     recomputeCorrelationMatrix();
-    const entry = getCorrelation("NZD/USD", "USD/CAD");
+    const entry = getCorrelation("USOIL", "USD/CHF");
     expect(entry!.correlation).toBeLessThan(-0.99);
   });
 
   it("returns null (not zero) below the minimum sample size, an honest 'no data' rather than a fabricated number", () => {
     const returns = sampleReturns(3);
-    seedDaily("NZD/USD", closesFromReturns(1, returns));
+    seedDaily("USOIL", closesFromReturns(1, returns));
     seedDaily("GBP/USD", closesFromReturns(1, returns));
 
     recomputeCorrelationMatrix();
-    expect(getCorrelation("NZD/USD", "GBP/USD")).toBeNull();
+    expect(getCorrelation("USOIL", "GBP/USD")).toBeNull();
   });
 
   it("returns null for a pair against itself", () => {
-    seedDaily("NZD/USD", closesFromReturns(1, sampleReturns(20)));
+    seedDaily("USOIL", closesFromReturns(1, sampleReturns(20)));
     recomputeCorrelationMatrix();
-    expect(getCorrelation("NZD/USD", "NZD/USD")).toBeNull();
+    expect(getCorrelation("USOIL", "USOIL")).toBeNull();
   });
 
   it("returns null when a series has zero variance (a flat price series has nothing to correlate)", () => {
-    seedDaily("NZD/USD", closesFromReturns(1, sampleReturns(20)));
+    seedDaily("USOIL", closesFromReturns(1, sampleReturns(20)));
     seedDaily("GBP/USD", Array.from({ length: 21 }, () => 1)); // perfectly flat -- zero variance
     recomputeCorrelationMatrix();
-    expect(getCorrelation("NZD/USD", "GBP/USD")).toBeNull();
+    expect(getCorrelation("USOIL", "GBP/USD")).toBeNull();
   });
 
   it("lists computed entries sorted by correlation magnitude, most-correlated-first", () => {
     const returns = sampleReturns(20);
-    seedDaily("NZD/USD", closesFromReturns(1, returns));
-    seedDaily("GBP/USD", closesFromReturns(1, returns)); // matches NZD/USD exactly
-    seedDaily("USD/CAD", closesFromReturns(1, sampleReturns(20).reverse())); // unrelated shape
+    seedDaily("USOIL", closesFromReturns(1, returns));
+    seedDaily("GBP/USD", closesFromReturns(1, returns)); // matches USOIL exactly
+    seedDaily("USD/CHF", closesFromReturns(1, sampleReturns(20).reverse())); // unrelated shape
 
     recomputeCorrelationMatrix();
     const entries = listCorrelations();
