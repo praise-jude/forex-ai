@@ -153,6 +153,12 @@ describe("parseVoiceCommand", () => {
     expect(parseVoiceCommand("Yes!", expected)).toEqual({ kind: "hard_confirm" });
   });
 
+  it("hard-confirms on natural spoken variants of yes too -- what speech recognition actually transcribes", () => {
+    expect(parseVoiceCommand("yeah", expected)).toEqual({ kind: "hard_confirm" });
+    expect(parseVoiceCommand("yep", expected)).toEqual({ kind: "hard_confirm" });
+    expect(parseVoiceCommand("yup", expected)).toEqual({ kind: "hard_confirm" });
+  });
+
   it("does NOT hard-confirm on 'yes' when nothing is pending -- there's nothing to confirm", () => {
     expect(parseVoiceCommand("yes", null)).not.toEqual({ kind: "hard_confirm" });
     expect(parseVoiceCommand("yes", null)).toEqual({ kind: "soft_confirm" });

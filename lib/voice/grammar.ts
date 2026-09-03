@@ -44,13 +44,13 @@ function tickerWord(pair: Pair): string {
   return pair.replace("/", "");
 }
 
-/** The exact phrase that hard-confirms a trade. A bare "yes" ALSO hard-confirms (see
- * parseVoiceCommand) -- but, like this phrase, only while a trade is genuinely pending
- * (expectedConfirmPhrase is non-null); with nothing pending, neither means anything.
- * Allowing "yes" is an explicit, user-requested tradeoff of speed for the small added
- * risk of a stray "yes" (TV, background chatter) firing a real order during that
- * window -- previously only this exact phrase could hard-confirm, specifically to rule
- * that out. */
+/** The exact phrase that hard-confirms a trade. A bare affirmative (yes/yeah/yep/yup,
+ * see AFFIRMATIVE_WORDS) ALSO hard-confirms (see parseVoiceCommand) -- but, like this
+ * phrase, only while a trade is genuinely pending (expectedConfirmPhrase is non-null);
+ * with nothing pending, neither means anything. Allowing a bare affirmative is an
+ * explicit, user-requested tradeoff of speed for the small added risk of a stray one
+ * (TV, background chatter) firing a real order during that window -- previously only
+ * this exact phrase could hard-confirm, specifically to rule that out. */
 export function buildConfirmPhrase(signal: Signal): string {
   const directionWord = signal.direction === "long" ? "BUY" : "SELL";
   return `CONFIRM ${directionWord} ${tickerWord(signal.pair)}`;
@@ -242,12 +242,22 @@ export function normalize(text: string): string {
 
 // Soft phrases alone are deliberately NOT enough to execute -- they only arm a re-prompt
 // for the exact hard-confirm phrase (see useVoiceAssistant's "soft_confirm" handling).
-// "yes" is the one exception: while a trade is genuinely pending, parseVoiceCommand below
-// treats it as a hard-confirm instead of falling through to this list -- so it never
-// actually reaches this soft-confirm bucket in that case. It stays listed here too so a
-// bare "yes" heard with NOTHING pending still gets acknowledged as an (inert) soft-confirm
-// attempt rather than "unrecognized".
-const SOFT_CONFIRM_PHRASES = ["approve", "place the trade", "yes place it", "confirm", "yes", "go ahead", "do it"];
+// A bare affirmative is the one exception: while a trade is genuinely pending,
+// parseVoiceCommand below treats any of AFFIRMATIVE_WORDS as a hard-confirm instead of
+// falling through to this list -- so it never actually reaches this soft-confirm bucket in
+// that case. Each one stays listed here too so it's still acknowledged as an (inert)
+// soft-confirm attempt, rather than "unrecognized", when heard with nothing pending.
+const SOFT_CONFIRM_PHRASES = ["approve", "place the trade", "yes place it", "confirm", "yes", "yeah", "yep", "yup", "go ahead", "do it"];
+// A real gap this covers: speech recognition transcribes natural spoken affirmatives
+// literally -- someone who says "yeah" out loud gets back the transcript "yeah", not
+// "yes". Requiring the single literal word "yes" meant every one of these common,
+// unambiguous variants silently fell through to "unrecognized" and the trade never
+// fired, which read to the operator as "saying yes does nothing" (a real, confirmed
+// report, not a hypothetical). Deliberately still an exact-match set, same as the
+// original "yes" alone -- broadening the WORDS accepted is not the same risk as
+// broadening to a substring/fuzzy match, which would reintroduce the "eyeshadow looks
+// nice" class of false trigger matchesAny's own doc comment warns about.
+const AFFIRMATIVE_WORDS = new Set(["YES", "YEAH", "YEP", "YUP"]);
 const DECLINE_PHRASES = ["reject", "cancel", "dont place it", "wait", "no"];
 const EMERGENCY_PHRASES = ["emergency stop", "stop trading", "disable autopilot", "halt trading"];
 const PROFIT_PHRASES = ["whats my current profit", "what is my profit", "show my profit", "current profit", "my profit"];
@@ -274,16 +284,17 @@ function matchesAny(normalized: string, phrases: string[]): boolean {
  * Classifies a recognized transcript. `expectedConfirmPhrase` should be the exact phrase
  * from `buildConfirmPhrase` for whichever signal is currently awaiting confirmation (or
  * null if none is pending) -- an exact match against it always counts as "hard_confirm".
- * A bare "yes" counts too, but ONLY while a trade is genuinely pending (expectedConfirmPhrase
- * non-null) -- with nothing pending there's nothing for "yes" to confirm, so it falls
- * through to the ordinary soft-confirm bucket below (a no-op there). Checked before every
- * other bucket so "CONFIRM BUY BTCUSD" can't be misread as a bare "confirm" soft-trigger.
+ * A bare affirmative (see AFFIRMATIVE_WORDS) counts too, but ONLY while a trade is
+ * genuinely pending (expectedConfirmPhrase non-null) -- with nothing pending there's
+ * nothing to confirm, so it falls through to the ordinary soft-confirm bucket below (a
+ * no-op there). Checked before every other bucket so "CONFIRM BUY BTCUSD" can't be
+ * misread as a bare "confirm" soft-trigger.
  */
 export function parseVoiceCommand(transcript: string, expectedConfirmPhrase: string | null): VoiceCommand {
   const normalized = normalize(transcript);
   if (!normalized) return { kind: "unrecognized" };
 
-  if (expectedConfirmPhrase && (normalized === normalize(expectedConfirmPhrase) || normalized === "YES")) {
+  if (expectedConfirmPhrase && (normalized === normalize(expectedConfirmPhrase) || AFFIRMATIVE_WORDS.has(normalized))) {
     return { kind: "hard_confirm" };
   }
   if (matchesAny(normalized, EMERGENCY_PHRASES)) return { kind: "emergency_stop" };
