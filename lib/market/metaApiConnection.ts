@@ -47,8 +47,12 @@ import {
   getConfidenceCalibration,
   defaultCalibrationMinSamples,
   calibrationMilestoneNotifications,
+  computeDurationStats,
+  isRunningLongForALoss,
+  DEFAULT_DURATION_MIN_SAMPLES,
   type JournalCloseReason,
 } from "./tradeJournal";
+import { getLastDurationCaution, setLastDurationCaution } from "./positionDurationCautionStore";
 import { positionStore } from "./positionStore";
 import { consume as consumeInvalidationMark } from "./invalidationMarker";
 import { dealDedup } from "./dealDedup";
@@ -535,8 +539,36 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
     // via a new event + notification, never touches sizing, stop loss, or execution
     // (see positionRiskNarration.ts's own doc comment).
     if (timeframe === "15m") {
+      // Computed once per candle-close, not per position -- every position reaching
+      // this loop already shares this same `pair` (filtered just below), so the
+      // duration-stats read (a full tradeJournal.all() scan) never needs repeating for
+      // however many positions happen to be open on it.
+      const durationStats = computeDurationStats(tradeJournal.all(), { pair }, DEFAULT_DURATION_MIN_SAMPLES);
+
       for (const position of getOpenPositions("live")) {
         if (position.pair !== pair) continue;
+
+        // Duration-caution push notification -- independent of the risk-level
+        // assessment below (a different signal entirely: how long this has been
+        // open vs. how long losses on this pair typically take to hit stop, not
+        // market regime/trend alignment), so it must not be skipped by that
+        // assessment's own early-continue further down. getOpenPositions itself
+        // never carries openedAt (a raw broker read, see OpenPosition's own doc
+        // comment) -- enriched here the same way /api/positions's own route does,
+        // via positionStore's real fill-time record.
+        const openedAt = positionStore.openedAtForBrokerPosition(position.id);
+        const runningLong = isRunningLongForALoss({ ...position, openedAt }, durationStats, time);
+        const wasRunningLong = getLastDurationCaution(position.id) ?? false;
+        setLastDurationCaution(position.id, runningLong);
+        if (runningLong && !wasRunningLong) {
+          void sendNotification({
+            category: "risk_alert",
+            title: `JUDE AI — Running long: ${position.pair}`,
+            body: `This ${position.direction === "long" ? "BUY" : "SELL"} has been open longer than 75% of past losses on ${position.pair} took to hit stop -- worth a manual look.`,
+            data: { positionId: position.id, pair: position.pair },
+          });
+        }
+
         const assessment = assessPositionRisk(position.direction, regime, trends);
         const previousLevel = getLastPositionRiskLevel(position.id);
         setLastPositionRiskLevel(position.id, assessment.level);

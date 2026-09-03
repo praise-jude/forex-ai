@@ -5,7 +5,17 @@ import {
   journalPendingContexts as journalPendingContextsTable,
   journalSignalOutcomes as journalSignalOutcomesTable,
 } from "../db/tradingSchema";
-import { CONFLUENCES, type AccountKey, type Confluence, type MarketRegime, type Pair, type Session, type Signal, type Timeframe } from "./types";
+import {
+  CONFLUENCES,
+  type AccountKey,
+  type Confluence,
+  type MarketRegime,
+  type OpenPosition,
+  type Pair,
+  type Session,
+  type Signal,
+  type Timeframe,
+} from "./types";
 import { tierOf, type DimensionTier } from "./confidenceScore";
 import type { SetupQualityBreakdown } from "./setupQualityScore";
 import { pipSize } from "./symbols";
@@ -551,6 +561,24 @@ export function computeDurationStats(
     takeProfit: durationBucket(durationsFor(entries, filter, "take_profit"), minSamples),
     stopLoss: durationBucket(durationsFor(entries, filter, "stop_loss"), minSamples),
   };
+}
+
+/**
+ * Whether an open, currently-losing position has already run longer than 75% of past
+ * losses on this pair took to hit their own stop -- a real, data-grounded "this is
+ * taking longer than usual to turn around" cue (see this feature's own request: "enable
+ * me to stop the trade if it's moving out of my direction"). Mirrored client-side in
+ * PositionsPanel.tsx (web) and PositionsList.tsx (mobile) for the on-screen caution
+ * banner; this copy is what metaApiConnection.ts's candle-close loop calls to decide
+ * whether to push-notify -- same predicate, evaluated server-side so it can fire even
+ * while the app isn't open. Requires openedAt (undefined for a position opened outside
+ * either app) and a calibrated stop-loss bucket; returns false, never a guess, when
+ * either is missing.
+ */
+export function isRunningLongForALoss(position: OpenPosition, stats: DurationStats, now: number): boolean {
+  if (position.profit >= 0 || position.openedAt === undefined) return false;
+  if (stats.stopLoss.status !== "calibrated" || stats.stopLoss.p75Ms === null) return false;
+  return now - position.openedAt > stats.stopLoss.p75Ms;
 }
 
 export interface SignalFunnelStats {

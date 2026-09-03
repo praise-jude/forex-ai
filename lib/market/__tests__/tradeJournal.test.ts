@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
+import type { DurationStats, JournalEntry, SignalContext, SignalOutcome } from "../tradeJournal";
 import {
   calibrationMilestoneNotifications,
   computeDurationStats,
@@ -8,8 +8,10 @@ import {
   getPerformanceStats,
   getSignalFunnelStats,
   getSignerBCalibration,
+  isRunningLongForALoss,
   type ConfidenceCalibrationBucket,
 } from "../tradeJournal";
+import type { OpenPosition } from "../types";
 import type { TradeJournalModule } from "./tradeJournalTestHelper";
 import { loadTradeJournalModule } from "./tradeJournalTestHelper";
 
@@ -442,6 +444,59 @@ describe("computeDurationStats", () => {
     const { takeProfit, stopLoss } = computeDurationStats(entries, {}, 1);
     expect(takeProfit).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
     expect(stopLoss).toEqual({ sampleSize: 0, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
+  });
+});
+
+describe("isRunningLongForALoss", () => {
+  const HOUR = 60 * 60 * 1000;
+  const now = 10 * HOUR;
+
+  function buildPosition(overrides: Partial<OpenPosition> = {}): OpenPosition {
+    return {
+      id: "pos-1",
+      pair: "GBP/USD",
+      direction: "long",
+      lots: 0.1,
+      openPrice: 1.27,
+      currentPrice: 1.268,
+      profit: -20,
+      openedAt: 0,
+      ...overrides,
+    };
+  }
+
+  function buildStats(stopLoss: DurationStats["stopLoss"]): DurationStats {
+    return { takeProfit: { sampleSize: 0, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null }, stopLoss };
+  }
+
+  it("is false for a position currently in profit, regardless of how long it's been open", () => {
+    const position = buildPosition({ profit: 20 });
+    const stats = buildStats({ sampleSize: 10, status: "calibrated", medianMs: HOUR, p25Ms: 0.5 * HOUR, p75Ms: 1 * HOUR });
+    expect(isRunningLongForALoss(position, stats, now)).toBe(false);
+  });
+
+  it("is false when openedAt is undefined -- a position opened outside either app, nothing to measure elapsed time from", () => {
+    const position = buildPosition({ openedAt: undefined });
+    const stats = buildStats({ sampleSize: 10, status: "calibrated", medianMs: HOUR, p25Ms: 0.5 * HOUR, p75Ms: 1 * HOUR });
+    expect(isRunningLongForALoss(position, stats, now)).toBe(false);
+  });
+
+  it("is false when the stop-loss bucket is insufficient_data -- never a guess", () => {
+    const position = buildPosition();
+    const stats = buildStats({ sampleSize: 2, status: "insufficient_data", medianMs: null, p25Ms: null, p75Ms: null });
+    expect(isRunningLongForALoss(position, stats, now)).toBe(false);
+  });
+
+  it("is false while elapsed time is still within the typical (p75) window", () => {
+    const position = buildPosition({ openedAt: now - 0.5 * HOUR });
+    const stats = buildStats({ sampleSize: 10, status: "calibrated", medianMs: HOUR, p25Ms: 0.5 * HOUR, p75Ms: 1 * HOUR });
+    expect(isRunningLongForALoss(position, stats, now)).toBe(false);
+  });
+
+  it("is true once elapsed time exceeds the p75 window on a losing position", () => {
+    const position = buildPosition({ openedAt: now - 2 * HOUR });
+    const stats = buildStats({ sampleSize: 10, status: "calibrated", medianMs: HOUR, p25Ms: 0.5 * HOUR, p75Ms: 1 * HOUR });
+    expect(isRunningLongForALoss(position, stats, now)).toBe(true);
   });
 });
 

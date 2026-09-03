@@ -194,6 +194,19 @@ class PositionStore {
         new Date(trade.attemptedAt).toISOString().slice(0, 10) === dayKey
     );
   }
+
+  /** When THIS app placed the trade behind a given broker position id -- the same join
+   * /api/positions's own route does inline for OpenPosition.openedAt (getOpenPositions
+   * itself is a raw broker read with no notion of "when", see that type's own doc
+   * comment). Factored out here so metaApiConnection.ts's candle-close loop can do the
+   * same enrichment for the duration-caution push-notification check without duplicating
+   * the route's join logic a second time. Undefined for a position opened directly on
+   * the broker outside either app, same as the route's own fallback. */
+  openedAtForBrokerPosition(brokerPositionId: string): number | undefined {
+    return this.all().find(
+      (trade) => trade.status === "filled" && trade.brokerPositionId === brokerPositionId && trade.filledAt !== undefined
+    )?.filledAt;
+  }
 }
 
 const globalKey = Symbol.for("forex-ai.positionStore");
