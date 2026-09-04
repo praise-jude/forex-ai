@@ -15,6 +15,14 @@ function maxAlertAgeMs(): number {
 // headers, so the shared secret has to travel inside the JSON body itself -- standard
 // practice for TradingView webhooks specifically. Checked here (an env/auth concern),
 // not inside the pure parser (a payload-shape concern).
+function normalizeTradingViewError(error: unknown): { error: string; message: string } {
+  const message = typeof error === "string" && error.trim().length > 0 ? error : "Invalid TradingView alert payload.";
+  return {
+    error: "invalid_alert",
+    message,
+  };
+}
+
 export async function POST(request: Request) {
   const secret = process.env.TRADINGVIEW_WEBHOOK_SECRET;
   if (!secret) {
@@ -28,7 +36,7 @@ export async function POST(request: Request) {
 
   const parsed = parseTradingViewAlert(body, { maxAgeMs: maxAlertAgeMs() });
   if ("error" in parsed) {
-    return Response.json({ error: parsed.error }, { status: 400 });
+    return Response.json(normalizeTradingViewError(parsed.error), { status: 400 });
   }
 
   publishSignal(parsed.signal);

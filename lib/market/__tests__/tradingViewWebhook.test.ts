@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { POST } from "../../../app/api/webhooks/tradingview/route";
 import { parseTradingViewAlert } from "../tradingViewWebhook";
 
 const NOW = 1_700_000_000_000; // fixed reference instant so age-based tests are deterministic
@@ -118,5 +119,44 @@ describe("parseTradingViewAlert", () => {
     // still be recognized as "now", not misread as a far-future/overflowing seconds value.
     const result = parseTradingViewAlert(buildPayload({ timestamp: NOW }), { now: NOW });
     expect("signal" in result).toBe(true);
+  });
+
+  it("returns a stable error contract for invalid TradingView alerts", async () => {
+    const originalSecret = process.env.TRADINGVIEW_WEBHOOK_SECRET;
+    process.env.TRADINGVIEW_WEBHOOK_SECRET = "test-secret";
+
+    try {
+      const response = await POST(
+        new Request("http://localhost/api/webhooks/tradingview", {
+          method: "POST",
+          body: JSON.stringify({
+            secret: "test-secret",
+            pair: "DOGEUSD",
+            direction: "buy",
+            entry: 1.085,
+            stopLoss: 1.083,
+            takeProfit: 1.089,
+            id: "alert-123",
+            timestamp: NOW / 1000,
+          }),
+          headers: { "content-type": "application/json" },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const json = await response.json();
+      expect(json).toMatchObject({
+        error: "invalid_alert",
+        message: expect.any(String),
+      });
+      expect(typeof json.error).toBe("string");
+      expect(json.message).toContain("unrecognized pair");
+    } finally {
+      if (originalSecret === undefined) {
+        delete process.env.TRADINGVIEW_WEBHOOK_SECRET;
+      } else {
+        process.env.TRADINGVIEW_WEBHOOK_SECRET = originalSecret;
+      }
+    }
   });
 });
