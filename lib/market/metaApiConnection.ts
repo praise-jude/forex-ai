@@ -110,11 +110,15 @@ const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
   { type: "candles", timeframe: "1h" },
 ];
 
-// These symbols are the first ones this account's server-side credit budget downgrades.
-// Keep USDCHF's slow signal interval, but make USOIL quote-only because even its 1h
-// candle stream continued to trigger repeated server-side downgrade events.
-const QUOTE_ONLY_PAIRS = new Set<Pair>(["USOIL"]);
-const REDUCED_CANDLE_PAIRS = new Set<Pair>(["USD/CHF"]);
+// These two tiers are both currently EMPTY. USOIL went back to full subscriptions on
+// 2026-09-04 (operator request -- a quote-only pair gets no live candles, so "Check a
+// pair", manual-trade suggestions, and both signal engines silently can't work on it,
+// which defeated the point of tracking it), and USD/CHF left the active set entirely the
+// same day. The machinery stays: this account's server-side credit budget has forced
+// symbols into these tiers before (see the PAIRS history comment in types.ts) and may
+// again.
+const QUOTE_ONLY_PAIRS = new Set<Pair>([]);
+const REDUCED_CANDLE_PAIRS = new Set<Pair>([]);
 
 function liveSubscriptionsForPair(pair: Pair): MarketDataSubscription[] {
   if (QUOTE_ONLY_PAIRS.has(pair)) return [{ type: "quotes" }];

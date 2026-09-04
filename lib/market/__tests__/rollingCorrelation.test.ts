@@ -47,7 +47,7 @@ function seedDaily(pair: Pair, closes: number[]): void {
   candleStore.seed(pair, "1d", candles);
 }
 
-const ALL_PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/CAD", "USD/JPY", "AUD/USD", "XAU/USD", "XAG/USD", "UKOIL", "BTC/USD"];
+const ALL_PAIRS: Pair[] = ["EUR/USD", "GBP/USD", "USD/CAD", "USD/JPY", "AUD/USD", "XAU/USD", "XAG/USD", "UKOIL", "BTC/USD", "USOIL"];
 
 function clearAllCandles(): void {
   for (const pair of ALL_PAIRS) candleStore.seed(pair, "1d", []);
@@ -71,10 +71,10 @@ describe("recomputeCorrelationMatrix / getCorrelation", () => {
   it("reports a near-perfect negative correlation for two series with exactly negated returns", () => {
     const returns = sampleReturns(20);
     seedDaily("XAU/USD", closesFromReturns(1, returns));
-    seedDaily("USD/CHF", closesFromReturns(1, returns.map((r) => -r)));
+    seedDaily("USOIL", closesFromReturns(1, returns.map((r) => -r)));
 
     recomputeCorrelationMatrix();
-    const entry = getCorrelation("XAU/USD", "USD/CHF");
+    const entry = getCorrelation("XAU/USD", "USOIL");
     expect(entry!.correlation).toBeLessThan(-0.99);
   });
 
@@ -104,7 +104,7 @@ describe("recomputeCorrelationMatrix / getCorrelation", () => {
     const returns = sampleReturns(20);
     seedDaily("XAU/USD", closesFromReturns(1, returns));
     seedDaily("GBP/USD", closesFromReturns(1, returns)); // matches XAU/USD exactly
-    seedDaily("USD/CHF", closesFromReturns(1, sampleReturns(20).reverse())); // unrelated shape
+    seedDaily("USOIL", closesFromReturns(1, sampleReturns(20).reverse())); // unrelated shape
 
     recomputeCorrelationMatrix();
     const entries = listCorrelations();

@@ -52,9 +52,15 @@ export type Pair =
 // next (NZD/USD hit the same "downgraded -- circuit open" pattern BTC/USD and USOIL
 // had). Real evidence the account's overall MetaApi tier is under sustained pressure
 // independent of which specific symbols are tracked, not something fixable by picking a
-// different 7. Down to 4 now; BTC/USD and XAU/USD remain the only non-FX symbols in the
-// active watchlist, and USOIL has been removed from the tracked pair set entirely.
-export const PAIRS: Pair[] = ["GBP/USD", "USD/CHF", "XAU/USD", "BTC/USD"];
+// different 7. Down to 4 now.
+//
+// USD/CHF swapped back out for USOIL on 2026-09-04 at the operator's explicit request --
+// USOIL is a priority instrument for them (see the 2026-09-02 note above), and keeping
+// the count at 4 means no net subscription-load increase. USOIL gets FULL live candle
+// subscriptions this time, not the quote-only tier it occupied before: a quote-only
+// pair can't feed "Check a pair", manual-trade suggestions, or the signal engines, which
+// defeated the point of tracking it at all.
+export const PAIRS: Pair[] = ["GBP/USD", "XAU/USD", "BTC/USD", "USOIL"];
 
 export interface Candle {
   time: number; // unix ms, candle open time
