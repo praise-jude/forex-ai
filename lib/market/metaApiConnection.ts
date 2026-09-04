@@ -109,12 +109,14 @@ const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
   { type: "candles", timeframe: "1h" },
 ];
 
-// USOIL and USDCHF are the first symbols this account's server-side credit budget
-// downgrades when all three signal candle intervals are live. Keep their quote stream
-// and the slower signal interval, while leaving the full candle set on the other pairs.
-const REDUCED_CANDLE_PAIRS = new Set<Pair>(["USOIL", "USD/CHF"]);
+// These symbols are the first ones this account's server-side credit budget downgrades.
+// Keep USDCHF's slow signal interval, but make USOIL quote-only because even its 1h
+// candle stream continued to trigger repeated server-side downgrade events.
+const QUOTE_ONLY_PAIRS = new Set<Pair>(["USOIL"]);
+const REDUCED_CANDLE_PAIRS = new Set<Pair>(["USD/CHF"]);
 
 function liveSubscriptionsForPair(pair: Pair): MarketDataSubscription[] {
+  if (QUOTE_ONLY_PAIRS.has(pair)) return [{ type: "quotes" }];
   if (!REDUCED_CANDLE_PAIRS.has(pair)) return LIVE_MARKET_DATA_SUBSCRIPTIONS;
   return [{ type: "quotes" }, { type: "candles", timeframe: "1h" }];
 }
@@ -269,6 +271,7 @@ class MarketSyncListener extends SynchronizationListener {
     // THEM to downgrade next, whose own recovery attempts spend more budget in turn --
     // observed hours after the 2026-08-28 revert, with zero PAIRS change involved.
     if (!pair || !PAIRS.includes(pair)) return;
+    if (QUOTE_ONLY_PAIRS.has(pair)) return;
     if (downgradedPairs.has(pair)) return;
     downgradedPairs.add(pair);
 

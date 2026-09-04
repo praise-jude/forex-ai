@@ -52,6 +52,9 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     return { status: "blocked", code: "watch_tier", reason: "watch-tier signals are informational only and cannot be executed" };
   }
 
+  const config = loadExecutionConfig(accountKey);
+  const manualOverride = config.unrestrictedManualTrading && signal.source === "manual";
+
   // Operator-configured selectivity floor, on top of the signal's own already-computed
   // tier/riskReward -- never changes how a signal was scored or how its TP was picked
   // (see executionPolicy.ts). Exempts TradingView-sourced signals internally. Calibration
@@ -63,12 +66,11 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     ? getConfidenceCalibration(tradeJournal.all(), defaultCalibrationMinSamples())
     : undefined;
   const policyCheck = checkExecutionPolicy(signal, policy, policyCalibration);
-  if (!policyCheck.allowed) {
+  if (!manualOverride && !policyCheck.allowed) {
     return { status: "blocked", code: policyCheck.code, reason: policyCheck.reason };
   }
 
   const now = Date.now();
-  const config = loadExecutionConfig(accountKey);
 
   const account = getAccountInformation(accountKey);
   if (!account) {
@@ -81,36 +83,40 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   }
 
   const dayState = riskState.current(now, account.equity, accountKey);
-  const riskCheck = checkRiskLimits({
-    killSwitchActive: isKillSwitchActive(config.killSwitchFile),
-    haltedForToday: dayState.haltedForToday,
-    now,
-    cooldownUntil: dayState.cooldownUntil,
-    openPositionCount: getOpenPositionCount(accountKey),
-    maxConcurrentPositions: config.maxConcurrentPositions,
-    tradesOpenedToday: dayState.tradesOpenedToday,
-    maxTradesPerDay: config.maxTradesPerDay,
-    startOfDayEquity: dayState.startOfDayEquity,
-    currentEquity: account.equity,
-    maxDailyLossPct: config.maxDailyLossPct,
-  });
+  if (!manualOverride) {
+    const riskCheck = checkRiskLimits({
+      killSwitchActive: isKillSwitchActive(config.killSwitchFile),
+      haltedForToday: dayState.haltedForToday,
+      now,
+      cooldownUntil: dayState.cooldownUntil,
+      openPositionCount: getOpenPositionCount(accountKey),
+      maxConcurrentPositions: config.maxConcurrentPositions,
+      tradesOpenedToday: dayState.tradesOpenedToday,
+      maxTradesPerDay: config.maxTradesPerDay,
+      startOfDayEquity: dayState.startOfDayEquity,
+      currentEquity: account.equity,
+      maxDailyLossPct: config.maxDailyLossPct,
+    });
 
-  if (!riskCheck.allowed) {
-    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${riskCheck.reason}`);
-    if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity, accountKey);
-    return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
+    if (!riskCheck.allowed) {
+      console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${riskCheck.reason}`);
+      if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity, accountKey);
+      return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
+    }
   }
 
   // Same shape checkRiskLimits' own maxConcurrentPositions check has (a raw count vs a
   // configured cap), just per-correlation-group instead of whole-account -- see
   // pairCorrelation.ts. Separate from checkRiskLimits since it needs per-position
   // pair+direction, not just a count.
-  const correlationCheck = checkCorrelatedExposure({
-    pair: signal.pair,
-    direction: signal.direction,
-    openPositions: getOpenPositions(accountKey),
-    maxCorrelatedPositions: config.maxCorrelatedPositions,
-  });
+  const correlationCheck = manualOverride
+    ? { allowed: true as const, sizeMultiplier: 1, tier: "none" as const, reason: null }
+    : checkCorrelatedExposure({
+        pair: signal.pair,
+        direction: signal.direction,
+        openPositions: getOpenPositions(accountKey),
+        maxCorrelatedPositions: config.maxCorrelatedPositions,
+      });
   if (!correlationCheck.allowed) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${correlationCheck.reason}`);
     return { status: "blocked", code: correlationCheck.code, reason: correlationCheck.reason };

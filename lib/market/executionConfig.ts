@@ -1,6 +1,8 @@
 import type { AccountKey } from "./types";
 
 export interface ExecutionConfig {
+  /** Manual approvals may bypass account-level circuit breakers when explicitly enabled. */
+  unrestrictedManualTrading: boolean;
   riskPerTradePct: number;
   maxConcurrentPositions: number;
   /** See riskManager.ts's checkCorrelatedExposure / pairCorrelation.ts -- how many
@@ -114,6 +116,7 @@ function envBoolean(name: string, fallback: boolean): boolean {
 export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConfig {
   const prefix = account === "demo" ? "DEMO_" : "";
   return {
+    unrestrictedManualTrading: envBoolean(`${prefix}UNRESTRICTED_MANUAL_TRADING`, false),
     // Tightened from the original 1% / 5% defaults -- more conservative starting point,
     // still just a starting point (tune via env vars per README), not a claim that
     // 0.25%/1% is somehow "correct" for every account size or risk tolerance.
