@@ -83,6 +83,24 @@ function ExecutionConfigTable({
         value={config.partialCloseEnabled ? `Enabled (${(config.partialCloseFraction * 100).toFixed(0)}% at TP1)` : "Disabled"}
       />
       <ConfigRow
+        label="Graduated de-escalation"
+        value={
+          config.deEscalationEnabled
+            ? `Enabled (half size from ${(config.deEscalationFraction * config.maxDailyLossPct).toFixed(2)}% drawdown)`
+            : "Disabled"
+        }
+        hint={config.deEscalationEnabled ? `hard halt still at ${config.maxDailyLossPct}%` : undefined}
+      />
+      <ConfigRow
+        label="Adaptive engine sizing"
+        value={config.adaptiveEngineSizingEnabled ? `Enabled (after ${config.edgeMinSamples} trades)` : "Disabled"}
+      />
+      <ConfigRow
+        label="Session edge sizing"
+        value={config.sessionEdgeSizingEnabled ? `Enabled (after ${config.edgeMinSamples} trades)` : "Disabled"}
+      />
+      <ConfigRow label="Alert webhook" value={config.alertWebhookUrl ? "Configured" : "Disabled"} />
+      <ConfigRow
         label="Confidence-weighted sizing"
         value={
           config.confidenceSizingEnabled

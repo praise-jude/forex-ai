@@ -8,6 +8,8 @@ import { checkExecutionPolicy, getExecutionPolicy, type ExecutionPolicyBlockCode
 import { loadExecutionConfig } from "./executionConfig";
 import { computeLotSize, confidenceAdjustedRiskPct, confluenceAdjustedMultiplier, roundToTick } from "./positionSizing";
 import { tradeJournal, getConfidenceCalibration, getConfluenceBreakdown, defaultCalibrationMinSamples } from "./tradeJournal";
+import { deEscalationSizeMultiplier } from "./deEscalation";
+import { engineSizeMultiplier, sessionSizeMultiplier } from "./adaptiveEdge";
 import {
   getAccountInformation,
   getOpenPositionCount,
@@ -173,12 +175,51 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   // reason to do it on every execution attempt for accounts that never opted in.
   const calibration = config.confidenceSizingEnabled ? getConfidenceCalibration(tradeJournal.all(), defaultCalibrationMinSamples()) : undefined;
   const confluenceBreakdown = config.confluenceSizingEnabled ? getConfluenceBreakdown(tradeJournal.all()) : undefined;
+
+  // Graduated de-escalation + adaptive engine/session sizing. All three are size-only
+  // levers that can only ever SHRINK a position (multiplier <= 1), never grow one, and
+  // never apply to an explicit per-trade "Edit Risk" override (a human decision) or to a
+  // manual-override trade (already exempted from the account-level gates above). Each is
+  // computed only when its own toggle is on -- the journal read is cheap but pointless
+  // for accounts that never opted in. See deEscalation.ts / adaptiveEdge.ts.
+  const journalEntries = config.deEscalationEnabled || config.adaptiveEngineSizingEnabled || config.sessionEdgeSizingEnabled ? tradeJournal.all() : [];
+  const deEscalation =
+    config.deEscalationEnabled && !manualOverride && riskPctOverride === undefined
+      ? deEscalationSizeMultiplier({
+          startOfDayEquity: dayState.startOfDayEquity,
+          currentEquity: account.equity,
+          maxDailyLossPct: config.maxDailyLossPct,
+          deEscalationFraction: config.deEscalationFraction,
+          deEscalationSizeMultiplier: config.deEscalationSizeMultiplier,
+        })
+      : { active: false as const, sizeMultiplier: 1 as const };
+  const engineEdge =
+    config.adaptiveEngineSizingEnabled && !manualOverride && riskPctOverride === undefined
+      ? engineSizeMultiplier(journalEntries, signal.source, { minSamples: config.edgeMinSamples })
+      : { sizeMultiplier: 1 };
+  const sessionEdge =
+    config.sessionEdgeSizingEnabled && !manualOverride && riskPctOverride === undefined
+      ? sessionSizeMultiplier(journalEntries, signal.session, { minSamples: config.edgeMinSamples })
+      : { sizeMultiplier: 1 };
+  if (deEscalation.active) {
+    console.log(`[execution] de-escalation active (${deEscalation.drawdownPct.toFixed(2)}% >= ${deEscalation.thresholdPct.toFixed(2)}%): size x${deEscalation.sizeMultiplier}`);
+  }
+  if (engineEdge.sizeMultiplier < 1 && "reason" in engineEdge) {
+    console.log(`[execution] adaptive engine sizing: ${engineEdge.reason}`);
+  }
+  if (sessionEdge.sizeMultiplier < 1 && "reason" in sessionEdge) {
+    console.log(`[execution] session edge sizing: ${sessionEdge.reason}`);
+  }
+
   const riskPct =
     riskPctOverride !== undefined && Number.isFinite(riskPctOverride) && riskPctOverride > 0
       ? riskPctOverride
       : confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config, calibration) *
         correlationCheck.sizeMultiplier *
-        confluenceAdjustedMultiplier(signal.confluences, config, confluenceBreakdown);
+        confluenceAdjustedMultiplier(signal.confluences, config, confluenceBreakdown) *
+        deEscalation.sizeMultiplier *
+        engineEdge.sizeMultiplier *
+        sessionEdge.sizeMultiplier;
   // See positionSizing.ts's own doc comment on floorToBrokerMinimum -- only ever true for
   // a "manual" signal (the operator's own hand-built trade, reviewed and clicked by them
   // directly), never for an SMC/range/TradingView signal firing on its own. Confirmed real

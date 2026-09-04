@@ -78,6 +78,29 @@ export interface ExecutionConfig {
    * shipped), so it stays detection-only (visible on the dashboard, journaled, never
    * executed) until deliberately turned on. */
   rangeEngineEnabled: boolean;
+  /** See deEscalation.ts -- graduated daily-loss response. Between the de-escalation
+   * threshold and the hard daily-loss halt, new trades open at a reduced size instead
+   * of full size. Defaults ON: this can only make execution smaller, never larger, so a
+   * bug here can't create risk the way touching live position volume can. */
+  deEscalationEnabled: boolean;
+  /** Fraction of maxDailyLossPct at which half-size mode kicks in (e.g. 0.5 = half the
+   * limit). Must be in (0, 1). */
+  deEscalationFraction: number;
+  /** Size multiplier applied while in the de-escalation band (e.g. 0.5 = half size). */
+  deEscalationSizeMultiplier: number;
+  /** See adaptiveEdge.ts -- auto-reduce size for an engine (SMC / mean-reversion) whose
+   * recent closed trades show a negative expectancy. Size-only, never blocks, never
+   * grows past 1.0. Defaults ON, same posture as deEscalationEnabled. */
+  adaptiveEngineSizingEnabled: boolean;
+  /** See adaptiveEdge.ts -- auto-reduce size in a session killzone whose recent closed
+   * trades show a negative expectancy. Size-only, never blocks. Defaults ON. */
+  sessionEdgeSizingEnabled: boolean;
+  /** Minimum closed trades in a bucket before adaptive engine/session sizing engages --
+   * never act on too few trades (same posture as tradeJournal's calibration buckets). */
+  edgeMinSamples: number;
+  /** Optional Telegram/Discord webhook URL for trade-event alerts. Unset = disabled.
+   * See webhookNotifier.ts. */
+  alertWebhookUrl?: string;
 }
 
 // A non-finite or non-positive multiplier can't reflect a real risk-scaling intent (a
@@ -142,6 +165,13 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     riskMultiplierStrongBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_STRONG_BUY`, 1.5),
     confluenceSizingEnabled: envBoolean(`${prefix}CONFLUENCE_SIZING_ENABLED`, false),
     rangeEngineEnabled: envBoolean(`${prefix}RANGE_ENGINE_ENABLED`, false),
+    deEscalationEnabled: envBoolean(`${prefix}DE_ESCALATION_ENABLED`, true),
+    deEscalationFraction: envNumber(`${prefix}DE_ESCALATION_FRACTION`, 0.5),
+    deEscalationSizeMultiplier: envNumber(`${prefix}DE_ESCALATION_SIZE_MULTIPLIER`, 0.5),
+    adaptiveEngineSizingEnabled: envBoolean(`${prefix}ADAPTIVE_ENGINE_SIZING_ENABLED`, true),
+    sessionEdgeSizingEnabled: envBoolean(`${prefix}SESSION_EDGE_SIZING_ENABLED`, true),
+    edgeMinSamples: envNumber(`${prefix}EDGE_MIN_SAMPLES`, 10),
+    alertWebhookUrl: process.env[`${prefix}ALERT_WEBHOOK_URL`] || undefined,
     killSwitchFile:
       account === "demo" ? (process.env.KILL_SWITCH_FILE_DEMO ?? ".trading-paused-demo") : (process.env.KILL_SWITCH_FILE ?? ".trading-paused"),
   };

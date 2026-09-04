@@ -32,6 +32,7 @@ import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
 import { sendNotification } from "./pushNotifier";
+import { sendWebhookNotification } from "./webhookNotifier";
 import { isPending } from "./pendingInvalidationClose";
 import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
@@ -453,7 +454,11 @@ class MarketSyncListener extends SynchronizationListener {
     // rather than each calling consume() independently, which would silently starve
     // whichever ran second.
     const wasInvalidation = deal.positionId !== undefined && consumeInvalidationMark(deal.positionId);
-    if (pair) void sendNotification(closedPositionNotification(pair, deal, this.accountKey, wasInvalidation));
+    if (pair) {
+      const closeNotification = closedPositionNotification(pair, deal, this.accountKey, wasInvalidation);
+      void sendNotification(closeNotification);
+      void sendWebhookNotification(closeNotification, this.accountKey);
+    }
     // Sibling recording action alongside the notification above -- never alters the
     // risk-state logic below it. Only ever produces a journal entry for a close this
     // app itself opened (a matching ExecutedTrade must exist); a manually opened and
@@ -468,20 +473,24 @@ class MarketSyncListener extends SynchronizationListener {
 
     const dayState = riskState.current(now, equity, this.accountKey);
     if (cooldownUntilBefore === null && dayState.cooldownUntil !== null) {
-      void sendNotification({
-        category: "risk_alert",
+      const cooldownNotification = {
+        category: "risk_alert" as const,
         title: "JUDE AI — Cooldown active",
         body: `${config.maxConsecutiveLosses} consecutive losses on ${this.accountKey}. New entries paused for ${config.cooldownMinutes} minutes.`,
-      });
+      };
+      void sendNotification(cooldownNotification);
+      void sendWebhookNotification(cooldownNotification, this.accountKey);
     }
 
     if (!dayState.haltedForToday && isDailyLossBreached(dayState.startOfDayEquity, equity, config.maxDailyLossPct)) {
       riskState.setHaltedForToday(now, equity, this.accountKey);
-      void sendNotification({
-        category: "risk_alert",
+      const haltNotification = {
+        category: "risk_alert" as const,
         title: "JUDE AI — Autopilot locked",
         body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${this.accountKey}. No new trades until the next trading day.`,
-      });
+      };
+      void sendNotification(haltNotification);
+      void sendWebhookNotification(haltNotification, this.accountKey);
     }
   }
 }

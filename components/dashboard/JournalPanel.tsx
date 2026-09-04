@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ConfluenceBreakdownBucket, JournalEntry, PerformanceStats, SignalFunnelStats } from "@/lib/market/tradeJournal";
+import type { EdgeBucket } from "@/lib/market/adaptiveEdge";
 import type { SlippageStats } from "@/lib/market/slippage";
 import { ProgressBar } from "./ProgressBar";
 import { formatPrice } from "@/lib/market/format";
@@ -37,6 +38,10 @@ interface JournalResponse {
    * closed), not just the closed-trade entries above. */
   slippage: SlippageStats;
   slippageByPair: Record<string, SlippageStats>;
+  /** Adaptive sizing read-outs -- the live multiplier + reason each engine/session
+   * bucket currently produces. See adaptiveEdge.ts. */
+  edgeByEngine: Record<string, EdgeBucket>;
+  edgeBySession: Record<string, EdgeBucket>;
 }
 
 // Mirrors tradeJournal.ts's own DEFAULT_CONFLUENCE_MIN_SAMPLES -- duplicated (not
@@ -220,6 +225,50 @@ function BreakdownTable({ title, breakdown, labelFor }: { title: string; breakdo
 interface EquityPoint {
   time: number;
   cumulativeR: number;
+}
+
+/** Adaptive sizing read-out: the live position-size multiplier each engine/session
+ * bucket currently produces (see adaptiveEdge.ts), with the plain-English reason. A
+ * bucket only ever shows a reduced multiplier once it has enough real closed trades to
+ * be meaningful -- "insufficient data" buckets read as full size, matching what the
+ * execution path actually applies. */
+function EdgePanel({ title, edge, labelFor }: { title: string; edge: Record<string, EdgeBucket>; labelFor: (key: string) => string }) {
+  const rows = Object.entries(edge).sort((a, b) => b[1].sampleSize - a[1].sampleSize);
+  if (rows.length === 0) return null;
+
+  return (
+    <div>
+      <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">{title}</h2>
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-zinc-900">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-zinc-500">
+              <th className="px-3 py-2 font-medium">Group</th>
+              <th className="px-3 py-2 font-medium">Trades</th>
+              <th className="px-3 py-2 font-medium">Expectancy</th>
+              <th className="px-3 py-2 font-medium">Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([key, bucket]) => (
+              <tr key={key} className="border-b border-white/5 last:border-0">
+                <td className="px-3 py-2 font-medium text-zinc-200">{labelFor(key)}</td>
+                <td className="px-3 py-2 tabular-nums text-zinc-300">{bucket.sampleSize}</td>
+                <td className={`px-3 py-2 tabular-nums ${bucket.expectancyR === null ? "text-zinc-500" : bucket.expectancyR >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {bucket.expectancyR === null ? "—" : `${bucket.expectancyR >= 0 ? "+" : ""}${bucket.expectancyR.toFixed(2)}R`}
+                </td>
+                <td className="px-3 py-2" title={bucket.reason}>
+                  <span className={`tabular-nums font-semibold ${bucket.sizeMultiplier < 1 ? "text-amber-400" : "text-zinc-200"}`}>
+                    {Math.round(bucket.sizeMultiplier * 100)}%
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 /** Chronological cumulative R across every closed trade with a computed rMultiple --
@@ -585,6 +634,8 @@ export function JournalPanel() {
         <BreakdownTable title="Performance by market regime (SMC signals only)" breakdown={data.breakdownByRegime} labelFor={(key) => REGIME_LABEL[key] ?? key} />
       )}
       {data && <ConfluenceBreakdownTable breakdown={data.breakdownByConfluence} />}
+      {data && <EdgePanel title="Adaptive sizing by engine" edge={data.edgeByEngine} labelFor={(key) => SOURCE_LABEL[key] ?? key} />}
+      {data && <EdgePanel title="Adaptive sizing by session" edge={data.edgeBySession} labelFor={(key) => SESSION_LABEL[key] ?? key} />}
       {data && <SlippageSummary stats={data.slippage} />}
       {data && <SlippageBreakdownTable breakdown={data.slippageByPair} />}
 

@@ -13,6 +13,8 @@ import {
 import { getOpenPositions, isAccountConfigured } from "@/lib/market/metaApiConnection";
 import { positionStore } from "@/lib/market/positionStore";
 import { getSlippageBreakdownByPair, getSlippagePoints, getSlippageStats } from "@/lib/market/slippage";
+import { engineEdgeBreakdown, sessionEdgeBreakdown } from "@/lib/market/adaptiveEdge";
+import { loadExecutionConfig } from "@/lib/market/executionConfig";
 
 export const runtime = "nodejs";
 
@@ -121,5 +123,11 @@ export async function GET(request: Request) {
     // threshold as confidenceCalibration above, for a direct apples-to-apples scorecard.
     signerBCalibration: getSignerBCalibration(entries, defaultCalibrationMinSamples()),
     calibrationMinSamples: defaultCalibrationMinSamples(),
+    // Adaptive sizing read-outs: the live multiplier + plain-English reason each
+    // engine/session bucket currently produces (see adaptiveEdge.ts). Computed with the
+    // same min-samples the execution path uses, so what the dashboard shows matches
+    // what's actually applied to size. Always over the full unfiltered ledger.
+    edgeByEngine: engineEdgeBreakdown(entries, { minSamples: loadExecutionConfig("live").edgeMinSamples }),
+    edgeBySession: sessionEdgeBreakdown(entries, { minSamples: loadExecutionConfig("live").edgeMinSamples }),
   });
 }
