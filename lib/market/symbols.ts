@@ -70,6 +70,18 @@ export function isStock(pair: Pair): boolean {
   return STOCK_PAIRS.has(pair);
 }
 
+// Oil (USOIL/UKOIL) is a USD-quoted commodity that trends through Asia and the full US
+// session, not a forex pair -- unlike the FX majors, its move isn't concentrated in the
+// London/NY overlap. signalEngine.ts exempts it from the killzone gate for the same
+// structural reason it exempts crypto and stocks (see its own comment): restricting a
+// 23-hour commodity to a 5-hour forex window would suppress the majority of its real
+// setups. This is what "USOIL as a priority instrument" concretely means in the engine.
+const COMMODITY_PAIRS: ReadonlySet<Pair> = new Set(["USOIL", "UKOIL"]);
+
+export function isCommodity(pair: Pair): boolean {
+  return COMMODITY_PAIRS.has(pair);
+}
+
 const BY_PLAIN_SYMBOL: Map<string, Pair> = new Map(
   Object.entries(BASE_CONFIG).map(([pair, cfg]) => [cfg.symbol, pair as Pair])
 );

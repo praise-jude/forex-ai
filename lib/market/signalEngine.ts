@@ -8,7 +8,7 @@ import { detectLiquiditySweeps } from "./detectors/liquiditySweeps";
 import { marketStructureTrend } from "./detectors/marketStructure";
 import { detectCandlestickPattern } from "./detectors/candlestickPatterns";
 import { getActiveSession, isKillzone } from "./sessions";
-import { isCrypto, isStock } from "./symbols";
+import { isCrypto, isStock, isCommodity } from "./symbols";
 import { calculateRsi } from "./indicators/rsi";
 import { calculateMacd } from "./indicators/macd";
 import { calculateAdx } from "./indicators/adx";
@@ -130,8 +130,12 @@ export function evaluateSignal(
   // reason: their own real trading hours have no relationship to the forex London/NY
   // killzone, and the broker's candle stream already only ever produces bars during
   // their actual open hours (see symbols.ts's isStock() doc comment) -- every other
-  // pre-gate below still fully applies to both.
-  if (!isCrypto(pair) && !isStock(pair) && !isKillzone(lastCandle.time)) return noTrade({ code: "outside_killzone" });
+  // pre-gate below still fully applies to both. Oil (USOIL/UKOIL, see isCommodity) is
+  // exempted for the same structural reason: it's a USD-quoted commodity that trends
+  // through Asia and the full US session, not a forex pair whose move concentrates in
+  // the London/NY overlap -- boxing it into the killzone would suppress the majority of
+  // its real setups, which defeats the point of tracking it as a priority instrument.
+  if (!isCrypto(pair) && !isStock(pair) && !isCommodity(pair) && !isKillzone(lastCandle.time)) return noTrade({ code: "outside_killzone" });
 
   // Hoisted ahead of sweep detection: the sweep tolerance below needs it, and it's a
   // pure function of `candles` with no dependency on anything computed in between, so
