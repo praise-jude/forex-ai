@@ -124,7 +124,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     maxConcurrentPositions: envNumber(`${prefix}MAX_CONCURRENT_POSITIONS`, 3),
     maxCorrelatedPositions: envNumber(`${prefix}MAX_CORRELATED_POSITIONS`, 1),
     maxDailyLossPct: envNumber(`${prefix}MAX_DAILY_LOSS_PCT`, 1),
-    maxTradesPerDay: envNumber(`${prefix}MAX_TRADES_PER_DAY`, 25),
+    maxTradesPerDay: envNumber(`${prefix}MAX_TRADES_PER_DAY`, 45),
     maxConsecutiveLosses: envNumber(`${prefix}MAX_CONSECUTIVE_LOSSES`, 3),
     cooldownMinutes: envNumber(`${prefix}COOLDOWN_MINUTES`, 30),
     // 15% of stop distance is deliberately generous -- catches a genuinely blown-out
