@@ -8,7 +8,7 @@
 // execution), so a fake "offline" dashboard showing old data would be actively
 // misleading, not helpful.
 
-const CACHE_NAME = "forex-ai-shell-v1";
+const CACHE_NAME = "forex-ai-shell-v2";
 // Next.js build output under /_next/static/** is content-hashed (a change in content
 // always means a new URL), so caching it aggressively can never serve stale code --
 // plus icons/fonts, which change rarely and aren't trading data.

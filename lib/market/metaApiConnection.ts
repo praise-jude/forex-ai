@@ -109,6 +109,16 @@ const LIVE_MARKET_DATA_SUBSCRIPTIONS: MarketDataSubscription[] = [
   { type: "candles", timeframe: "1h" },
 ];
 
+// USOIL and USDCHF are the first symbols this account's server-side credit budget
+// downgrades when all three signal candle intervals are live. Keep their quote stream
+// and the slower signal interval, while leaving the full candle set on the other pairs.
+const REDUCED_CANDLE_PAIRS = new Set<Pair>(["USOIL", "USD/CHF"]);
+
+function liveSubscriptionsForPair(pair: Pair): MarketDataSubscription[] {
+  if (!REDUCED_CANDLE_PAIRS.has(pair)) return LIVE_MARKET_DATA_SUBSCRIPTIONS;
+  return [{ type: "quotes" }, { type: "candles", timeframe: "1h" }];
+}
+
 // MetaApi's real documented limit (https://metaapi.cloud/docs/client/rateLimiting/) for
 // the subscribeToMarketData call itself is 10 requests per account per 60 seconds --
 // ACCOUNT-WIDE, not per-symbol. Spacing every call 6.5s apart (just past the
@@ -259,6 +269,7 @@ class MarketSyncListener extends SynchronizationListener {
     // THEM to downgrade next, whose own recovery attempts spend more budget in turn --
     // observed hours after the 2026-08-28 revert, with zero PAIRS change involved.
     if (!pair || !PAIRS.includes(pair)) return;
+    if (downgradedPairs.has(pair)) return;
     downgradedPairs.add(pair);
 
     const now = Date.now();
@@ -331,7 +342,12 @@ class MarketSyncListener extends SynchronizationListener {
         if (!next || !this.connection) break;
         const { symbol, isRetry } = next;
         try {
-          await this.connection.subscribeToMarketData(symbol, LIVE_MARKET_DATA_SUBSCRIPTIONS);
+          const pair = pairForBrokerSymbol(symbol);
+          if (!pair) {
+            this.pendingRecovery.delete(symbol);
+            continue;
+          }
+          await this.connection.subscribeToMarketData(symbol, liveSubscriptionsForPair(pair));
           this.pendingRecovery.delete(symbol);
           const recoveredPair = pairForBrokerSymbol(symbol);
           if (recoveredPair) downgradedPairs.delete(recoveredPair);
@@ -1060,7 +1076,7 @@ async function connect(accountKey: AccountKey): Promise<void> {
       // "demo" only ever needs quotes -- enough for terminalState.accountInformation/
       // specification/positions, never candles (it's purely an execution target, no
       // second signal engine, see MarketSyncListener's own doc comment above).
-      accountKey === "live" ? LIVE_MARKET_DATA_SUBSCRIPTIONS : [{ type: "quotes" }]
+      accountKey === "live" ? liveSubscriptionsForPair(pair) : [{ type: "quotes" }]
     );
   }
 

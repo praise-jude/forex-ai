@@ -8,7 +8,7 @@ import { useEffect } from "react";
 export function PwaRegister() {
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => {
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {
       // Best-effort; a failed registration shouldn't be user-visible.
     });
   }, []);
