@@ -222,7 +222,8 @@ class MarketSyncListener extends SynchronizationListener {
   // just logging and leaving it broken until the next full reconnect.
   constructor(
     private accountKey: AccountKey,
-    private connection?: StreamingMetaApiConnectionInstance
+    private connection?: StreamingMetaApiConnectionInstance,
+    private generation?: number
   ) {
     super();
   }
@@ -241,6 +242,7 @@ class MarketSyncListener extends SynchronizationListener {
     unsubscriptions: MarketDataUnsubscription[]
   ): Promise<void> {
     if (this.accountKey !== "live" || !this.connection) return;
+    if (this.generation !== undefined && connectGeneration.get(this.accountKey) !== this.generation) return;
     // Defensive, not just typed loosely -- a real production log from this exact event
     // showed the SDK's own "updates" argument as undefined despite its declared type
     // promising an array, so "unsubscriptions" isn't trusted to always be one either.
@@ -994,7 +996,9 @@ async function connect(accountKey: AccountKey): Promise<void> {
   }
 
   const connection = account.getStreamingConnection();
-  connection.addSynchronizationListener(new MarketSyncListener(accountKey, accountKey === "live" ? connection : undefined));
+  connection.addSynchronizationListener(
+    new MarketSyncListener(accountKey, accountKey === "live" ? connection : undefined, myGeneration)
+  );
 
   await connection.connect();
   await connection.waitSynchronized();
@@ -1392,6 +1396,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * connection has been unhealthy long enough that it's very unlikely to self-recover.
  */
 export async function forceReconnect(accountKey: AccountKey): Promise<void> {
+  // Invalidate callbacks from the old SDK listener before waiting for close() to settle.
+  connectGeneration.set(accountKey, (connectGeneration.get(accountKey) ?? 0) + 1);
   const state = stateFor(accountKey);
   const stale = state.connection;
   // Fail closed immediately, before the rebuild even starts -- getConnectionStatus must
