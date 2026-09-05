@@ -2,18 +2,21 @@
 
 import { useEffect } from "react";
 
-/** Registers public/sw.js, whose only job is retrying a page navigation that fails on a
- * transient connection blip (see sw.js's own doc comment). Unregisters every existing
- * registration first, rather than relying on the browser's own byte-diff update check --
- * this app has already observed the same URL served with different bytes from different
- * Railway edge nodes mid-session, which can make that check keep resolving against a
- * stale copy and never actually replace an old worker. Also clears any asset cache left
- * behind by the older version of this worker that used to cache static assets -- that
- * caching was retired because a persistent asset cache could combine files from
- * different Railway deployments and trigger a page-load failure of its own; the current
- * worker never writes to the Cache Storage API, so this cleanup is one-time and safe to
- * repeat indefinitely. Silently no-ops on unsupported browsers or over plain HTTP
- * (service workers require a secure context, localhost excepted). */
+/** Registers public/sw.js, whose job is retrying a page navigation that fails on a
+ * transient connection blip, and falling back to a static "connection lost" page (zero
+ * trading data) if every retry is exhausted (see sw.js's own doc comment). Unregisters
+ * every existing registration first, rather than relying on the browser's own byte-diff
+ * update check -- this app has already observed the same URL served with different
+ * bytes from different Railway edge nodes mid-session, which can make that check keep
+ * resolving against a stale copy and never actually replace an old worker. Also clears
+ * any cache left behind by the OLDER version of this worker that used to cache build
+ * assets (`forex-ai-shell-*`) -- that caching was retired because a persistent asset
+ * cache could combine files from different Railway deployments and trigger a page-load
+ * failure of its own. The current worker's own cache (`forex-ai-offline-v1`, holding
+ * only the static offline page) is a different, narrower thing and isn't touched by
+ * this sweep -- sw.js's own `activate` handler manages that one. Silently no-ops on
+ * unsupported browsers or over plain HTTP (service workers require a secure context,
+ * localhost excepted). */
 export function PwaRegister() {
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
