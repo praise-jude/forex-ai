@@ -23,15 +23,16 @@ export interface DimensionScore {
 }
 
 export interface ScoreBreakdown {
+  /** Kept on the breakdown for display/diagnostics only -- see scoreSignal's own doc
+   * comment on why it no longer bottlenecks tier/total below. */
   direction: DimensionScore;
   entry: DimensionScore;
-  /** The weaker of direction.tier / entry.tier -- a strong trend can't compensate for
-   * a weak entry trigger, or vice versa. Independent, external confirmation (Signer
+  /** Equal to entry.tier (see scoreSignal). Independent, external confirmation (Signer
    * B -- see signerB.ts/decisionMatrix.ts) is combined separately, downstream of this
    * function: it can gate or upgrade the result, but never bottlenecks this number. */
   tier: DimensionTier;
-  /** min(direction.total, entry.total) -- bottlenecked the same way tier is, so the
-   * headline number and the tier it produces never visually disagree. */
+  /** Equal to entry.total (see scoreSignal), so the headline number and the tier it
+   * produces never visually disagree. */
   total: number;
 }
 

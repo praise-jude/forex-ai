@@ -9,7 +9,9 @@
  * positive nor negative outcome -- it's progress toward having enough data to know.
  */
 export function ProgressBar({ value, max, label }: { value: number; max: number; label?: string }) {
-  const pct = Math.min(100, Math.round((value / max) * 100));
+  // max=0 (e.g. a calibration bucket before any threshold is defined) would otherwise
+  // divide to Infinity/NaN, producing an invalid "NaN%" width style.
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
   return (
     <div className="flex flex-col gap-1">
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">

@@ -1,4 +1,5 @@
 import type { MarketRegime, Signal } from "./types";
+import { isCommodity } from "./symbols";
 
 const SMC_MAX = 30;
 const TREND_MAX = 20;
@@ -75,11 +76,17 @@ export function scoreSetupQuality(signal: Signal, regime: MarketRegime): SetupQu
   // reach here, and "unavailable" is scored as an honest neutral, not a penalty.
   const newsRisk = signal.newsStatus === "clear" ? NEWS_MAX : signal.newsStatus === "unavailable" ? 5 : 0;
 
-  // Session: full marks in the London/New York killzone (required for every non-crypto
-  // signal); crypto is killzone-exempt (see isCrypto in signalEngine.ts) and can fire
-  // in Asia or off-session hours, scored lower to reflect the thinner liquidity typical
-  // of those hours -- not a claim those hours are unsafe, just less institutionally active.
-  const session = signal.session === "london" || signal.session === "newyork" ? SESSION_MAX : signal.session === "asia" ? 3 : 2;
+  // Session: full marks in the London/New York killzone (required for every non-crypto,
+  // non-commodity signal); crypto is killzone-exempt (see isCrypto in signalEngine.ts)
+  // and can fire in Asia or off-session hours, scored lower to reflect the thinner
+  // liquidity typical of those hours -- not a claim those hours are unsafe, just less
+  // institutionally active. Oil (isCommodity) gets the same full marks as the killzone
+  // regardless of reported session: unlike a forex pair's real activity concentrating in
+  // the London/NY overlap, USOIL/UKOIL structurally trend through Asia and the full US
+  // session (see signalEngine.ts's killzone-gate exemption for the same instruments) --
+  // scoring one of its Asia-hour signals as thin-liquidity would misrepresent exactly the
+  // hours this instrument was exempted from the gate for being genuinely active in.
+  const session = signal.session === "london" || signal.session === "newyork" || isCommodity(signal.pair) ? SESSION_MAX : signal.session === "asia" ? 3 : 2;
 
   const total = smc + trend + momentum + liquidity + volatility + newsRisk + session;
 

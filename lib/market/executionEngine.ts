@@ -19,6 +19,7 @@ import {
   placeMarketOrder,
 } from "./metaApiConnection";
 import { sendNotification } from "./pushNotifier";
+import { sendWebhookNotification } from "./webhookNotifier";
 import { formatPrice } from "./format";
 
 export type ExecutionResult =
@@ -56,6 +57,18 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
 
   const config = loadExecutionConfig(accountKey);
   const manualOverride = config.unrestrictedManualTrading && signal.source === "manual";
+
+  // Checked unconditionally, even under manualOverride -- every other check below can be
+  // relaxed by UNRESTRICTED_MANUAL_TRADING (an operator's explicit "let my own reviewed
+  // clicks through the account-level circuit breakers" request), but the kill switch is
+  // the operator's own physical "STOP LIVE" tap. That button's copy makes an unqualified
+  // promise: no new orders. A manual trade still slipping through while it reads
+  // "active" would silently break that promise for the one control an operator reaches
+  // for specifically to guarantee nothing fires, regardless of source.
+  if (isKillSwitchActive(config.killSwitchFile)) {
+    console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): kill switch is active`);
+    return { status: "blocked", code: "kill_switch", reason: "kill switch is active" };
+  }
 
   // Operator-configured selectivity floor, on top of the signal's own already-computed
   // tier/riskReward -- never changes how a signal was scored or how its TP was picked
@@ -102,7 +115,19 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
 
     if (!riskCheck.allowed) {
       console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${riskCheck.reason}`);
-      if (riskCheck.code === "daily_loss") riskState.setHaltedForToday(now, account.equity, accountKey);
+      if (riskCheck.code === "daily_loss") {
+        riskState.setHaltedForToday(now, account.equity, accountKey);
+        // Mirrors metaApiConnection.ts's own daily-loss halt trip -- this one fires when the
+        // threshold is first crossed on a manual/voice execution attempt rather than a
+        // closing-deal event, but the operator needs the same alert either way.
+        const haltNotification = {
+          category: "risk_alert" as const,
+          title: "JUDE AI — Autopilot locked",
+          body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${accountKey}. No new trades until the next trading day.`,
+        };
+        void sendNotification(haltNotification);
+        void sendWebhookNotification(haltNotification, accountKey);
+      }
       return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
     }
   }
@@ -227,7 +252,16 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   // (computed lots always below the broker minimum at the configured risk %), and the
   // operator explicitly wants to be able to trade with whatever balance they currently
   // have rather than be blocked outright.
-  const sizing = computeLotSize(signal, account.equity, riskPct, spec, undefined, signal.source === "manual");
+  //
+  // But that intent is about the *configured* risk being too small for the account size --
+  // it never means "flooring should override a deliberate safety shrink." de-escalation and
+  // adaptive engine/session sizing above can only ever shrink riskPct (see their own comment),
+  // and if any of them are currently active, a manual trade's lots landing below the broker
+  // minimum means the safety system decided to trade less, not that the account is too small
+  // -- flooring it back up here would silently trade at (or above) full unshrunk risk exactly
+  // when those systems said not to.
+  const manualSizingUnshrunk = deEscalation.sizeMultiplier === 1 && engineEdge.sizeMultiplier === 1 && sessionEdge.sizeMultiplier === 1;
+  const sizing = computeLotSize(signal, account.equity, riskPct, spec, undefined, signal.source === "manual" && manualSizingUnshrunk);
   if ("skipped" in sizing) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${sizing.reason}`);
     return { status: "skipped_sizing", reason: sizing.reason };

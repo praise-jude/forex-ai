@@ -17,6 +17,12 @@ export function getLastPositionRiskLevel(positionId: string): PositionRiskLevel 
 }
 
 export function setLastPositionRiskLevel(positionId: string, level: PositionRiskLevel): void {
+  // Map.set on an existing key does NOT move it in iteration order -- only a fresh
+  // insertion does (see positionDurationCautionStore.ts, which had the same bug: a
+  // long-open position re-recorded every candle close would stay "oldest" forever and
+  // still get evicted once MAX_RECORDS other positions are recorded). Deleting first
+  // forces re-insertion at the end.
+  byPositionId.delete(positionId);
   byPositionId.set(positionId, level);
   if (byPositionId.size > MAX_RECORDS) {
     const oldest = byPositionId.keys().next().value;

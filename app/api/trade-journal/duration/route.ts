@@ -1,12 +1,18 @@
-import { PAIRS, type Pair, type Timeframe } from "@/lib/market/types";
+import type { Pair, Timeframe } from "@/lib/market/types";
+import { ALL_PAIRS } from "@/lib/market/symbols";
 import { computeDurationStats, tradeJournal, type PerformanceFilter } from "@/lib/market/tradeJournal";
 
 export const runtime = "nodejs";
 
 const TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 
+// Validated against every Pair the type allows, not just the currently active watchlist
+// (types.ts's PAIRS) -- a position opened before a pair was retired from that watchlist
+// is still a real Pair value the journal can hold, and rejecting it here silently dropped
+// the filter instead of erroring, blending every pair's stats into what's supposed to be
+// a single pair's duration read.
 function isPair(value: string | null): value is Pair {
-  return PAIRS.includes(value as Pair);
+  return ALL_PAIRS.includes(value as Pair);
 }
 
 function isTimeframe(value: string | null): value is Timeframe {

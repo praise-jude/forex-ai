@@ -41,6 +41,22 @@ export async function POST(request: Request) {
 
   publishSignal(parsed.signal);
 
-  const result = await attemptExecution(parsed.signal);
-  return Response.json(result);
+  // Wrapped for the same reason as the manual-execute route (see commit 168b7fa): a hard
+  // failure inside execution must return an honest 500 JSON body instead of dropping the
+  // connection on TradingView, which would otherwise see a generic delivery failure with
+  // no indication of what actually went wrong.
+  try {
+    const result = await attemptExecution(parsed.signal);
+    return Response.json(result);
+  } catch (error) {
+    console.error(`[tradingview] signal ${parsed.signal.id} (${parsed.signal.pair}) execution threw:`, error);
+    return Response.json(
+      {
+        status: "blocked",
+        code: "execution_error",
+        reason: error instanceof Error ? error.message : "execution failed unexpectedly",
+      },
+      { status: 500 }
+    );
+  }
 }

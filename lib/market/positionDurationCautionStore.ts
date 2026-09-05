@@ -15,6 +15,12 @@ export function getLastDurationCaution(positionId: string): boolean | undefined 
 }
 
 export function setLastDurationCaution(positionId: string, value: boolean): void {
+  // Map.set on an existing key does NOT move it in iteration order -- only a fresh
+  // insertion does. A long-open position re-recorded every candle close would otherwise
+  // stay "oldest" forever and still get evicted below once MAX_RECORDS other positions
+  // are recorded, silently dropping its caution flag and re-firing a duplicate
+  // notification on the next candle. Deleting first forces re-insertion at the end.
+  byPositionId.delete(positionId);
   byPositionId.set(positionId, value);
   if (byPositionId.size > MAX_RECORDS) {
     const oldest = byPositionId.keys().next().value;
