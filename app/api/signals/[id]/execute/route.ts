@@ -74,6 +74,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // Mode-aware: a click in DEMO engine mode fires against the demo account, never live
   // — so testing in DEMO mode can't accidentally place a real order via a manual click.
   // In ANALYSIS or LIVE mode this resolves to "live", unchanged from before DEMO existed.
-  const result = await attemptExecution(signal, manualExecutionAccount(getEngineMode()), riskPctOverride);
-  return Response.json(result);
+  //
+  // Wrapped so a hard failure inside execution (a thrown error, a broker/MetaApi fault)
+  // is logged with the signal id and returns an honest 500 JSON body instead of taking
+  // the connection down with it -- which is what surfaces client-side as the browser's
+  // "This page couldn't load" network-error page when the process drops the request.
+  try {
+    const result = await attemptExecution(signal, manualExecutionAccount(getEngineMode()), riskPctOverride);
+    return Response.json(result);
+  } catch (error) {
+    console.error(`[execute] signal ${signal.id} (${signal.pair}) execution threw:`, error);
+    return Response.json(
+      {
+        status: "blocked",
+        code: "execution_error",
+        reason: error instanceof Error ? error.message : "execution failed unexpectedly",
+      },
+      { status: 500 }
+    );
+  }
 }
