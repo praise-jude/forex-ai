@@ -345,6 +345,128 @@ export interface HigherTimeframeTrends {
   h1Gap: number | null;
 }
 
+/** The same real per-timeframe EMA trend read HigherTimeframeTrends already carries for
+ * d1/h4/h1 (see emaTrendDirection), extended down to the signal's own two entry
+ * timeframes (15m/30m) -- genuinely computed the same way, not fabricated, just applied
+ * to two more timeframes where nothing previously read it for display purposes. Additive
+ * to HigherTimeframeTrends, not a replacement -- every existing consumer of that type
+ * (positionRiskNarration.ts, the SSE "prediction" event, etc.) is unaffected. Only used
+ * by the "Check a Pair" analysis job (pairAnalysisJob.ts). */
+export interface ExtendedTimeframeTrends extends HigherTimeframeTrends {
+  m15: "bullish" | "bearish" | "neutral";
+  m30: "bullish" | "bearish" | "neutral";
+}
+
+/** The named, real stages of the "Check a Pair" analysis job (pairAnalysisJob.ts) -- the
+ * job only ever advances to the next stage once the current one's real computation has
+ * actually completed, never on a timer. See pairAnalysisJob.ts's own doc comment for
+ * exactly what each stage computes. */
+export type AnalysisStage =
+  | "market_data"
+  | "structure"
+  | "smc_engine"
+  | "range_engine"
+  | "multi_timeframe"
+  | "consensus"
+  | "risk_validation"
+  | "final";
+
+/** One real engine/timeframe's own verdict, for the "AI Consensus" breakdown -- every
+ * entry traces to a real, already-computed value (Signer A's candidate evaluation,
+ * Signer B's independent vote, the Range Engine's regime read, or a timeframe's EMA
+ * trend), never invented. `"unavailable"` means that engine genuinely never ran or
+ * never reached a directional read (e.g. Signer B when the SMC candidate that would
+ * have reached it was rejected by an earlier gate) -- distinct from `"neutral"`, which
+ * means the engine ran and genuinely found no lean either way. */
+export interface EngineVerdict {
+  engine: "smc" | "signer_b" | "range_engine" | "timeframe_15m" | "timeframe_30m" | "timeframe_1h" | "timeframe_4h" | "timeframe_1d";
+  direction: "long" | "short" | "neutral" | "unavailable";
+}
+
+/** The real, currently-execute-only risk checks (riskManager.ts/executionPolicy.ts),
+ * run early and read-only during analysis for transparency -- never place an order, and
+ * are re-checked for real at actual execute time regardless of what's shown here (price/
+ * spread/positions can all change in between). Absent entirely when there's no
+ * qualifying direction to validate (nothing would be executed anyway). */
+export interface RiskValidationSummary {
+  spread: { allowed: boolean; reason?: string };
+  priceDrift: { allowed: boolean; reason?: string };
+  correlatedExposure: { allowed: boolean; reason?: string };
+  executionPolicy: { allowed: boolean; reason?: string };
+}
+
+/**
+ * The final, fully-computed output of a "Check a Pair" analysis job -- see
+ * pairAnalysisJob.ts's own doc comment for how each field is derived. `bullish`/
+ * `bearish` are each a real, independently-evaluated SignalEvaluation for that specific
+ * side's most recent liquidity-sweep candidate, or `null` when no such candidate existed
+ * in the lookback window at all (not even attempted) -- distinct from a candidate that
+ * was attempted and rejected (still present as a `{status: "no_trade", reason}`).
+ */
+export interface PairAnalysisResult {
+  pair: Pair;
+  timeframe: Timeframe;
+  time: number;
+  regime: MarketRegime;
+  timeframeTrends: ExtendedTimeframeTrends;
+  bullish: SignalEvaluation | null;
+  bearish: SignalEvaluation | null;
+  rangeEvaluation: SignalEvaluation;
+  /** Real directional confidences (whichever candidate(s) reached Signer A's scoring
+   * stage), normalized to sum to 100 alongside noTradePct -- see pairAnalysisJob.ts for
+   * the exact normalization. Never independently invented percentages. */
+  buyPct: number;
+  sellPct: number;
+  noTradePct: number;
+  /** True when the engines that DID reach a directional read disagree past the job's
+   * defined threshold -- drives an honest "CONFLICTED" display instead of forcing a
+   * direction. */
+  conflicted: boolean;
+  /** The winning direction, if any qualifying (non-blocked) candidate exists and the
+   * engines aren't conflicted -- "no_trade" otherwise (covers both "nothing qualified"
+   * and "conflicted"). */
+  direction: "long" | "short" | "no_trade";
+  engines: EngineVerdict[];
+  riskValidation: RiskValidationSummary | null;
+}
+
+/** An in-memory, short-lived record of one "Check a Pair" analysis run -- see
+ * pairAnalysisJob.ts. Bounded/pruned the same way positionStore.ts's own MAX_RECORDS is;
+ * never persisted to disk, unlike backtestRunner.ts's BacktestJob, since a real run
+ * completes in well under a second even with the stage-pacing floor applied. */
+export interface AnalysisJob {
+  id: string;
+  pair: Pair;
+  timeframe: Timeframe;
+  createdAt: number;
+  stage: AnalysisStage;
+  stageStartedAt: number;
+  status: "running" | "complete" | "failed";
+  failReason?: "insufficient_data" | "stale_data";
+  failMessage?: string;
+  /** Built up incrementally, field by field, as each real stage completes -- e.g.
+   * `buyPct`/`sellPct`/`noTradePct` become real and readable the moment the `consensus`
+   * stage finishes, well before the job as a whole reaches `status: "complete"`. This is
+   * what lets the client show a genuinely live-updating probability DURING analysis
+   * (never a client-side guess) rather than only at the very end. Guaranteed to be a
+   * complete `PairAnalysisResult` once `status === "complete"`. */
+  result: Partial<PairAnalysisResult> | null;
+}
+
+/** Response shape of GET /api/signals/analyze/recheck -- see that route and
+ * evaluateSpecificDirection's own doc comments. Powers the "Check a Pair"
+ * signal-weakening monitor (spec section 11): re-evaluates one specific,
+ * already-shown direction right now, plus whether the opposite direction has
+ * independently become real in the meantime (a genuine reversal). */
+export interface SignalRecheckResponse {
+  pair: Pair;
+  timeframe: Timeframe;
+  direction: "long" | "short";
+  evaluation: SignalEvaluation;
+  opposingSignal: boolean;
+  time: number;
+}
+
 // "Is the market still backing this open position, or has it turned against it" --
 // see positionRiskNarration.ts's own doc comment for the full classification logic.
 // Defined here (not in that file) so this and the StreamEvent variant below can share

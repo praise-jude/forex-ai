@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import type { Candle, Confluence, NoTradeReason, Pair, Signal, SignalEvaluation, Timeframe } from "./types";
+import type {
+  Candle,
+  Confluence,
+  LiquiditySweep,
+  NoTradeReason,
+  Pair,
+  Signal,
+  SignalEvaluation,
+  StructureEvent,
+  SwingPoint,
+  Timeframe,
+} from "./types";
 import { detectSwingPoints } from "./detectors/swings";
 import { detectStructureBreaks } from "./detectors/structure";
 import { detectFairValueGaps } from "./detectors/fairValueGaps";
@@ -70,57 +81,47 @@ export interface HigherTimeframeCandles {
 }
 
 /**
- * Evaluates the current closed candle and returns either a Signal or a NoTradeReason --
- * every exit point is accounted for, never silently dropped, so the dashboard can show
- * real "why not" reasoning instead of nothing.
- *
- * Two independent signers. SIGNER A is SMC, the PRIMARY entry engine, completely
- * unchanged: a liquidity sweep, structure break in the implied reversal direction, and
- * a first-time retest of the resulting unmitigated FVG/order block during a killzone
- * (crypto pairs exempted — see isCrypto) locate the *candidate* trade (its entry/SL/TP).
- * D1/H4/H1 trend agreement, ADX, and ATR are hard pre-gates, followed by a news-blackout
- * check (see newsFilter.ts — a hard hold, only when a high-impact release is genuinely
- * detected as imminent, never from missing data). If all of that passes, Signer A's own
- * confidence is scored across two dimensions — direction (trend/structure) and entry
- * (SMC zone quality/volume/MACD/RSI/candlestick) — bottlenecked at the weaker of the two
- * (see confidenceScore.ts). Below 80% on either is `below_threshold`, no signal.
- *
- * SIGNER B (see signerB.ts) is independent confirmation — Trend + Momentum (RSI, incl.
- * divergence) + Volatility + Currency Strength + Session — computed WITHOUT reference to
- * Signer A's own direction. decisionMatrix.ts then combines the two: they must agree in
- * direction (a Signer B tie/"neutral" or outright conflict holds the trade — see
- * `signer_b_neutral`/`signer_conflict` below), but a merely-weaker (still-agreeing)
- * Signer B only shows up in its own separately-displayed confidence number, never
- * downgrades Signer A's. This is the hard/soft filter split: only a genuine tie or
- * opposite-direction read from Signer B ever blocks a trade.
- *
- * A Signal is constructed at 70%+ (watch — informational only, not executable), 80%+
- * (buy), or 90%+ (strong_buy) on Signer A's own tier, optionally upgraded to strong_buy
- * when Signer B also strongly agrees. Only buy/strong_buy can ever be manually executed
- * (see executionEngine.ts's watch-tier guard) — watch exists purely so a near-miss setup
- * is visible on the dashboard. Call this once per closed candle — never on the still-
- * forming one, or signals will repaint. See `assembleSignals` below for the Signal[]-only
- * view.
+ * Every input `evaluateDirectionalCandidate` needs that does NOT depend on which
+ * direction (bullish/bearish sweep) is being evaluated -- computed once and shared
+ * across both a bullish and a bearish candidate check (see `findSweepCandidates` +
+ * `evaluateDirectionalCandidate` below), instead of recomputed per direction. Everything
+ * here is a pure function of `candles`/`higherTimeframes` alone.
  */
-export function evaluateSignal(
+export interface SharedGateContext {
+  candles: Candle[];
+  pair: Pair;
+  timeframe: Timeframe;
+  higherTimeframes: HigherTimeframeCandles;
+  lastIndex: number;
+  lastCandle: Candle;
+  atrSeries: number[];
+  atr: number;
+  atrAverage: number;
+  adx: number;
+  swings: SwingPoint[];
+  structureEvents: StructureEvent[];
+  recentSweeps: LiquiditySweep[];
+  d1Trend: "bullish" | "bearish" | "neutral";
+  h4Trend: "bullish" | "bearish" | "neutral";
+  h1Trend: "bullish" | "bearish" | "neutral";
+  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus };
+}
+
+/**
+ * Computes every direction-independent input `evaluateDirectionalCandidate` needs, plus
+ * the two hard gates that must fail before any direction is even known (too few candles,
+ * outside the killzone). Returns `null` for those two cases -- callers should treat that
+ * exactly like a `no_setup`/`outside_killzone` no_trade result, same as `evaluateSignal`
+ * always has.
+ */
+export function computeSharedGateContext(
   candles: Candle[],
   pair: Pair,
   timeframe: Timeframe,
   higherTimeframes: HigherTimeframeCandles,
-  // Only ever passed by the backtester (see lib/market/backtest/) -- undefined at every
-  // live call site, so live behavior is unchanged. checkNews/computeUsdStrength are both
-  // live-cache reads with no per-bar timestamp of their own (computeUsdStrength in
-  // particular takes no timestamp at all, so left alone it would feed today's real
-  // currency-strength reading into every single historical bar's Signer B vote) -- the
-  // backtester supplies an explicit value per bar instead, computed for real from
-  // historical data (currencyStrength.ts's computeHistoricalUsdStrength,
-  // newsFilter.ts's checkHistoricalNews) when a historical source is configured, or a
-  // deterministic "unavailable"/"clear" default otherwise.
   overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
-): SignalEvaluation {
-  const noTrade = (reason: NoTradeReason): SignalEvaluation => ({ status: "no_trade", reason });
-
-  if (candles.length < 10) return noTrade({ code: "no_setup" });
+): { context: SharedGateContext } | { blocked: NoTradeReason } {
+  if (candles.length < 10) return { blocked: { code: "no_setup" } };
   const lastIndex = candles.length - 1;
   const lastCandle = candles[lastIndex];
 
@@ -135,7 +136,9 @@ export function evaluateSignal(
   // through Asia and the full US session, not a forex pair whose move concentrates in
   // the London/NY overlap -- boxing it into the killzone would suppress the majority of
   // its real setups, which defeats the point of tracking it as a priority instrument.
-  if (!isCrypto(pair) && !isStock(pair) && !isCommodity(pair) && !isKillzone(lastCandle.time)) return noTrade({ code: "outside_killzone" });
+  if (!isCrypto(pair) && !isStock(pair) && !isCommodity(pair) && !isKillzone(lastCandle.time)) {
+    return { blocked: { code: "outside_killzone" } };
+  }
 
   // Hoisted ahead of sweep detection: the sweep tolerance below needs it, and it's a
   // pure function of `candles` with no dependency on anything computed in between, so
@@ -151,23 +154,17 @@ export function evaluateSignal(
   // ATR_BUFFER_FRACTION below, and symbols.ts's XAU/USD comment).
   const sweepTolerance = atr * SWEEP_TOLERANCE_ATR_FRACTION;
   const sweeps = detectLiquiditySweeps(candles, swings, sweepTolerance);
-
   const recentSweeps = sweeps.filter((s) => s.sweepIndex >= lastIndex - SWEEP_LOOKBACK_CANDLES);
-  if (recentSweeps.length === 0) return noTrade({ code: "no_setup" });
-  const sweep = recentSweeps[recentSweeps.length - 1];
 
-  // A buyside sweep (stops above a high taken out) implies a bearish reversal is
-  // being set up; a sellside sweep implies a bullish one.
-  const wantsBullish = sweep.side === "sellside";
-  const zoneDirection = wantsBullish ? "bullish" : "bearish";
-  const direction: "long" | "short" = wantsBullish ? "long" : "short";
+  const adx = calculateAdx(candles)[lastIndex];
+  const atrWindow = atrSeries.slice(lastIndex - ATR_AVERAGE_PERIOD, lastIndex);
+  const atrAverage = atrWindow.reduce((sum, v) => sum + v, 0) / atrWindow.length;
 
-  // --- Hard pre-gates: D1 agreement, ADX floor, ATR health ---
-  // H1 is intentionally NOT part of this gate -- a live check of the lone-disagreement
-  // pattern across all 9 pairs found H1 was the sole holdout in 5 of 7 blocked setups
-  // (D1: 2, H4: 0), consistent with it being the fastest/noisiest of the three and most
-  // prone to a short-term pullback against the real D1/H4 trend. h1Trend is still
-  // computed and carried in the no-trade reason payload below purely as informational
+  // H1 is intentionally NOT part of the D1 gate below -- a live check of the
+  // lone-disagreement pattern across all 9 pairs found H1 was the sole holdout in 5 of 7
+  // blocked setups (D1: 2, H4: 0), consistent with it being the fastest/noisiest of the
+  // three and most prone to a short-term pullback against the real D1/H4 trend. h1Trend
+  // is still computed and carried in the no-trade reason payload purely as informational
   // context, never as a blocker.
   //
   // H4 was demoted the same way on 2026-09-02, after a production data pull of every
@@ -180,15 +177,73 @@ export function evaluateSignal(
   const d1Trend = emaTrendDirection(higherTimeframes.d1);
   const h4Trend = emaTrendDirection(higherTimeframes.h4);
   const h1Trend = emaTrendDirection(higherTimeframes.h1);
-  if (d1Trend === "neutral" || d1Trend !== zoneDirection) {
-    return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: d1Trend, h4: h4Trend, h1: h1Trend });
+
+  return {
+    context: {
+      candles,
+      pair,
+      timeframe,
+      higherTimeframes,
+      lastIndex,
+      lastCandle,
+      atrSeries,
+      atr,
+      atrAverage,
+      adx,
+      swings,
+      structureEvents,
+      recentSweeps,
+      d1Trend,
+      h4Trend,
+      h1Trend,
+      overrides,
+    },
+  };
+}
+
+/**
+ * The most recent sweep implying a bullish reversal (a sellside sweep -- stops above a
+ * high taken out) and the most recent implying a bearish one (a buyside sweep),
+ * independently -- either or both may be absent. A sweep implying direction X is
+ * unrelated to whether a sweep implying the opposite direction also exists; both can be
+ * real, independently-evaluable candidates at once (e.g. a recent sweep of both the
+ * range high and low). Used by the dual-direction analysis job (pairAnalysisJob.ts) to
+ * genuinely score both sides rather than only whichever sweep happens to be most recent
+ * overall -- see evaluateSignal below for the single-candidate behavior every existing
+ * caller still gets unchanged.
+ */
+export function findSweepCandidates(recentSweeps: LiquiditySweep[]): { bullish?: LiquiditySweep; bearish?: LiquiditySweep } {
+  const bullish = recentSweeps.filter((s) => s.side === "sellside").at(-1);
+  const bearish = recentSweeps.filter((s) => s.side === "buyside").at(-1);
+  return { bullish, bearish };
+}
+
+/**
+ * Evaluates ONE specific liquidity-sweep candidate (bullish or bearish) all the way
+ * through to a Signal or a NoTradeReason -- this is the entire direction-dependent half
+ * of the pipeline described on evaluateSignal's own doc comment (D1/ADX/ATR pre-gates,
+ * structure/zone match, news/weekend blackouts, Signer A scoring, Signer B, decision
+ * matrix). Factored out so the dual-direction analysis job can call it once per real
+ * candidate side (see findSweepCandidates) instead of only ever seeing whichever sweep
+ * happened to be most recent overall.
+ */
+export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: LiquiditySweep): SignalEvaluation {
+  const noTrade = (reason: NoTradeReason): SignalEvaluation => ({ status: "no_trade", reason });
+  const { candles, pair, timeframe, lastIndex, lastCandle, atr, atrAverage, adx, swings, structureEvents, overrides } = ctx;
+
+  // A buyside sweep (stops above a high taken out) implies a bearish reversal is
+  // being set up; a sellside sweep implies a bullish one.
+  const wantsBullish = sweep.side === "sellside";
+  const zoneDirection = wantsBullish ? "bullish" : "bearish";
+  const direction: "long" | "short" = wantsBullish ? "long" : "short";
+
+  // --- Hard pre-gates: D1 agreement, ADX floor, ATR health ---
+  if (ctx.d1Trend === "neutral" || ctx.d1Trend !== zoneDirection) {
+    return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: ctx.d1Trend, h4: ctx.h4Trend, h1: ctx.h1Trend });
   }
 
-  const adx = calculateAdx(candles)[lastIndex];
   if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return noTrade({ code: "weak_trend_adx", adx: Number.isNaN(adx) ? 0 : adx });
 
-  const atrWindow = atrSeries.slice(lastIndex - ATR_AVERAGE_PERIOD, lastIndex);
-  const atrAverage = atrWindow.reduce((sum, v) => sum + v, 0) / atrWindow.length;
   if (Number.isNaN(atr) || !(atr > atrAverage)) {
     return noTrade({ code: "low_volatility", atr: Number.isNaN(atr) ? 0 : atr, atrAverage });
   }
@@ -400,6 +455,102 @@ export function evaluateSignal(
   };
 
   return { status: "signal", signal };
+}
+
+/**
+ * Evaluates the current closed candle and returns either a Signal or a NoTradeReason --
+ * every exit point is accounted for, never silently dropped, so the dashboard can show
+ * real "why not" reasoning instead of nothing.
+ *
+ * Two independent signers. SIGNER A is SMC, the PRIMARY entry engine, completely
+ * unchanged: a liquidity sweep, structure break in the implied reversal direction, and
+ * a first-time retest of the resulting unmitigated FVG/order block during a killzone
+ * (crypto pairs exempted — see isCrypto) locate the *candidate* trade (its entry/SL/TP).
+ * D1/H4/H1 trend agreement, ADX, and ATR are hard pre-gates, followed by a news-blackout
+ * check (see newsFilter.ts — a hard hold, only when a high-impact release is genuinely
+ * detected as imminent, never from missing data). If all of that passes, Signer A's own
+ * confidence is scored across two dimensions — direction (trend/structure) and entry
+ * (SMC zone quality/volume/MACD/RSI/candlestick) — bottlenecked at the weaker of the two
+ * (see confidenceScore.ts). Below 80% on either is `below_threshold`, no signal.
+ *
+ * SIGNER B (see signerB.ts) is independent confirmation — Trend + Momentum (RSI, incl.
+ * divergence) + Volatility + Currency Strength + Session — computed WITHOUT reference to
+ * Signer A's own direction. decisionMatrix.ts then combines the two: they must agree in
+ * direction (a Signer B tie/"neutral" or outright conflict holds the trade — see
+ * `signer_b_neutral`/`signer_conflict` below), but a merely-weaker (still-agreeing)
+ * Signer B only shows up in its own separately-displayed confidence number, never
+ * downgrades Signer A's. This is the hard/soft filter split: only a genuine tie or
+ * opposite-direction read from Signer B ever blocks a trade.
+ *
+ * A Signal is constructed at 70%+ (watch — informational only, not executable), 80%+
+ * (buy), or 90%+ (strong_buy) on Signer A's own tier, optionally upgraded to strong_buy
+ * when Signer B also strongly agrees. Only buy/strong_buy can ever be manually executed
+ * (see executionEngine.ts's watch-tier guard) — watch exists purely so a near-miss setup
+ * is visible on the dashboard. Call this once per closed candle — never on the still-
+ * forming one, or signals will repaint. See `assembleSignals` below for the Signal[]-only
+ * view.
+ *
+ * Implementation note: this is now a thin wrapper over `computeSharedGateContext` +
+ * `evaluateDirectionalCandidate`, picking the single most-recent sweep exactly as this
+ * function always has -- every existing caller (the live pipeline, the backtester, the
+ * on-demand /api/signals/evaluate route) is unaffected by the refactor. The dual-direction
+ * analysis job (pairAnalysisJob.ts) calls the same two functions directly instead, to
+ * genuinely evaluate both a bullish and a bearish candidate when both exist -- see
+ * findSweepCandidates.
+ */
+export function evaluateSignal(
+  candles: Candle[],
+  pair: Pair,
+  timeframe: Timeframe,
+  higherTimeframes: HigherTimeframeCandles,
+  // Only ever passed by the backtester (see lib/market/backtest/) -- undefined at every
+  // live call site, so live behavior is unchanged. checkNews/computeUsdStrength are both
+  // live-cache reads with no per-bar timestamp of their own (computeUsdStrength in
+  // particular takes no timestamp at all, so left alone it would feed today's real
+  // currency-strength reading into every single historical bar's Signer B vote) -- the
+  // backtester supplies an explicit value per bar instead, computed for real from
+  // historical data (currencyStrength.ts's computeHistoricalUsdStrength,
+  // newsFilter.ts's checkHistoricalNews) when a historical source is configured, or a
+  // deterministic "unavailable"/"clear" default otherwise.
+  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
+): SignalEvaluation {
+  const shared = computeSharedGateContext(candles, pair, timeframe, higherTimeframes, overrides);
+  if ("blocked" in shared) return { status: "no_trade", reason: shared.blocked };
+
+  const { recentSweeps } = shared.context;
+  if (recentSweeps.length === 0) return { status: "no_trade", reason: { code: "no_setup" } };
+  const sweep = recentSweeps[recentSweeps.length - 1];
+
+  return evaluateDirectionalCandidate(shared.context, sweep);
+}
+
+/**
+ * Re-evaluates ONE specific, caller-chosen direction right now, regardless of whether it
+ * is currently the most-recent sweep overall -- unlike evaluateSignal, which always
+ * follows whichever side is freshest. Used by the "Check a Pair" signal-weakening
+ * monitor (see app/api/signals/analyze/recheck/route.ts): once an operator is watching a
+ * specific BUY or SELL read, a genuinely honest "is it still holding up" answer has to
+ * keep checking THAT side, not silently swap to reporting on whichever side the market
+ * happens to have swept most recently since then. Returns `{status: "no_trade", reason:
+ * {code: "no_setup"}}` when that side no longer has any real sweep candidate at all --
+ * the honest "this setup has fully dissolved" case, indistinguishable from any other
+ * no_setup for display purposes.
+ */
+export function evaluateSpecificDirection(
+  candles: Candle[],
+  pair: Pair,
+  timeframe: Timeframe,
+  higherTimeframes: HigherTimeframeCandles,
+  direction: "long" | "short"
+): SignalEvaluation {
+  const shared = computeSharedGateContext(candles, pair, timeframe, higherTimeframes);
+  if ("blocked" in shared) return { status: "no_trade", reason: shared.blocked };
+
+  const candidates = findSweepCandidates(shared.context.recentSweeps);
+  const sweep = direction === "long" ? candidates.bullish : candidates.bearish;
+  if (!sweep) return { status: "no_trade", reason: { code: "no_setup" } };
+
+  return evaluateDirectionalCandidate(shared.context, sweep);
 }
 
 /**
