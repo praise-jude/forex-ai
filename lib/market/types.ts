@@ -60,7 +60,17 @@ export type Pair =
 // subscriptions this time, not the quote-only tier it occupied before: a quote-only
 // pair can't feed "Check a pair", manual-trade suggestions, or the signal engines, which
 // defeated the point of tracking it at all.
-export const PAIRS: Pair[] = ["GBP/USD", "XAU/USD", "BTC/USD", "USOIL"];
+//
+// ETH/USD added back on 2026-09-05 -- the operator wanted to widen coverage after this
+// account had sat at 4 pairs for a day with no further throttling/downgrade events, and
+// deliberately chose a single-pair step (not the 3 first asked for) given the above
+// history of repeated reverts at 7. Same crypto/high-tick-rate profile as BTC/USD --
+// exactly the kind of symbol the 2026-09-02 credit-throttling incident called out as a
+// disproportionate credit-budget consumer, so this is a real, not risk-free, test of
+// whether the account's MetaApi tier can sustain 5 rather than a permanent fix. Revert
+// to 4 immediately if the same "downgraded -- circuit open" pattern reappears (see
+// MarketSyncListener.onSubscriptionDowngraded's own circuit breaker).
+export const PAIRS: Pair[] = ["GBP/USD", "XAU/USD", "BTC/USD", "USOIL", "ETH/USD"];
 
 export interface Candle {
   time: number; // unix ms, candle open time
