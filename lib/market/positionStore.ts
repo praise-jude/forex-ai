@@ -217,6 +217,13 @@ class PositionStore {
   timeframeForBrokerPosition(brokerPositionId: string): Timeframe | undefined {
     return this.all().find((trade) => trade.status === "filled" && trade.brokerPositionId === brokerPositionId)?.timeframe;
   }
+
+  /** Same join as timeframeForBrokerPosition, for the originating signal's own id --
+   * used to look up its original confidence at entry (see tradeJournal.ts's
+   * getPendingContext) for positionRiskNarration.ts's "weakened" setup-validity state. */
+  signalIdForBrokerPosition(brokerPositionId: string): string | undefined {
+    return this.all().find((trade) => trade.status === "filled" && trade.brokerPositionId === brokerPositionId)?.signalId;
+  }
 }
 
 const globalKey = Symbol.for("forex-ai.positionStore");

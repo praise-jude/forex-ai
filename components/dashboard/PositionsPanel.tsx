@@ -158,6 +158,11 @@ function PositionRow({ position, risk, now }: { position: OpenPosition; risk: Po
           🔴 Setup invalidated — {risk.setup.reason}
         </div>
       )}
+      {risk?.setup && risk.setup.status === "weakened" && (
+        <div className="mt-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] leading-tight text-amber-400">
+          🟡 Setup weakening — {risk.setup.reason}
+        </div>
+      )}
     </li>
   );
 }

@@ -72,6 +72,12 @@ export function assessPositionRisk(
   };
 }
 
+// A drop of at least this many confidence points from entry counts as a real,
+// meaningful weakening -- same threshold and reasoning as the pre-trade "Check a Pair"
+// signal-weakening monitor (SignalWeakeningMonitor.tsx on both platforms): ordinary
+// poll-to-poll noise in a still-valid setup shouldn't flip the state on and off.
+const WEAKENING_DROP_THRESHOLD = 15;
+
 /**
  * A second, more precise read alongside assessPositionRisk's own HTF regime/trend
  * check -- that one asks "has the broad multi-day backdrop turned against this
@@ -83,15 +89,14 @@ export function assessPositionRisk(
  * client-side guess or a decaying number invented here, only what the real pipeline
  * says right now.
  *
- * Deliberately two states, not three -- "weakening" would require tracking each
- * position's original confidence at entry (a real, separate sourcing problem: the
- * originating Signal is pruned from signalStore after 4 hours, long before many
- * positions close) which isn't wired up yet. "invalidated" already covers the two
- * genuinely decisive cases: the opposite direction has become a real, independently
- * qualifying signal (a confirmed reversal), or the original direction's own candidate
- * no longer clears its own gates at all (the setup has structurally dissolved).
+ * `originalConfidence` is optional -- undefined for a position opened outside this app,
+ * or one whose signal context has genuinely aged out (see tradeJournal.ts's
+ * getPendingContext, retained 30 days -- far longer than any realistic open position,
+ * so this is only ever missing for the genuinely-unrecorded case). Without it, this
+ * degrades gracefully to the same two-state read (holding/invalidated) rather than
+ * fabricating a "weakened" read with nothing real to compare against.
  */
-export function assessSetupValidity(evaluation: SignalEvaluation, opposingSignal: boolean): SetupValidity {
+export function assessSetupValidity(evaluation: SignalEvaluation, opposingSignal: boolean, originalConfidence?: number): SetupValidity {
   if (opposingSignal) {
     return {
       status: "invalidated",
@@ -102,6 +107,12 @@ export function assessSetupValidity(evaluation: SignalEvaluation, opposingSignal
     return {
       status: "invalidated",
       reason: "The original setup no longer independently qualifies -- structure, trend agreement, or Signer B confirmation has broken down since entry.",
+    };
+  }
+  if (originalConfidence !== undefined && originalConfidence - evaluation.signal.confidence >= WEAKENING_DROP_THRESHOLD) {
+    return {
+      status: "weakened",
+      reason: `Confidence has dropped from ${originalConfidence.toFixed(0)}% at entry to ${evaluation.signal.confidence.toFixed(0)}% now -- still qualifying, but meaningfully weaker.`,
     };
   }
   return { status: "holding", reason: "The original setup still independently qualifies against the live SMC + Signer B pipeline." };

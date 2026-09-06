@@ -624,7 +624,9 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
               higherTimeframes,
               position.direction === "long" ? "short" : "long"
             );
-            setup = assessSetupValidity(ownEvaluation, opposingEvaluation.status === "signal");
+            const signalId = positionStore.signalIdForBrokerPosition(position.id);
+            const originalConfidence = signalId ? tradeJournal.getPendingContext(signalId)?.confidence : undefined;
+            setup = assessSetupValidity(ownEvaluation, opposingEvaluation.status === "signal", originalConfidence);
           }
         }
         const previousSetupStatus = getLastSetupStatus(position.id);
@@ -673,13 +675,15 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
         // position (nothing to have changed FROM yet).
         if (setupChanged && setup && previousSetupStatus !== undefined) {
           const sideLabel = position.direction === "long" ? "BUY" : "SELL";
+          const SETUP_TITLE: Record<SetupValidity["status"], string> = {
+            invalidated: `JUDE AI — Setup invalidated: ${position.pair}`,
+            weakened: `JUDE AI — Setup weakening: ${position.pair}`,
+            holding: `JUDE AI — Setup holding again: ${position.pair}`,
+          };
           void sendNotification({
             category: "risk_alert",
-            title:
-              setup.status === "invalidated"
-                ? `JUDE AI — Setup invalidated: ${position.pair}`
-                : `JUDE AI — Setup holding again: ${position.pair}`,
-            body: setup.status === "invalidated" ? setup.reason : `The ${sideLabel} setup on ${position.pair} independently qualifies again.`,
+            title: SETUP_TITLE[setup.status],
+            body: setup.status === "holding" ? `The ${sideLabel} setup on ${position.pair} independently qualifies again.` : setup.reason,
             data: { positionId: position.id, pair: position.pair },
           });
         }

@@ -189,6 +189,18 @@ class TradeJournalStore {
     });
   }
 
+  /** Non-destructive read of a still-open position's original signal context (unlike
+   * recordOutcome, which consumes/deletes it once the position actually closes) -- used
+   * by positionRiskNarration.ts's assessSetupValidity to compare a position's current
+   * re-evaluated confidence against what it was at entry. Retained for
+   * CONTEXT_RETENTION_MS (30 days), far longer than any realistic open-position
+   * duration, so this is available for essentially every real position. Undefined for a
+   * signal that predates this feature or was never recorded (e.g. a position opened
+   * directly on the broker outside the app). */
+  getPendingContext(signalId: string): SignalContext | undefined {
+    return this.pendingContexts.get(signalId);
+  }
+
   // Only prunes the in-memory working set, same as positionStore.ts's own prune() --
   // the DB row for a pruned-for-age context isn't actively deleted (see
   // deletePersistedContext, only called when a context is actually consumed below);

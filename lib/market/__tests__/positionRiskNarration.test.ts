@@ -112,4 +112,34 @@ describe("assessSetupValidity", () => {
     const result = assessSetupValidity(dissolved, true);
     expect(result.status).toBe("invalidated");
   });
+
+  it("holds when originalConfidence is unavailable, even if it would otherwise be comparable -- never a fabricated comparison", () => {
+    const result = assessSetupValidity(holding, false, undefined);
+    expect(result.status).toBe("holding");
+  });
+
+  it("holds when confidence is unchanged since entry", () => {
+    const result = assessSetupValidity(holding, false, 90); // buildSignal() defaults confidence to 90
+    expect(result.status).toBe("holding");
+  });
+
+  it("holds through a small confidence dip that doesn't clear the real weakening threshold", () => {
+    const slightlyLower: SignalEvaluation = { status: "signal", signal: buildSignal({ confidence: 80 }) };
+    const result = assessSetupValidity(slightlyLower, false, 90); // 10-point drop, under the 15-point bar
+    expect(result.status).toBe("holding");
+  });
+
+  it("weakens on a real, meaningful confidence drop since entry", () => {
+    const muchLower: SignalEvaluation = { status: "signal", signal: buildSignal({ confidence: 70 }) };
+    const result = assessSetupValidity(muchLower, false, 90); // 20-point drop, clears the 15-point bar
+    expect(result.status).toBe("weakened");
+    expect(result.reason).toContain("90");
+    expect(result.reason).toContain("70");
+  });
+
+  it("invalidates over weakened when a real opposing signal fires, even with a real confidence drop", () => {
+    const muchLower: SignalEvaluation = { status: "signal", signal: buildSignal({ confidence: 70 }) };
+    const result = assessSetupValidity(muchLower, true, 90);
+    expect(result.status).toBe("invalidated");
+  });
 });

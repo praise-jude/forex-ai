@@ -4,6 +4,7 @@ import { positionStore } from "@/lib/market/positionStore";
 import { predictionStore } from "@/lib/market/predictionStore";
 import { candleStore } from "@/lib/market/candleStore";
 import { evaluateSpecificDirection } from "@/lib/market/signalEngine";
+import { tradeJournal } from "@/lib/market/tradeJournal";
 import { assessPositionRisk, assessSetupValidity } from "@/lib/market/positionRiskNarration";
 import type { PositionRiskAssessment, SetupValidity } from "@/lib/market/types";
 
@@ -69,7 +70,9 @@ export async function GET() {
             higherTimeframes,
             position.direction === "long" ? "short" : "long"
           );
-          setup = assessSetupValidity(ownEvaluation, opposingEvaluation.status === "signal");
+          const signalId = positionStore.signalIdForBrokerPosition(position.id);
+          const originalConfidence = signalId ? tradeJournal.getPendingContext(signalId)?.confidence : undefined;
+          setup = assessSetupValidity(ownEvaluation, opposingEvaluation.status === "signal", originalConfidence);
         }
       }
 

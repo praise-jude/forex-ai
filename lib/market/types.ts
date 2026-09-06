@@ -502,10 +502,8 @@ export interface PositionRiskAssessment {
   setup: SetupValidity | null;
 }
 
-/** See positionRiskNarration.ts's assessSetupValidity -- deliberately two states, not
- * three ("weakening" would need each position's original confidence at entry, not
- * currently tracked -- see that function's own doc comment on why). */
-export type SetupValidityStatus = "holding" | "invalidated";
+/** See positionRiskNarration.ts's assessSetupValidity for exactly what each state means. */
+export type SetupValidityStatus = "holding" | "weakened" | "invalidated";
 
 export interface SetupValidity {
   status: SetupValidityStatus;
