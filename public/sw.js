@@ -48,11 +48,14 @@ self.addEventListener("activate", (event) => {
 // lhr1, at different points in the same session, which can strand an in-flight
 // navigation on a now-stale connection), not to paper over a real, sustained outage. The
 // confirmed trigger is a mobile-data connection (no VPN involved), where a carrier-side
-// tower handoff or re-routing event can take 1-3 seconds to settle -- so the backoff
-// below is spaced out to actually span a typical handoff instead of giving up mid-way
-// through one. A genuine, sustained outage still fails after these -- see the fetch
-// handler below for what happens then.
-const NAVIGATE_RETRY_DELAYS_MS = [500, 1000, 2000];
+// tower handoff or re-routing event can take 1-3 seconds to settle. Widened on
+// 2026-09-06 (500/1000/2000 -> +3000, ~3.5s -> ~6.5s total) after the shorter window
+// still didn't cover every real drop -- server-side logs at the same time confirmed no
+// crash/5xx, just the client (device) closing the connection, so this is the honest
+// lever available: absorb a longer real blip before giving up, not a claim the
+// underlying network issue is fixed. A genuine, sustained outage still fails after these
+// -- see the fetch handler below for what happens then.
+const NAVIGATE_RETRY_DELAYS_MS = [500, 1000, 2000, 3000];
 
 async function fetchNavigationWithRetry(request) {
   let lastError;
