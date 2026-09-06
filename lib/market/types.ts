@@ -493,6 +493,23 @@ export interface PositionRiskAssessment {
    * would be misleading) and "aligned" (nothing opposing). A real, honest CURRENT
    * distance, never a time estimate -- see emaTrendGapPct's own doc comment. */
   distancePct: number | null;
+  /** A second, more precise read alongside `level` above -- see
+   * positionRiskNarration.ts's assessSetupValidity for what it actually checks (the
+   * SAME SMC + Signer B pipeline that originally justified the trade, not just the
+   * broad HTF trend/regime `level` already covers). Null for a position opened outside
+   * this app, or one this app placed but can't re-check right now (e.g. insufficient
+   * candle history) -- never a fabricated status. */
+  setup: SetupValidity | null;
+}
+
+/** See positionRiskNarration.ts's assessSetupValidity -- deliberately two states, not
+ * three ("weakening" would need each position's original confidence at entry, not
+ * currently tracked -- see that function's own doc comment on why). */
+export type SetupValidityStatus = "holding" | "invalidated";
+
+export interface SetupValidity {
+  status: SetupValidityStatus;
+  reason: string;
 }
 
 export type StreamEvent =
@@ -516,6 +533,10 @@ export type StreamEvent =
       direction: "long" | "short";
       level: PositionRiskLevel;
       reason: string;
+      /** See PositionRiskAssessment.setup's own doc comment -- null when this app can't
+       * re-check the original setup (not placed by this app, or insufficient candle
+       * history right now). */
+      setup: SetupValidity | null;
       time: number;
     };
 

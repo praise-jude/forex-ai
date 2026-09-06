@@ -147,6 +147,17 @@ function PositionRow({ position, risk, now }: { position: OpenPosition; risk: Po
           )}
         </div>
       )}
+      {/* A second, more precise read alongside the HTF-based badge above -- re-runs the
+       * exact SMC + Signer B pipeline that originally justified this trade (see
+       * positionRiskNarration.ts's assessSetupValidity), not just the broad regime/trend
+       * check `risk.level` already covers. Only shown when it's actually available
+       * (a position this app itself placed, with current candle history to re-check
+       * against) -- never a fabricated status for one opened outside the app. */}
+      {risk?.setup && risk.setup.status === "invalidated" && (
+        <div className="mt-1.5 rounded-md border border-rose-800/40 bg-rose-950/20 px-2 py-1 text-[11px] leading-tight text-rose-400">
+          🔴 Setup invalidated — {risk.setup.reason}
+        </div>
+      )}
     </li>
   );
 }

@@ -1,4 +1,4 @@
-import type { HigherTimeframeTrends, MarketRegime, PositionRiskAssessment } from "./types";
+import type { HigherTimeframeTrends, MarketRegime, PositionRiskAssessment, SetupValidity, SignalEvaluation } from "./types";
 
 /**
  * "Is the market still backing this open position, or has it turned against it" --
@@ -22,7 +22,11 @@ import type { HigherTimeframeTrends, MarketRegime, PositionRiskAssessment } from
  * gets an honest current-distance answer instead of silence. Never a time estimate --
  * see emaTrendGapPct's own doc comment for why this app doesn't fabricate one.
  */
-export function assessPositionRisk(direction: "long" | "short", regime: MarketRegime, trends: HigherTimeframeTrends): PositionRiskAssessment {
+export function assessPositionRisk(
+  direction: "long" | "short",
+  regime: MarketRegime,
+  trends: HigherTimeframeTrends
+): Omit<PositionRiskAssessment, "setup"> {
   const opposingRegime: MarketRegime = direction === "long" ? "strong_downtrend" : "strong_uptrend";
   const opposingTrend = direction === "long" ? "bearish" : "bullish";
   const sideLabel = direction === "long" ? "BUY" : "SELL";
@@ -66,4 +70,39 @@ export function assessPositionRisk(direction: "long" | "short", regime: MarketRe
     reason: `Market conditions remain aligned with your ${sideLabel} position.`,
     distancePct: null,
   };
+}
+
+/**
+ * A second, more precise read alongside assessPositionRisk's own HTF regime/trend
+ * check -- that one asks "has the broad multi-day backdrop turned against this
+ * position"; this one re-runs the SAME SMC + Signer B pipeline that originally
+ * justified the trade (see signalEngine.ts's evaluateSpecificDirection) and asks "does
+ * the EXACT setup I entered still independently hold up right now". Reuses the exact
+ * machinery already built and shipped for the "Check a Pair" signal-weakening monitor
+ * (see app/api/signals/analyze/recheck/route.ts) -- same honesty rule applies: never a
+ * client-side guess or a decaying number invented here, only what the real pipeline
+ * says right now.
+ *
+ * Deliberately two states, not three -- "weakening" would require tracking each
+ * position's original confidence at entry (a real, separate sourcing problem: the
+ * originating Signal is pruned from signalStore after 4 hours, long before many
+ * positions close) which isn't wired up yet. "invalidated" already covers the two
+ * genuinely decisive cases: the opposite direction has become a real, independently
+ * qualifying signal (a confirmed reversal), or the original direction's own candidate
+ * no longer clears its own gates at all (the setup has structurally dissolved).
+ */
+export function assessSetupValidity(evaluation: SignalEvaluation, opposingSignal: boolean): SetupValidity {
+  if (opposingSignal) {
+    return {
+      status: "invalidated",
+      reason: "A real opposite-direction signal has now independently qualified on this same setup -- the original thesis is done.",
+    };
+  }
+  if (evaluation.status !== "signal") {
+    return {
+      status: "invalidated",
+      reason: "The original setup no longer independently qualifies -- structure, trend agreement, or Signer B confirmation has broken down since entry.",
+    };
+  }
+  return { status: "holding", reason: "The original setup still independently qualifies against the live SMC + Signer B pipeline." };
 }

@@ -1,4 +1,4 @@
-import type { PositionRiskLevel } from "./types";
+import type { PositionRiskLevel, SetupValidityStatus } from "./types";
 
 // Voice/push notifications must only fire on a real level CHANGE, not every candle
 // close a position happens to still be at "caution" -- the same "smart alert filter"
@@ -27,5 +27,26 @@ export function setLastPositionRiskLevel(positionId: string, level: PositionRisk
   if (byPositionId.size > MAX_RECORDS) {
     const oldest = byPositionId.keys().next().value;
     if (oldest !== undefined) byPositionId.delete(oldest);
+  }
+}
+
+// Separate dedup state for assessSetupValidity's own status (see
+// positionRiskNarration.ts) -- independent of the HTF-based `level` above, since a
+// setup can flip from "holding" to "invalidated" while the broad regime/trend read
+// stays "aligned" the whole time (or vice versa). Notifications must react to either
+// changing on its own, not only when both happen to change together.
+const setupStatusByPositionId = new Map<string, SetupValidityStatus>();
+
+export function getLastSetupStatus(positionId: string): SetupValidityStatus | undefined {
+  return setupStatusByPositionId.get(positionId);
+}
+
+export function setLastSetupStatus(positionId: string, status: SetupValidityStatus): void {
+  // Same insertion-order fix as setLastPositionRiskLevel above.
+  setupStatusByPositionId.delete(positionId);
+  setupStatusByPositionId.set(positionId, status);
+  if (setupStatusByPositionId.size > MAX_RECORDS) {
+    const oldest = setupStatusByPositionId.keys().next().value;
+    if (oldest !== undefined) setupStatusByPositionId.delete(oldest);
   }
 }

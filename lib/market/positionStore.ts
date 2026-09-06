@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { getOptionalDb } from "../db/optionalClient";
 import { executedTrades as executedTradesTable } from "../db/tradingSchema";
-import type { AccountKey, ExecutedTrade } from "./types";
+import type { AccountKey, ExecutedTrade, Timeframe } from "./types";
 
 type AttemptInput = Omit<ExecutedTrade, "status" | "filledEntry" | "brokerPositionId" | "brokerOrderId" | "rejectReason" | "filledAt">;
 
@@ -206,6 +206,16 @@ class PositionStore {
     return this.all().find(
       (trade) => trade.status === "filled" && trade.brokerPositionId === brokerPositionId && trade.filledAt !== undefined
     )?.filledAt;
+  }
+
+  /** Same join as openedAtForBrokerPosition, for the timeframe this app's own signal
+   * engine originally evaluated the trade on -- needed to re-check the EXACT original
+   * setup later (see positionRiskNarration.ts's assessSetupValidity), since re-running
+   * the SMC/Signer B pipeline on the wrong timeframe would answer a different question
+   * than "is the setup I actually entered still valid". Undefined for a position opened
+   * directly on the broker outside the app, same as openedAtForBrokerPosition. */
+  timeframeForBrokerPosition(brokerPositionId: string): Timeframe | undefined {
+    return this.all().find((trade) => trade.status === "filled" && trade.brokerPositionId === brokerPositionId)?.timeframe;
   }
 }
 

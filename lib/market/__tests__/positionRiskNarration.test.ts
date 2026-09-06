@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { assessPositionRisk } from "../positionRiskNarration";
-import type { HigherTimeframeTrends } from "../types";
+import { assessPositionRisk, assessSetupValidity } from "../positionRiskNarration";
+import { buildSignal } from "./fixtures";
+import type { HigherTimeframeTrends, SignalEvaluation } from "../types";
 
 function trends(overrides: Partial<HigherTimeframeTrends> = {}): HigherTimeframeTrends {
   return { d1: "neutral", h4: "neutral", h1: "neutral", d1Gap: null, h4Gap: null, h1Gap: null, ...overrides };
@@ -80,5 +81,35 @@ describe("assessPositionRisk", () => {
     const short = assessPositionRisk("short", "range", trends({ d1: "bullish", h4: "bullish" }));
     expect(long.level).toBe("warning");
     expect(short.level).toBe("warning");
+  });
+});
+
+describe("assessSetupValidity", () => {
+  const holding: SignalEvaluation = { status: "signal", signal: buildSignal() };
+  const dissolved: SignalEvaluation = { status: "no_trade", reason: { code: "no_setup" } };
+
+  it("holds when the original direction's own candidate still independently qualifies and nothing opposes it", () => {
+    const result = assessSetupValidity(holding, false);
+    expect(result.status).toBe("holding");
+  });
+
+  it("invalidates when the original direction's own candidate no longer qualifies at all", () => {
+    const result = assessSetupValidity(dissolved, false);
+    expect(result.status).toBe("invalidated");
+    expect(result.reason).toContain("no longer independently qualifies");
+  });
+
+  it("invalidates on a real opposing signal even if the original side still technically qualifies", () => {
+    // A genuine contradiction (both sides independently real) -- the opposing signal
+    // is the more decisive, hard-invalidating read, same posture as
+    // positionInvalidation.ts's own opposite-signal-closes-the-position rule.
+    const result = assessSetupValidity(holding, true);
+    expect(result.status).toBe("invalidated");
+    expect(result.reason).toContain("opposite-direction signal");
+  });
+
+  it("invalidates on an opposing signal even when the original side has already dissolved", () => {
+    const result = assessSetupValidity(dissolved, true);
+    expect(result.status).toBe("invalidated");
   });
 });

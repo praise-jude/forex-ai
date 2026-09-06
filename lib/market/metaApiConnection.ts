@@ -13,12 +13,12 @@ import type {
   StreamingMetaApiConnectionInstance,
   TrailingStopLoss,
 } from "metaapi.cloud-sdk/node";
-import type { AccountInfo, AccountKey, Candle, OpenPosition, Pair, SymbolSpec, Timeframe } from "./types";
+import type { AccountInfo, AccountKey, Candle, OpenPosition, Pair, SetupValidity, SymbolSpec, Timeframe } from "./types";
 import { PAIRS } from "./types";
 import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
 import { eventBus } from "./eventBus";
-import { evaluateSignalDualDirection } from "./signalEngine";
+import { evaluateSignalDualDirection, evaluateSpecificDirection } from "./signalEngine";
 import { evaluateRangeSignal } from "./rangeEngine";
 import { confirmsDirection, M5_CONFIRMATION_BARS } from "./m5Confirmation";
 import { publishSignal } from "./signalPublisher";
@@ -37,8 +37,8 @@ import { isPending } from "./pendingInvalidationClose";
 import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
 import { detectMarketRegime } from "./marketRegime";
-import { assessPositionRisk } from "./positionRiskNarration";
-import { getLastPositionRiskLevel, setLastPositionRiskLevel } from "./positionRiskStore";
+import { assessPositionRisk, assessSetupValidity } from "./positionRiskNarration";
+import { getLastPositionRiskLevel, setLastPositionRiskLevel, getLastSetupStatus, setLastSetupStatus } from "./positionRiskStore";
 import { generateTradeRetrospective } from "../chat/tradeRetrospective";
 import { checkNews } from "./newsFilter";
 import { emaTrendDirection, emaTrendGapPct } from "./indicators/emaTrend";
@@ -606,7 +606,34 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
         const assessment = assessPositionRisk(position.direction, regime, trends);
         const previousLevel = getLastPositionRiskLevel(position.id);
         setLastPositionRiskLevel(position.id, assessment.level);
-        if (previousLevel === assessment.level) continue; // no real change -- see positionRiskStore.ts
+
+        // A second, more precise read alongside the HTF-based assessment above -- see
+        // assessSetupValidity's own doc comment. Only possible for a position this app
+        // itself placed (needs the original timeframe to re-check the right series) and
+        // only when that timeframe's candle history is actually available right now.
+        const positionTimeframe = positionStore.timeframeForBrokerPosition(position.id);
+        let setup: SetupValidity | null = null;
+        if (positionTimeframe) {
+          const positionSeries = candleStore.get(pair, positionTimeframe).slice(0, -1);
+          if (positionSeries.length > 0) {
+            const ownEvaluation = evaluateSpecificDirection(positionSeries, pair, positionTimeframe, higherTimeframes, position.direction);
+            const opposingEvaluation = evaluateSpecificDirection(
+              positionSeries,
+              pair,
+              positionTimeframe,
+              higherTimeframes,
+              position.direction === "long" ? "short" : "long"
+            );
+            setup = assessSetupValidity(ownEvaluation, opposingEvaluation.status === "signal");
+          }
+        }
+        const previousSetupStatus = getLastSetupStatus(position.id);
+        if (setup) setLastSetupStatus(position.id, setup.status);
+
+        const levelChanged = previousLevel !== assessment.level;
+        const setupChanged = setup !== null && previousSetupStatus !== setup.status;
+        if (!levelChanged && !setupChanged) continue; // no real change -- see positionRiskStore.ts
+
         eventBus.publish({
           type: "position_risk",
           positionId: position.id,
@@ -614,24 +641,45 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
           direction: position.direction,
           level: assessment.level,
           reason: assessment.reason,
+          setup,
           time,
         });
-        if (assessment.level !== "aligned") {
+
+        if (levelChanged) {
+          if (assessment.level !== "aligned") {
+            void sendNotification({
+              category: "risk_alert",
+              title: `JUDE AI — ${assessment.level === "warning" ? "Warning" : "Caution"}: ${position.pair}`,
+              body: assessment.reason,
+              data: { positionId: position.id, pair: position.pair },
+            });
+          } else if (previousLevel !== undefined) {
+            // The other half of a real user request: not just "something's wrong" but
+            // "tell me the moment it's not wrong anymore". previousLevel !== undefined
+            // excludes a position's very first assessment (nothing to have cleared from
+            // yet) -- only a genuine caution/warning -> aligned transition notifies.
+            void sendNotification({
+              category: "risk_alert",
+              title: `JUDE AI — Cleared: ${position.pair}`,
+              body: `The ${previousLevel} on your ${position.direction === "long" ? "BUY" : "SELL"} position has cleared -- market conditions are aligned again.`,
+              data: { positionId: position.id, pair: position.pair },
+            });
+          }
+        }
+
+        // Independent of the HTF-based notification above -- a setup can invalidate (or
+        // recover) without the broad regime/trend `level` changing at all, and vice
+        // versa. previousSetupStatus !== undefined excludes the first-ever read for this
+        // position (nothing to have changed FROM yet).
+        if (setupChanged && setup && previousSetupStatus !== undefined) {
+          const sideLabel = position.direction === "long" ? "BUY" : "SELL";
           void sendNotification({
             category: "risk_alert",
-            title: `JUDE AI — ${assessment.level === "warning" ? "Warning" : "Caution"}: ${position.pair}`,
-            body: assessment.reason,
-            data: { positionId: position.id, pair: position.pair },
-          });
-        } else if (previousLevel !== undefined) {
-          // The other half of a real user request: not just "something's wrong" but
-          // "tell me the moment it's not wrong anymore". previousLevel !== undefined
-          // excludes a position's very first assessment (nothing to have cleared from
-          // yet) -- only a genuine caution/warning -> aligned transition notifies.
-          void sendNotification({
-            category: "risk_alert",
-            title: `JUDE AI — Cleared: ${position.pair}`,
-            body: `The ${previousLevel} on your ${position.direction === "long" ? "BUY" : "SELL"} position has cleared -- market conditions are aligned again.`,
+            title:
+              setup.status === "invalidated"
+                ? `JUDE AI — Setup invalidated: ${position.pair}`
+                : `JUDE AI — Setup holding again: ${position.pair}`,
+            body: setup.status === "invalidated" ? setup.reason : `The ${sideLabel} setup on ${position.pair} independently qualifies again.`,
             data: { positionId: position.id, pair: position.pair },
           });
         }

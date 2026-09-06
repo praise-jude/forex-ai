@@ -2,8 +2,10 @@ import { getEngineMode, manualExecutionAccount } from "@/lib/market/engineMode";
 import { getOpenPositions } from "@/lib/market/metaApiConnection";
 import { positionStore } from "@/lib/market/positionStore";
 import { predictionStore } from "@/lib/market/predictionStore";
-import { assessPositionRisk } from "@/lib/market/positionRiskNarration";
-import type { PositionRiskAssessment } from "@/lib/market/types";
+import { candleStore } from "@/lib/market/candleStore";
+import { evaluateSpecificDirection } from "@/lib/market/signalEngine";
+import { assessPositionRisk, assessSetupValidity } from "@/lib/market/positionRiskNarration";
+import type { PositionRiskAssessment, SetupValidity } from "@/lib/market/types";
 
 export const runtime = "nodejs";
 
@@ -44,7 +46,34 @@ export async function GET() {
   if (accountKey === "live") {
     for (const position of positions) {
       const prediction = predictionStore.get(position.pair, "15m", "smc");
-      if (prediction) risk[position.id] = assessPositionRisk(position.direction, prediction.regime, prediction.trends);
+      if (!prediction) continue;
+
+      // A second, more precise read alongside the HTF-based assessment above -- see
+      // assessSetupValidity's own doc comment. Only possible for a position this app
+      // itself placed (needs the original timeframe to re-check the right series).
+      const positionTimeframe = positionStore.timeframeForBrokerPosition(position.id);
+      let setup: SetupValidity | null = null;
+      if (positionTimeframe) {
+        const positionSeries = candleStore.get(position.pair, positionTimeframe).slice(0, -1);
+        if (positionSeries.length > 0) {
+          const higherTimeframes = {
+            h1: candleStore.get(position.pair, "1h"),
+            h4: candleStore.get(position.pair, "4h"),
+            d1: candleStore.get(position.pair, "1d"),
+          };
+          const ownEvaluation = evaluateSpecificDirection(positionSeries, position.pair, positionTimeframe, higherTimeframes, position.direction);
+          const opposingEvaluation = evaluateSpecificDirection(
+            positionSeries,
+            position.pair,
+            positionTimeframe,
+            higherTimeframes,
+            position.direction === "long" ? "short" : "long"
+          );
+          setup = assessSetupValidity(ownEvaluation, opposingEvaluation.status === "signal");
+        }
+      }
+
+      risk[position.id] = { ...assessPositionRisk(position.direction, prediction.regime, prediction.trends), setup };
     }
   }
 
