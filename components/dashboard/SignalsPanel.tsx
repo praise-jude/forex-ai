@@ -5,8 +5,10 @@ import { UNSCORED_SOURCE_LABEL, type Confluence, type HigherTimeframeTrends, typ
 import type { CardStatus, ExecuteResponse } from "@/lib/market/executionClient";
 import { formatPrice } from "@/lib/market/format";
 import { REGIME_LABEL } from "@/lib/market/noTradeReason";
+import { predictionHeadline } from "@/lib/market/predictionLabel";
 import { TradingRobot } from "./TradingRobot";
-import { DirectionBadge, directionTone } from "./DirectionBadge";
+import { DirectionBadge } from "./DirectionBadge";
+import { HEADLINE_TONE } from "./PredictionCard";
 import { SignerBBreakdown } from "./SignerBBreakdown";
 import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
 import { TradeProposalCard, describeExecuteResponse } from "./TradeProposalCard";
@@ -36,12 +38,6 @@ export const CONFLUENCE_LABEL: Record<Confluence, string> = {
   boundary_touch: "Boundary touch",
   rsi_extreme: "RSI extreme",
   rejection_candle: "Rejection candle",
-};
-
-const TIER_LABEL: Record<Signal["tier"], string> = {
-  strong_buy: "Strong buy",
-  buy: "Buy",
-  watch: "Watch",
 };
 
 function relativeTime(fromMs: number): string {
@@ -175,11 +171,25 @@ const SignalCard = memo(function SignalCard({
             {regime && <span className="rounded-full bg-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-400">{REGIME_LABEL[regime]}</span>}
           </div>
           <div className="mt-1">
-            <DirectionBadge
-              tone={directionTone(signal.direction)}
-              label={`${TIER_LABEL[signal.tier]} · ${signal.confidence.toFixed(0)}% · ${signal.timeframe}`}
-              className="text-xs"
-            />
+            {/* A real, confirmed bug lived here: this badge's color came from
+             * signal.direction (correct), but its text came from a local TIER_LABEL
+             * map keyed on signal.tier alone -- "strong_buy"/"buy" are historical
+             * confidence-bucket names, NOT direction (see confidenceScore.ts/
+             * predictionLabel.ts's own doc comments -- a SHORT signal can genuinely
+             * have tier "buy"), so a real sell signal could render a red-toned badge
+             * that literally said "Buy". predictionHeadline() already gets this right
+             * (PredictionCard.tsx already uses it) -- reused here instead of a second,
+             * independently-diverged implementation of the same tier+direction logic. */}
+            {(() => {
+              const headline = predictionHeadline({ status: "signal", signal });
+              return (
+                <DirectionBadge
+                  tone={HEADLINE_TONE[headline]}
+                  label={`${headline} · ${signal.confidence.toFixed(0)}% · ${signal.timeframe}`}
+                  className="text-xs"
+                />
+              );
+            })()}
           </div>
           <div className="mt-1 text-[11px] text-zinc-500">
             {UNSCORED_SOURCE_LABEL[signal.source] ?? `Direction ${signal.directionScore.toFixed(0)}% · Entry ${signal.entryScore.toFixed(0)}%`}
