@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { candle } from "../detectors/__tests__/fixtures";
-import { assembleSignals, evaluateSignal } from "../signalEngine";
+import { assembleSignals, evaluateSignal, evaluateSignalDualDirection } from "../signalEngine";
 import { calculateAtr } from "../indicators/atr";
 import { resetNewsFilterForTests, setNewsFilterStateForTests, type EconomicEvent } from "../newsFilter";
 import { resetCurrencyStrengthForTests, setCurrencyStrengthStateForTests } from "../currencyStrength";
@@ -390,5 +390,37 @@ describe("evaluateSignal", () => {
     resetNewsFilterForTests();
     const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
     expect(evaluation.status).toBe("signal");
+  });
+});
+
+describe("evaluateSignalDualDirection", () => {
+  // Used by the live per-candle pipeline (metaApiConnection.ts's ingestCandle) instead
+  // of evaluateSignal -- fixes a real gap where a rejected counter-trend candidate meant
+  // a real same-data opposite-direction setup was never even checked (see the function's
+  // own doc comment).
+
+  it("matches evaluateSignal exactly when only one side has a real sweep candidate", () => {
+    // This fixture's only liquidity sweep is the sellside one the bullish pattern is
+    // built around -- no bearish candidate exists in this data at all, so the dual-
+    // direction check has nothing new to find and must return the identical result.
+    // id/createdAt are excluded from the comparison -- each call to the underlying
+    // detection genuinely generates its own fresh UUID/timestamp, an inherent (and
+    // harmless) side effect of calling it twice, not a real behavioral difference.
+    const candles = buildCandles();
+    const higherTimeframes = buildHigherTimeframes("up");
+    const dual = evaluateSignalDualDirection(candles, "EUR/USD", "15m", higherTimeframes);
+    const single = evaluateSignal(candles, "EUR/USD", "15m", higherTimeframes);
+    const strip = (evaluation: typeof dual) =>
+      evaluation.status === "signal" ? { ...evaluation, signal: { ...evaluation.signal, id: "", createdAt: 0 } } : evaluation;
+    expect(strip(dual)).toEqual(strip(single));
+  });
+
+  it("returns the same no_setup as evaluateSignal when there isn't enough candle history for either side", () => {
+    const candles = buildCandles().slice(0, 5);
+    const higherTimeframes = buildHigherTimeframes("up");
+    const dual = evaluateSignalDualDirection(candles, "EUR/USD", "15m", higherTimeframes);
+    const single = evaluateSignal(candles, "EUR/USD", "15m", higherTimeframes);
+    expect(dual).toEqual(single);
+    expect(dual).toEqual({ status: "no_trade", reason: { code: "no_setup" } });
   });
 });

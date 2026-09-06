@@ -492,11 +492,15 @@ export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: Liqu
  *
  * Implementation note: this is now a thin wrapper over `computeSharedGateContext` +
  * `evaluateDirectionalCandidate`, picking the single most-recent sweep exactly as this
- * function always has -- every existing caller (the live pipeline, the backtester, the
- * on-demand /api/signals/evaluate route) is unaffected by the refactor. The dual-direction
- * analysis job (pairAnalysisJob.ts) calls the same two functions directly instead, to
- * genuinely evaluate both a bullish and a bearish candidate when both exist -- see
- * findSweepCandidates.
+ * function always has -- the backtester and the on-demand /api/signals/evaluate route
+ * are unaffected by the refactor and still get this single-direction behavior. The live
+ * per-candle pipeline (metaApiConnection.ts's ingestCandle) instead calls
+ * `evaluateSignalDualDirection` below, which checks both sides when both exist -- see
+ * that function's own doc comment for why (a real, confirmed gap where a rejected
+ * counter-trend candidate meant a real same-data opposite-direction setup was never
+ * even checked). The "Check a Pair" analysis job (pairAnalysisJob.ts) calls
+ * `computeSharedGateContext`/`evaluateDirectionalCandidate`/`findSweepCandidates`
+ * directly instead, for its own richer dual-direction display.
  */
 export function evaluateSignal(
   candles: Candle[],
@@ -522,6 +526,56 @@ export function evaluateSignal(
   const sweep = recentSweeps[recentSweeps.length - 1];
 
   return evaluateDirectionalCandidate(shared.context, sweep);
+}
+
+/**
+ * Same real pipeline as evaluateSignal, but checks BOTH a bullish and a bearish
+ * candidate when both exist, instead of only whichever sweep happens to be most recent
+ * overall. Fixes a real, confirmed gap: the live per-candle pipeline could find a
+ * counter-trend candidate (e.g. a SELL forming while D1/H4/H1 are all bullish),
+ * correctly reject it for trend_disagreement, and never even check whether a real BUY
+ * candidate existed on the same data -- reporting NO TRADE while the market was
+ * actively trending, not because no real setup existed, but because only the wrong side
+ * was ever looked at.
+ *
+ * If exactly one side independently qualifies, that's the result. In the rare case BOTH
+ * sides independently qualify (a genuine, contradictory conflict), the higher-confidence
+ * one wins -- deliberately simple over inventing a new "conflicted" NoTradeReason variant
+ * that every existing consumer (dashboard text, chat tool descriptions, tests) would need
+ * to learn; this is not the "Check a Pair" analysis job, which has its own dedicated
+ * conflicted-state display (see pairAnalysisJob.ts). If NEITHER side qualifies, returns
+ * the same no-trade reason evaluateSignal itself would have (the most-recent-overall
+ * sweep's own rejection), so existing "why not" messaging is unchanged for the common
+ * case of no real setup on either side.
+ */
+export function evaluateSignalDualDirection(
+  candles: Candle[],
+  pair: Pair,
+  timeframe: Timeframe,
+  higherTimeframes: HigherTimeframeCandles,
+  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
+): SignalEvaluation {
+  const shared = computeSharedGateContext(candles, pair, timeframe, higherTimeframes, overrides);
+  if ("blocked" in shared) return { status: "no_trade", reason: shared.blocked };
+
+  const { recentSweeps } = shared.context;
+  if (recentSweeps.length === 0) return { status: "no_trade", reason: { code: "no_setup" } };
+  const primarySweep = recentSweeps[recentSweeps.length - 1];
+  const primaryEvaluation = evaluateDirectionalCandidate(shared.context, primarySweep);
+
+  const candidates = findSweepCandidates(recentSweeps);
+  const otherSweep = primarySweep.side === "sellside" ? candidates.bearish : candidates.bullish;
+  // Same sweep already evaluated above as `primaryEvaluation` -- nothing new to check.
+  if (!otherSweep || otherSweep === primarySweep) {
+    return primaryEvaluation;
+  }
+  const otherEvaluation = evaluateDirectionalCandidate(shared.context, otherSweep);
+
+  if (primaryEvaluation.status === "signal" && otherEvaluation.status === "signal") {
+    return otherEvaluation.signal.confidence > primaryEvaluation.signal.confidence ? otherEvaluation : primaryEvaluation;
+  }
+  if (otherEvaluation.status === "signal") return otherEvaluation;
+  return primaryEvaluation;
 }
 
 /**

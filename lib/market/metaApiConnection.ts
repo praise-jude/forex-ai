@@ -18,7 +18,7 @@ import { PAIRS } from "./types";
 import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
 import { eventBus } from "./eventBus";
-import { evaluateSignal } from "./signalEngine";
+import { evaluateSignalDualDirection } from "./signalEngine";
 import { evaluateRangeSignal } from "./rangeEngine";
 import { confirmsDirection, M5_CONFIRMATION_BARS } from "./m5Confirmation";
 import { publishSignal } from "./signalPublisher";
@@ -532,7 +532,7 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
       h4: candleStore.get(pair, "4h"),
       d1: candleStore.get(pair, "1d"),
     };
-    let evaluation = evaluateSignal(priorSeries, pair, timeframe, higherTimeframes);
+    let evaluation = evaluateSignalDualDirection(priorSeries, pair, timeframe, higherTimeframes);
     // M5 entry confirmation -- a voluntarily-added quality gate on top of
     // everything evaluateSignal itself already checks (see m5Confirmation.ts).
     // Only ever runs on the rare candle that would otherwise become a signal, an
