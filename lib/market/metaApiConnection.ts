@@ -1139,13 +1139,26 @@ async function connect(accountKey: AccountKey): Promise<void> {
       return;
     }
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, SUBSCRIBE_STAGGER_MS));
-    await connection.subscribeToMarketData(
-      brokerSymbol(pair),
-      // "demo" only ever needs quotes -- enough for terminalState.accountInformation/
-      // specification/positions, never candles (it's purely an execution target, no
-      // second signal engine, see MarketSyncListener's own doc comment above).
-      accountKey === "live" ? liveSubscriptionsForPair(pair) : [{ type: "quotes" }]
-    );
+    try {
+      await connection.subscribeToMarketData(
+        brokerSymbol(pair),
+        // "demo" only ever needs quotes -- enough for terminalState.accountInformation/
+        // specification/positions, never candles (it's purely an execution target, no
+        // second signal engine, see MarketSyncListener's own doc comment above).
+        accountKey === "live" ? liveSubscriptionsForPair(pair) : [{ type: "quotes" }]
+      );
+    } catch (error: unknown) {
+      // A real, confirmed gap: this call threw uncaught (e.g. a rate-limit rejection on
+      // an already-thrashing account) previously aborted this whole loop, silently
+      // leaving every PAIR AFTER the failing one in this array -- USOIL and ETH/USD sit
+      // last -- never subscribed for the entire lifetime of this connection, with no
+      // error ever naming them. onSubscriptionDowngraded's own recovery machinery only
+      // ever fires for a symbol that got subscribed at least once, so a pair stuck this
+      // way never self-heals; only catching this and moving on (same posture as the
+      // unsubscribe-stale-symbols loop just above) lets the rest of PAIRS still get a
+      // real attempt.
+      console.error(`[market] ${accountKey} failed to subscribe ${brokerSymbol(pair)} (${pair}) -- continuing with the rest of PAIRS:`, error);
+    }
   }
 
   // Final guard, in case this attempt was superseded right after the last loop check
