@@ -50,6 +50,21 @@ const MIN_RISK_REWARD = 1.5;
 const FALLBACK_RISK_REWARD = 2;
 const MIN_RISK_REWARD_2 = 2.5;
 const FALLBACK_RISK_REWARD_2 = 3;
+
+// Operator-requested override (2026-09-07): a flat $1.50 take-profit target for these
+// specific pairs, replacing the structure/risk-reward-based target entirely -- NOT a
+// pip/percentage distance, a literal price-unit distance, which only makes sense for a
+// pair actually priced in whole dollars (confirmed with the operator: GBP/USD trades
+// around 1.2-1.4, where a $1.50 move is larger than the pair's entire realistic range,
+// so it's deliberately excluded here; BTC/USD trades in the tens of thousands, where
+// $1.50 is a near-instant, near-zero-profit target -- the operator was shown this
+// tradeoff directly and chose to include it anyway). Stop-loss is untouched by this --
+// still the existing ATR-buffered structural stop computed above.
+const FIXED_TAKE_PROFIT_DISTANCE: Partial<Record<Pair, number>> = {
+  "XAU/USD": 1.5,
+  "BTC/USD": 1.5,
+  USOIL: 1.5,
+};
 const ADX_HARD_MIN = 20;
 const ATR_AVERAGE_PERIOD = 20;
 // How many hours before the Friday 5pm New York weekly close a NEW entry is refused --
@@ -314,6 +329,16 @@ export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: Liqu
     const target2 = wantsBullish ? Math.min(...furtherPrices) : Math.max(...furtherPrices);
     const reward2 = Math.abs(target2 - entry);
     if (reward2 / risk >= MIN_RISK_REWARD_2) takeProfit2 = target2;
+  }
+
+  // See FIXED_TAKE_PROFIT_DISTANCE's own doc comment -- overrides TP1 only (an explicit,
+  // scoped operator request), applied after every structure/risk-reward-based target
+  // above so it always wins for these pairs regardless of what structure found. TP2
+  // deliberately keeps its existing risk-reward-based value; the operator asked to
+  // change take-profit, not the separate partial-close target.
+  const fixedTakeProfit = FIXED_TAKE_PROFIT_DISTANCE[pair];
+  if (fixedTakeProfit !== undefined) {
+    takeProfit = wantsBullish ? entry + fixedTakeProfit : entry - fixedTakeProfit;
   }
 
   // A decisive hold, not part of the weighted score below -- an SMC setup was just

@@ -261,6 +261,20 @@ describe("evaluateSignal", () => {
     expect(evaluation.signal.rsi).toBeGreaterThan(50);
   });
 
+  it("overrides take-profit to a flat $1.50 from entry for the operator-requested pairs, leaving stop-loss untouched", () => {
+    const withDefaultTp = evaluateSignal(buildCandles(), "EUR/USD", "15m", buildHigherTimeframes("up"));
+    const withFixedTp = evaluateSignal(buildCandles(), "XAU/USD", "15m", buildHigherTimeframes("up"));
+    expect(withDefaultTp.status).toBe("signal");
+    expect(withFixedTp.status).toBe("signal");
+    if (withDefaultTp.status !== "signal" || withFixedTp.status !== "signal") return;
+    // Same setup, same entry/stopLoss either way -- only the pair differs.
+    expect(withFixedTp.signal.entry).toBeCloseTo(withDefaultTp.signal.entry, 6);
+    expect(withFixedTp.signal.stopLoss).toBeCloseTo(withDefaultTp.signal.stopLoss, 6);
+    expect(withFixedTp.signal.takeProfit).toBeCloseTo(withFixedTp.signal.entry + 1.5, 6);
+    // EUR/USD (not in the override list) keeps its real structure/risk-reward target.
+    expect(withDefaultTp.signal.takeProfit).not.toBeCloseTo(withDefaultTp.signal.entry + 1.5, 2);
+  });
+
   it("reports below_threshold with the real DimensionScores when the weighted score misses", () => {
     const candles = buildCandles({ strongFinalCandle: false });
     const evaluation = evaluateSignal(candles, "EUR/USD", "15m", buildHigherTimeframes("up"));
