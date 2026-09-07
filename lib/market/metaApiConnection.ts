@@ -1173,6 +1173,23 @@ async function connect(accountKey: AccountKey): Promise<void> {
   const state = stateFor(accountKey);
   state.connection = connection;
   state.account = account;
+
+  // A real gap the try/catch above doesn't cover: subscribeToMarketData can return
+  // successfully for a symbol the broker's OWN terminal never actually recognizes (wrong
+  // name/suffix for this specific account), in which case no data ever arrives but no
+  // error is ever thrown either -- total silence, indistinguishable in the logs from a
+  // healthy-but-quiet symbol. Checking the terminal's own synced specification right
+  // after connect (present only for a symbol the broker actually serves) surfaces that
+  // case immediately instead of it only showing up as "Check a Pair" reporting stale
+  // data hours later with no clue why.
+  if (accountKey === "live") {
+    for (const pair of PAIRS) {
+      if (!getSymbolSpecification(pair, accountKey)) {
+        console.error(`[market] live: broker terminal has no specification for ${brokerSymbol(pair)} (${pair}) -- this symbol name may not exist on this account, so it can never receive real data`);
+      }
+    }
+  }
+
   console.log(`[market] ${accountKey} account connected and streaming ${PAIRS.join(", ")}`);
 }
 
