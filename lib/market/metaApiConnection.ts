@@ -823,38 +823,72 @@ function barsNeededFor(timeframe: Timeframe, lastKnownTime: number): number {
  * fed through the exact same ingestCandle pipeline live ticks use, so a signal born from a
  * REST-polled candle is indistinguishable downstream from one born off a live tick.
  */
+async function refreshPairTimeframeFromRest(account: MetatraderAccount, pair: Pair, timeframe: Timeframe, logLabel: string): Promise<void> {
+  try {
+    const known = candleStore.get(pair, timeframe);
+    const lastKnownTime = known[known.length - 1]?.time ?? -Infinity;
+    const barCount = barsNeededFor(timeframe, lastKnownTime);
+    const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), barCount);
+    const fresh = raw
+      .map((c): Candle => ({ time: c.time.getTime(), open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume }))
+      // >= , not > : a real production bug (2026-09-01) -- the live tick stream can
+      // lose its subscription mid-bar, freezing whatever partial/single-tick OHLC it
+      // had captured so far as that bar's permanent value in candleStore. A strict
+      // "> lastKnownTime" filter here skips exactly that boundary bar forever (it's
+      // not NEWER than what's already stored, just wrong), so the chart kept showing
+      // a visibly broken flat/degenerate candle at the exact downgrade moment even
+      // after everything past it recovered normally. Re-including it lets
+      // candleStore.upsert (which already replaces same-timestamp entries, see its
+      // own doc comment) correct it with the broker's authoritative final OHLC.
+      // ingestCandle's own barJustClosed check (candle.time > priorLast.time) still
+      // reads false for this exact bar, so this corrects the DATA without
+      // re-triggering a second signal evaluation for a bar that already had one.
+      .filter((c) => c.time >= lastKnownTime)
+      .sort((a, b) => a.time - b.time);
+    // Sequential, oldest-first -- if more than one bar closed since the last poll,
+    // each must be evaluated in the order it actually happened, not concurrently.
+    for (const candle of fresh) {
+      await ingestCandle(pair, timeframe, candle);
+    }
+  } catch (error) {
+    console.error(`[market] ${logLabel} REST refresh failed for ${pair} ${timeframe} (will retry next cycle):`, error);
+  }
+}
+
 async function refreshDowngradedPairsOnce(account: MetatraderAccount): Promise<void> {
   for (const pair of downgradedPairs) {
     for (const timeframe of SIGNAL_TIMEFRAMES) {
-      try {
-        const known = candleStore.get(pair, timeframe);
-        const lastKnownTime = known[known.length - 1]?.time ?? -Infinity;
-        const barCount = barsNeededFor(timeframe, lastKnownTime);
-        const raw = await account.getHistoricalCandles(brokerSymbol(pair), timeframe, new Date(), barCount);
-        const fresh = raw
-          .map((c): Candle => ({ time: c.time.getTime(), open: c.open, high: c.high, low: c.low, close: c.close, tickVolume: c.tickVolume }))
-          // >= , not > : a real production bug (2026-09-01) -- the live tick stream can
-          // lose its subscription mid-bar, freezing whatever partial/single-tick OHLC it
-          // had captured so far as that bar's permanent value in candleStore. A strict
-          // "> lastKnownTime" filter here skips exactly that boundary bar forever (it's
-          // not NEWER than what's already stored, just wrong), so the chart kept showing
-          // a visibly broken flat/degenerate candle at the exact downgrade moment even
-          // after everything past it recovered normally. Re-including it lets
-          // candleStore.upsert (which already replaces same-timestamp entries, see its
-          // own doc comment) correct it with the broker's authoritative final OHLC.
-          // ingestCandle's own barJustClosed check (candle.time > priorLast.time) still
-          // reads false for this exact bar, so this corrects the DATA without
-          // re-triggering a second signal evaluation for a bar that already had one.
-          .filter((c) => c.time >= lastKnownTime)
-          .sort((a, b) => a.time - b.time);
-        // Sequential, oldest-first -- if more than one bar closed since the last poll,
-        // each must be evaluated in the order it actually happened, not concurrently.
-        for (const candle of fresh) {
-          await ingestCandle(pair, timeframe, candle);
-        }
-      } catch (error) {
-        console.error(`[market] downgraded-pair REST refresh failed for ${pair} ${timeframe} (will retry next cycle):`, error);
-      }
+      await refreshPairTimeframeFromRest(account, pair, timeframe, "downgraded-pair");
+    }
+  }
+}
+
+// A real, confirmed gap (2026-09-07): a symbol's live subscription can go silently dead
+// -- subscribeToMarketData returns success, no onSubscriptionDowngraded event ever fires,
+// yet no real ticks/candles arrive either -- so the pair never enters downgradedPairs and
+// never gets the REST fallback above. USOIL sat frozen for over an hour this way while
+// the account's own connection status read "live" the whole time (confirmed directly:
+// getConnectionStatus healthy, dashboard showing "MT5 LIVE", yet USOIL's own watchlist
+// price never moved). This is a slower, unconditional safety net across EVERY live pair
+// (not just ones flagged downgraded) that only ever does real work when a pair has
+// actually gone stale -- same staleness definition pairAnalysisJob.ts's own market_data
+// stage gate uses, so "Check a Pair" and this backstop agree on what "stale" means.
+const STALE_LIVE_REFRESH_INTERVAL_MS = 5 * 60_000;
+const STALE_LIVE_BAR_MULTIPLE = 2;
+
+function isPairTimeframeStale(pair: Pair, timeframe: Timeframe): boolean {
+  const known = candleStore.get(pair, timeframe);
+  const last = known[known.length - 1];
+  if (!last) return true;
+  return Date.now() - last.time > TIMEFRAME_MS[timeframe] * STALE_LIVE_BAR_MULTIPLE;
+}
+
+async function refreshStaleLivePairsOnce(account: MetatraderAccount): Promise<void> {
+  for (const pair of PAIRS) {
+    for (const timeframe of SIGNAL_TIMEFRAMES) {
+      if (!isPairTimeframeStale(pair, timeframe)) continue;
+      console.error(`[market] ${pair} ${timeframe} went stale with no downgrade event -- REST-refreshing as a safety net`);
+      await refreshPairTimeframeFromRest(account, pair, timeframe, "stale-live-pair");
     }
   }
 }
@@ -877,6 +911,27 @@ function startDowngradedCandleRefresh(account: MetatraderAccount): void {
   setInterval(() => {
     if (downgradedRefreshState.account && downgradedPairs.size > 0) void refreshDowngradedPairsOnce(downgradedRefreshState.account);
   }, DOWNGRADED_REFRESH_INTERVAL_MS);
+}
+
+const staleLiveRefreshStateKey = Symbol.for("forex-ai.metaApiConnection.staleLiveRefreshState");
+type GlobalWithStaleLiveRefreshState = typeof globalThis & { [staleLiveRefreshStateKey]?: { account: MetatraderAccount | null; intervalStarted: boolean } };
+const gStaleLiveRefreshState = globalThis as GlobalWithStaleLiveRefreshState;
+const staleLiveRefreshState: { account: MetatraderAccount | null; intervalStarted: boolean } =
+  gStaleLiveRefreshState[staleLiveRefreshStateKey] ?? (gStaleLiveRefreshState[staleLiveRefreshStateKey] = { account: null, intervalStarted: false });
+
+/** Same idempotent, always-refresh-the-account-reference pattern as
+ * startDowngradedCandleRefresh -- see refreshStaleLivePairsOnce's own doc comment for why
+ * this exists as a SEPARATE, slower (5-minute) pass over every PAIR rather than folding
+ * into that one: downgradedPairs is a targeted fast-response list for a known failure
+ * mode (an explicit downgrade event), while this is a much cheaper, infrequent backstop
+ * for the failure mode that has no event to key off of at all. */
+function startStaleLiveCandleRefresh(account: MetatraderAccount): void {
+  staleLiveRefreshState.account = account;
+  if (staleLiveRefreshState.intervalStarted) return;
+  staleLiveRefreshState.intervalStarted = true;
+  setInterval(() => {
+    if (staleLiveRefreshState.account) void refreshStaleLivePairsOnce(staleLiveRefreshState.account);
+  }, STALE_LIVE_REFRESH_INTERVAL_MS);
 }
 
 /** Checked before the broker's own deal.reason mapping -- an API-initiated invalidation
@@ -1077,6 +1132,7 @@ async function connect(accountKey: AccountKey): Promise<void> {
     // including a forced reconnect, without spawning a second interval.
     startHigherTimeframeRefresh(account);
     startDowngradedCandleRefresh(account);
+    startStaleLiveCandleRefresh(account);
   }
 
   const connection = account.getStreamingConnection();
