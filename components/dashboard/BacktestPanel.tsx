@@ -153,11 +153,14 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
   const barsPerDay = DAY_MS / TIMEFRAME_MS[timeframe];
   const estimatedBars = Math.round(effectivePairs.length * (lookbackDays + PRIMARY_LEAD_IN_DAYS) * barsPerDay);
   const canSubmit = effectivePairs.length > 0 && !busy && !disabled;
-  // Belt-and-suspenders alongside the disabled checkbox below -- realistic can never
-  // actually reach true while demoConfigured is false, but a submitted request is
-  // computed from this, not the raw checkbox state, so there's no path to sending
-  // realistic:true against a live-only setup regardless of how the checkbox got toggled.
-  const effectiveRealistic = realistic && demoConfigured === true;
+  // Operator-requested change (2026-09-08): previously hard-blocked whenever no demo
+  // account was configured (see this file's git history for the 2026-09-01 incident that
+  // motivated it -- realistic mode's loadSymbolSpecs opened a genuine RPC connection that
+  // disrupted live trading within moments). The operator explicitly chose to accept that
+  // risk rather than set up a demo account, so this now submits the raw checkbox state
+  // unconditionally -- the warning below still renders whenever demoConfigured isn't
+  // true, so the risk stays visible, it just no longer blocks the click.
+  const effectiveRealistic = realistic;
 
   return (
     <form
@@ -242,22 +245,16 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
         </button>
       </div>
 
-      <label className={`flex items-start gap-1.5 text-xs ${demoConfigured === false ? "text-zinc-500" : "text-zinc-300"}`}>
-        <input
-          type="checkbox"
-          checked={effectiveRealistic}
-          disabled={demoConfigured !== true}
-          onChange={(e) => setRealistic(e.target.checked)}
-          className="mt-0.5 disabled:cursor-not-allowed"
-        />
+      <label className="flex items-start gap-1.5 text-xs text-zinc-300">
+        <input type="checkbox" checked={realistic} onChange={(e) => setRealistic(e.target.checked)} className="mt-0.5" />
         <span>
           <span className="font-medium">Realistic mode</span>
           <span> — simulates break-even/trailing-stop, real lot-size-based sizing, and spread cost, using this account&apos;s actual configured triggers. Slower to start (fetches real symbol specs first).</span>
           {demoConfigured === false && (
-            <span className="mt-0.5 block text-zinc-500">
-              Disabled — no demo account is configured to safely route this to. This mode opens a real connection that would go
-              straight to your live account instead, which has disrupted live trading before. Configuring
-              METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID again re-enables it.
+            <span className="mt-0.5 block text-amber-500">
+              ⚠️ No demo account is configured -- this will open a real connection directly to your LIVE account instead, which
+              has disrupted live trading before (2026-09-01). Configuring METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID would route
+              this to demo instead, but per your own explicit choice this no longer blocks running it against live.
             </span>
           )}
         </span>
