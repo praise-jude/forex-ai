@@ -241,12 +241,14 @@ describe("evaluateRangeSignal", () => {
     expect(evaluation.reason.code).toBe("range_below_threshold");
     if (evaluation.reason.code !== "range_below_threshold") return;
     // rejection is also false here (closed near its own low, not back up toward the
-    // boundary) -- only rsiExtreme (30, a genuine oversold read after the sustained
-    // decline) and cleanRange (20) fire, landing at exactly 50. Before the fix this
-    // would have been 65 (nearBoundary's unearned +15 included), still short of the 70
-    // floor for this particular fixture -- so the bug's real danger was on a marginal
-    // signal already close to qualifying, not visible from this total alone, hence
-    // asserting the exact number rather than just "still no_trade".
-    expect(evaluation.reason.total).toBe(50);
+    // boundary) -- rsiExtreme fires too (a genuine oversold read after the sustained
+    // decline) but scores zero points (see evaluateRangeSignal's own doc comment: a real
+    // backtest showed it's counter-predictive as a bonus), so only cleanRange (20) ends
+    // up contributing, landing at exactly 20. Before the near-boundary fix this would
+    // have been 35 (nearBoundary's unearned +15 included), still short of the 70 floor
+    // for this particular fixture -- so the bug's real danger was on a marginal signal
+    // already close to qualifying, not visible from this total alone, hence asserting
+    // the exact number rather than just "still no_trade".
+    expect(evaluation.reason.total).toBe(20);
   });
 });
