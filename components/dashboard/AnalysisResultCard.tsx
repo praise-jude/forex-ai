@@ -2,10 +2,17 @@
 
 import type { PairAnalysisResult, Signal } from "@/lib/market/types";
 import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
+import { deriveRiskLevel, scoreSetupQuality, type RiskLevel } from "@/lib/market/setupQualityScore";
 import { ProbabilityBar } from "./ProbabilityBar";
 import { AiConsensusPanel } from "./AiConsensusPanel";
 import { PointRouteCard } from "./PointRouteCard";
 import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
+
+const RISK_LEVEL_DISPLAY: Record<RiskLevel, { label: string; className: string }> = {
+  low: { label: "🟢 LOW RISK", className: "bg-emerald-500/15 text-emerald-400" },
+  medium: { label: "🟡 MEDIUM RISK", className: "bg-amber-500/15 text-amber-400" },
+  high: { label: "🔴 HIGH RISK", className: "bg-rose-500/15 text-rose-400" },
+};
 
 const TIMEFRAME_ROW_LABEL: { key: "m15" | "m30" | "h1" | "h4" | "d1"; label: string }[] = [
   { key: "m15", label: "15M" },
@@ -65,6 +72,12 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
         ? "🔴 SELL"
         : "⚪ NO TRADE";
 
+  // Only meaningful for an actual winning setup -- a risk level for a trade that
+  // doesn't exist would just be a made-up number. Reuses the exact same score/checks
+  // already shown lower on this card (SetupQualityBreakdown, RISK & TRADE VALIDATION),
+  // just distilled into one traffic-light verdict up top, per the operator's own request.
+  const riskLevel = winningSignal ? deriveRiskLevel(scoreSetupQuality(winningSignal, result.regime), result.riskValidation) : null;
+
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-baseline justify-between">
@@ -77,6 +90,12 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
           Regime: {REGIME_LABEL[result.regime]}
         </span>
       </div>
+
+      {riskLevel && (
+        <div className={`rounded-lg px-3 py-2 text-center text-sm font-extrabold ${RISK_LEVEL_DISPLAY[riskLevel].className}`}>
+          {RISK_LEVEL_DISPLAY[riskLevel].label}
+        </div>
+      )}
 
       <ProbabilityBar buyPct={result.buyPct} sellPct={result.sellPct} noTradePct={result.noTradePct} />
 

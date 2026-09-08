@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { scoreSetupQuality } from "../setupQualityScore";
+import { deriveRiskLevel, scoreSetupQuality, type SetupQualityBreakdown } from "../setupQualityScore";
+import type { RiskValidationSummary } from "../types";
 import { buildSignal } from "./fixtures";
+
+function score(total: number): SetupQualityBreakdown {
+  return { smc: 0, trend: 0, momentum: 0, liquidity: 0, volatility: 0, newsRisk: 0, session: 0, total };
+}
+
+function allowedValidation(): RiskValidationSummary {
+  return {
+    spread: { allowed: true },
+    priceDrift: { allowed: true },
+    correlatedExposure: { allowed: true },
+    executionPolicy: { allowed: true },
+  };
+}
 
 describe("scoreSetupQuality", () => {
   it("scores a perfect long setup at 100, with every sub-score at its documented max", () => {
@@ -81,5 +95,30 @@ describe("scoreSetupQuality", () => {
     const signal = buildSignal({ directionScore: 73, entryScore: 61, confluences: ["rsi_momentum"], newsStatus: "unavailable", session: "asia" });
     const result = scoreSetupQuality(signal, "consolidation");
     expect(result.total).toBe(result.smc + result.trend + result.momentum + result.liquidity + result.volatility + result.newsRisk + result.session);
+  });
+});
+
+describe("deriveRiskLevel", () => {
+  it("is HIGH whenever any real pre-execution check would actually block the trade, regardless of score", () => {
+    const perfectScore = score(97);
+    expect(deriveRiskLevel(perfectScore, { ...allowedValidation(), spread: { allowed: false, reason: "wide_spread" } })).toBe("high");
+    expect(deriveRiskLevel(perfectScore, { ...allowedValidation(), priceDrift: { allowed: false, reason: "drift" } })).toBe("high");
+    expect(deriveRiskLevel(perfectScore, { ...allowedValidation(), correlatedExposure: { allowed: false, reason: "correlated" } })).toBe("high");
+    expect(deriveRiskLevel(perfectScore, { ...allowedValidation(), executionPolicy: { allowed: false, reason: "blocked" } })).toBe("high");
+  });
+
+  it("is LOW at or above the operator's own 70-point 'B setup' cutoff when every check passes", () => {
+    expect(deriveRiskLevel(score(70), allowedValidation())).toBe("low");
+    expect(deriveRiskLevel(score(100), allowedValidation())).toBe("low");
+  });
+
+  it("is MEDIUM below the cutoff when every check passes", () => {
+    expect(deriveRiskLevel(score(69), allowedValidation())).toBe("medium");
+    expect(deriveRiskLevel(score(0), allowedValidation())).toBe("medium");
+  });
+
+  it("falls back to the score alone when riskValidation itself is null (not yet available)", () => {
+    expect(deriveRiskLevel(score(85), null)).toBe("low");
+    expect(deriveRiskLevel(score(40), null)).toBe("medium");
   });
 });

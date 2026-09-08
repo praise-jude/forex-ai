@@ -1,4 +1,4 @@
-import type { MarketRegime, Signal } from "./types";
+import type { MarketRegime, RiskValidationSummary, Signal } from "./types";
 import { isCommodity } from "./symbols";
 
 const SMC_MAX = 30;
@@ -91,4 +91,29 @@ export function scoreSetupQuality(signal: Signal, regime: MarketRegime): SetupQu
   const total = smc + trend + momentum + liquidity + volatility + newsRisk + session;
 
   return { smc, trend, momentum, liquidity, volatility, newsRisk, session, total };
+}
+
+export type RiskLevel = "low" | "medium" | "high";
+
+// Score bands the operator specified directly (2026-09-08): 70+ is a "B setup" or
+// better, under that is "WATCH" or worse -- reused here as the low/medium cutoff so this
+// traffic-light badge means the same thing everywhere it's shown.
+const RISK_LEVEL_SCORE_CUTOFF = 70;
+
+/**
+ * One overall 🟢/🟡/🔴 verdict, derived entirely from data this app already computed for
+ * the winning signal -- never a new, independent risk model. HIGH whenever a real
+ * pre-execution check would actually block the trade right now (spread too wide, price
+ * has drifted, correlated exposure, execution policy) -- that's the single most
+ * decisive real signal available, so it overrides the score outright. Otherwise MEDIUM
+ * below the operator's own "B setup" cutoff, LOW at or above it.
+ */
+export function deriveRiskLevel(score: SetupQualityBreakdown, riskValidation: RiskValidationSummary | null): RiskLevel {
+  if (
+    riskValidation &&
+    (!riskValidation.spread.allowed || !riskValidation.priceDrift.allowed || !riskValidation.correlatedExposure.allowed || !riskValidation.executionPolicy.allowed)
+  ) {
+    return "high";
+  }
+  return score.total >= RISK_LEVEL_SCORE_CUTOFF ? "low" : "medium";
 }
