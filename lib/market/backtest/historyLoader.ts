@@ -27,12 +27,16 @@ function sleep(ms: number): Promise<void> {
 const MAX_FETCH_RETRIES = 3;
 const RETRY_BACKOFF_MS = 2000;
 
-// Only network-level connectivity errors are retried -- a legitimate application-level
-// rejection (bad symbol, invalid timeframe, auth failure) should surface immediately,
-// never be silently retried into a misleadingly-late failure.
-function isRetryableFetchError(error: unknown): boolean {
+// Network-level connectivity errors, plus MetaApi's own "account is not connected to
+// broker yet" rejection -- a real, repeatedly-confirmed transient condition (2026-09-08:
+// observed self-resolving within seconds dozens of times the same night, both on the
+// live streaming connection and on this exact REST call) rather than a permanent
+// rejection, so it belongs in the same retryable bucket as a network blip. A legitimate
+// application-level rejection (bad symbol, invalid timeframe, auth failure) should still
+// surface immediately, never be silently retried into a misleadingly-late failure.
+export function isRetryableFetchError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up/i.test(message);
+  return /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|not connected to broker yet/i.test(message);
 }
 
 async function getHistoricalCandlesWithRetry(

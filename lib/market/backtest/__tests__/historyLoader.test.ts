@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBacktestCredentials } from "../historyLoader";
+import { isRetryableFetchError, resolveBacktestCredentials } from "../historyLoader";
 
 describe("resolveBacktestCredentials", () => {
   it("prefers demo credentials when both live and demo are configured", () => {
@@ -31,5 +31,28 @@ describe("resolveBacktestCredentials", () => {
 
   it("throws when neither live nor demo credentials are configured", () => {
     expect(() => resolveBacktestCredentials({})).toThrow(/METAAPI_TOKEN/);
+  });
+});
+
+describe("isRetryableFetchError", () => {
+  it("retries plain network-level connectivity errors", () => {
+    expect(isRetryableFetchError(new Error("connect ECONNREFUSED 127.0.0.1:443"))).toBe(true);
+    expect(isRetryableFetchError(new Error("getaddrinfo ENOTFOUND mt-market-data-client-api-v1.london.agiliumtrade.ai"))).toBe(true);
+    expect(isRetryableFetchError(new Error("socket hang up"))).toBe(true);
+  });
+
+  it("retries MetaApi's own 'account not connected to broker yet' rejection -- a real, confirmed transient condition (2026-09-08), not a permanent one", () => {
+    expect(
+      isRetryableFetchError(
+        new Error(
+          "It seems like the account decd9958-81dc-428e-9f59-2299fbe29942 is not connected to broker yet or request URL you use does not match the account region."
+        )
+      )
+    ).toBe(true);
+  });
+
+  it("does not retry a genuine application-level rejection", () => {
+    expect(isRetryableFetchError(new Error("Invalid symbol EURUSDx"))).toBe(false);
+    expect(isRetryableFetchError(new Error("Unauthorized"))).toBe(false);
   });
 });
