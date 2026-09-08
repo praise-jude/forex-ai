@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { PAIRS, type Pair, type Timeframe } from "@/lib/market/types";
 import { BACKTEST_TIMEFRAMES, DEFAULT_LOOKBACK_DAYS, MAX_LOOKBACK_DAYS } from "@/lib/market/backtest/constants";
@@ -129,21 +129,6 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
   const [engine, setEngine] = useState<"smc" | "mean_reversion">("smc");
   const [lookbackDays, setLookbackDays] = useState(DEFAULT_LOOKBACK_DAYS);
   const [realistic, setRealistic] = useState(false);
-  // Realistic mode's loadSymbolSpecs opens a genuine streaming/RPC connection to
-  // whichever account getBacktestAccount() resolves to (see historyLoader.ts's own doc
-  // comment) -- safe when a demo account exists to route it to, a real risk to the live
-  // trading connection when it doesn't (confirmed directly in production, 2026-09-01:
-  // this exact checkbox disrupted live moments after being checked with no demo
-  // configured). /api/engine-mode already exposes demoConfigured for exactly this kind
-  // of check elsewhere in the app -- reused here rather than a second endpoint.
-  const [demoConfigured, setDemoConfigured] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    fetch("/api/engine-mode")
-      .then((res) => res.json())
-      .then((data: { demoConfigured?: boolean }) => setDemoConfigured(data.demoConfigured ?? false))
-      .catch(() => setDemoConfigured(false));
-  }, []);
 
   function togglePair(pair: Pair) {
     setSelectedPairs((prev) => (prev.includes(pair) ? prev.filter((p) => p !== pair) : [...prev, pair]));
@@ -153,20 +138,12 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
   const barsPerDay = DAY_MS / TIMEFRAME_MS[timeframe];
   const estimatedBars = Math.round(effectivePairs.length * (lookbackDays + PRIMARY_LEAD_IN_DAYS) * barsPerDay);
   const canSubmit = effectivePairs.length > 0 && !busy && !disabled;
-  // Operator-requested change (2026-09-08): previously hard-blocked whenever no demo
-  // account was configured (see this file's git history for the 2026-09-01 incident that
-  // motivated it -- realistic mode's loadSymbolSpecs opened a genuine RPC connection that
-  // disrupted live trading within moments). The operator explicitly chose to accept that
-  // risk rather than set up a demo account, so this now submits the raw checkbox state
-  // unconditionally -- the warning below still renders whenever demoConfigured isn't
-  // true, so the risk stays visible, it just no longer blocks the click.
-  const effectiveRealistic = realistic;
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) onStart({ pairs: effectivePairs, timeframe, lookbackDays, realistic: effectiveRealistic, engine });
+        if (canSubmit) onStart({ pairs: effectivePairs, timeframe, lookbackDays, realistic, engine });
       }}
       className="flex flex-col gap-3 rounded-xl border border-white/10 bg-zinc-900 p-3.5"
     >
@@ -250,13 +227,6 @@ function RunForm({ onStart, busy, disabled }: { onStart: (request: BacktestReque
         <span>
           <span className="font-medium">Realistic mode</span>
           <span> — simulates break-even/trailing-stop, real lot-size-based sizing, and spread cost, using this account&apos;s actual configured triggers. Slower to start (fetches real symbol specs first).</span>
-          {demoConfigured === false && (
-            <span className="mt-0.5 block text-amber-500">
-              ⚠️ No demo account is configured -- this will open a real connection directly to your LIVE account instead, which
-              has disrupted live trading before (2026-09-01). Configuring METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID would route
-              this to demo instead, but per your own explicit choice this no longer blocks running it against live.
-            </span>
-          )}
         </span>
       </label>
 
