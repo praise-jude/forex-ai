@@ -1,10 +1,11 @@
 "use client";
 
 import type { PairAnalysisResult, Signal } from "@/lib/market/types";
-import { describeNoTradeReason } from "@/lib/market/noTradeReason";
+import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
 import { ProbabilityBar } from "./ProbabilityBar";
 import { AiConsensusPanel } from "./AiConsensusPanel";
 import { PointRouteCard } from "./PointRouteCard";
+import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
 
 const TIMEFRAME_ROW_LABEL: { key: "m15" | "m30" | "h1" | "h4" | "d1"; label: string }[] = [
   { key: "m15", label: "15M" },
@@ -70,7 +71,12 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
         <span className="text-base font-extrabold text-zinc-100">{result.pair}</span>
         <span className="text-[10px] font-bold tracking-wide text-zinc-500">AI TRADE ANALYSIS</span>
       </div>
-      <p className="text-xl font-extrabold text-zinc-100">{headline}</p>
+      <div className="flex items-center justify-between">
+        <p className="text-xl font-extrabold text-zinc-100">{headline}</p>
+        <span className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+          Regime: {REGIME_LABEL[result.regime]}
+        </span>
+      </div>
 
       <ProbabilityBar buyPct={result.buyPct} sellPct={result.sellPct} noTradePct={result.noTradePct} />
 
@@ -86,8 +92,19 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
         <>
           <div className="h-px bg-white/10" />
           <PointRouteCard signal={winningSignal} />
+          <SetupQualityBreakdown signal={winningSignal} regime={result.regime} />
         </>
       )}
+
+      <div className="h-px bg-white/10" />
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-zinc-500">Range Engine</span>
+        <span className={`text-[11px] font-bold ${result.rangeEvaluation.status === "signal" ? "text-sky-400" : "text-zinc-500"}`}>
+          {result.rangeEvaluation.status === "signal"
+            ? `${result.rangeEvaluation.signal.direction === "long" ? "LONG" : "SHORT"} setup found`
+            : describeNoTradeReason(result.rangeEvaluation.reason, result.regime)}
+        </span>
+      </div>
 
       <div className="h-px bg-white/10" />
       <AiConsensusPanel result={result} />
@@ -122,6 +139,16 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
                 </span>
               </div>
             ))}
+          </div>
+        </>
+      )}
+
+      {result.moneyAtRisk && (
+        <>
+          <div className="h-px bg-white/10" />
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-zinc-500">Money at risk ({result.moneyAtRisk.riskPct}% of balance)</span>
+            <span className="text-[13px] font-extrabold text-rose-400">-${result.moneyAtRisk.amount.toFixed(2)}</span>
           </div>
         </>
       )}

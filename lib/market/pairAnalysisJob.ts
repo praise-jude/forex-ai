@@ -28,7 +28,7 @@ import { checkCorrelatedExposure, checkPriceDrift, checkSpread } from "./riskMan
 import { checkExecutionPolicy, getExecutionPolicy } from "./executionPolicy";
 import { loadExecutionConfig } from "./executionConfig";
 import { getEngineMode, manualExecutionAccount } from "./engineMode";
-import { getOpenPositions } from "./metaApiConnection";
+import { getAccountInformation, getOpenPositions } from "./metaApiConnection";
 
 /**
  * Real, named stages of the "Check a Pair" analysis pipeline -- see the mobile/web
@@ -138,6 +138,14 @@ export function normalizeDirectionalPercentages(rawBuy: number, rawSell: number)
     sellPct: (rawSell / total) * 100,
     noTradePct: (rawNoTrade / total) * 100,
   };
+}
+
+/** Same math positionSizing.ts uses at actual execution time -- a real preview of what a
+ * qualifying trade would risk in account currency, at the account's own currently
+ * configured riskPerTradePct, extracted as its own pure function so this isn't only
+ * exercisable via the full async job pipeline. */
+export function computeMoneyAtRisk(balance: number, riskPct: number): { balance: number; riskPct: number; amount: number } {
+  return { balance, riskPct, amount: balance * (riskPct / 100) };
 }
 
 function directionOf(evaluation: SignalEvaluation | null): "long" | "short" | "neutral" | "unavailable" {
@@ -287,6 +295,7 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
   // order, and are re-checked for real at actual execute time regardless (price/spread/
   // positions can all change in between). Only meaningful when a direction qualified. ---
   let riskValidation: PairAnalysisResult["riskValidation"] = null;
+  let moneyAtRisk: PairAnalysisResult["moneyAtRisk"] = null;
   if (direction !== "no_trade") {
     const winning = direction === "long" ? bullish : bearish;
     if (winning?.status === "signal") {
@@ -294,6 +303,12 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
       const accountKey = manualExecutionAccount(getEngineMode());
       const config = loadExecutionConfig(accountKey);
       const price = priceStore.get(pair);
+
+      // Real preview of what THIS trade would actually risk -- same riskPerTradePct the
+      // account is genuinely configured with, applied to its own current balance. Null
+      // (not a guess) when balance isn't available yet.
+      const accountInfo = getAccountInformation(accountKey);
+      if (accountInfo) moneyAtRisk = computeMoneyAtRisk(accountInfo.balance, config.riskPerTradePct);
       const openPositions = getOpenPositions(accountKey).map((p) => ({ pair: p.pair, direction: p.direction }));
 
       const spreadCheck = checkSpread({
@@ -329,7 +344,7 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
       };
     }
   }
-  Object.assign(job.result!, { time: Date.now(), riskValidation });
+  Object.assign(job.result!, { time: Date.now(), riskValidation, moneyAtRisk });
   await advanceStage(job, "final");
 
   job.status = "complete";

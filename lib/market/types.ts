@@ -438,6 +438,12 @@ export interface PairAnalysisResult {
   direction: "long" | "short" | "no_trade";
   engines: EngineVerdict[];
   riskValidation: RiskValidationSummary | null;
+  /** A real preview of what a qualifying trade would risk in account currency, at the
+   * account's own currently-configured riskPerTradePct -- the exact same math
+   * positionSizing.ts uses at actual execution time, just computed here early for
+   * transparency. Null whenever no qualifying direction exists yet (nothing to size) or
+   * account balance isn't available (e.g. demo/live account not yet synced). */
+  moneyAtRisk: { balance: number; riskPct: number; amount: number } | null;
 }
 
 /** An in-memory, short-lived record of one "Check a Pair" analysis run -- see

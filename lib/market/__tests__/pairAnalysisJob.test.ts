@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { ANALYSIS_STAGE_PCT, normalizeDirectionalPercentages } from "../pairAnalysisJob";
+import { ANALYSIS_STAGE_PCT, computeMoneyAtRisk, normalizeDirectionalPercentages } from "../pairAnalysisJob";
 import type { AnalysisStage } from "../types";
+
+describe("computeMoneyAtRisk", () => {
+  it("computes the same risk-amount math positionSizing.ts uses at execution time", () => {
+    expect(computeMoneyAtRisk(1000, 1)).toEqual({ balance: 1000, riskPct: 1, amount: 10 });
+  });
+
+  it("handles a fractional risk percentage", () => {
+    expect(computeMoneyAtRisk(500, 0.25)).toEqual({ balance: 500, riskPct: 0.25, amount: 1.25 });
+  });
+
+  it("is zero when balance is zero, never a fabricated amount", () => {
+    expect(computeMoneyAtRisk(0, 1)).toEqual({ balance: 0, riskPct: 1, amount: 0 });
+  });
+});
 
 describe("normalizeDirectionalPercentages", () => {
   it("always sums to exactly 100", () => {
