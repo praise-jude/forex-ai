@@ -1,4 +1,4 @@
-import type { ExecutedTrade, OpenPosition, Pair, Signal, Timeframe } from "./types";
+import type { AccountKey, ExecutedTrade, OpenPosition, Pair, Signal, Timeframe } from "./types";
 import { eventBus } from "./eventBus";
 import { attemptExecution } from "./executionEngine";
 import { autoExecutionAccount, getEngineMode } from "./engineMode";
@@ -10,6 +10,43 @@ import { isAutopilotLocked } from "./autopilotLock";
 import { sendNotification } from "./pushNotifier";
 
 let started = false;
+
+// A real, confirmed gap (2026-09-08): attemptExecution was only ever called once here --
+// if it threw due to a genuinely transient broker-connection blip (the exact "not
+// connected to broker yet" condition observed recurring and self-resolving within
+// seconds/minutes many times the same night), the signal was simply lost as far as
+// auto-execution is concerned, with nothing beyond a server-side console.error --  no
+// notification, no retry, no second chance once the connection recovered moments later.
+// A qualifying GBP/USD signal fired during exactly one of these blips and needed a
+// manual click instead. Bounded and short (a few seconds total, not minutes) since a
+// signal's own entry price goes stale quickly -- but safe to retry at all specifically
+// because attemptExecution's own idempotency guard (positionStore.hasExecuted) and its
+// existing price-drift/spread re-checks mean a retry either succeeds cleanly, returns
+// "duplicate" harmlessly if the first attempt actually landed despite throwing, or
+// correctly blocks via the same real-time checks a manual execution already goes
+// through -- never a blind resend of a now-stale order.
+const MAX_EXECUTION_RETRIES = 2;
+const EXECUTION_RETRY_DELAY_MS = 4000;
+
+export function isTransientConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /not connected to broker yet|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(message);
+}
+
+async function attemptExecutionWithRetry(signal: Signal, accountKey: AccountKey): ReturnType<typeof attemptExecution> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await attemptExecution(signal, accountKey);
+    } catch (error) {
+      if (!isTransientConnectionError(error) || attempt >= MAX_EXECUTION_RETRIES) throw error;
+      console.error(
+        `[auto-execution] transient connection error executing ${signal.pair} ${signal.id} (attempt ${attempt + 1}/${MAX_EXECUTION_RETRIES + 1}), retrying:`,
+        error
+      );
+      await new Promise((resolve) => setTimeout(resolve, EXECUTION_RETRY_DELAY_MS));
+    }
+  }
+}
 
 // Purely informational -- narrates WHY a signal that otherwise qualified (already
 // buy/strong_buy tier, already past the source/rangeEngine/lock/acknowledgement gates
@@ -129,7 +166,7 @@ export function startAutoExecutionListener(): void {
       return;
     }
 
-    attemptExecution(event.signal, accountKey)
+    attemptExecutionWithRetry(event.signal, accountKey)
       .then((result) => {
         // "duplicate"/"rejected"/"filled" are either uninteresting (idempotency replay)
         // or already notified elsewhere (order_rejected in executionEngine.ts itself,
@@ -140,6 +177,18 @@ export function startAutoExecutionListener(): void {
       })
       .catch((error: unknown) => {
         console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);
+        // Previously silent beyond this log line -- a real gap (2026-09-08): a signal
+        // that fired but couldn't auto-execute even after retrying gave the operator no
+        // signal anything had gone wrong at all, only discoverable by noticing the
+        // trade never appeared and placing it manually themselves. Every other failure
+        // path here already pushes a notification (notifyBlocked above); this was the
+        // one silent exception.
+        void sendNotification({
+          category: "signal_blocked",
+          title: `JUDE AI — Auto-execution failed: ${event.signal.pair}`,
+          body: `A qualifying ${event.signal.direction} signal fired but couldn't be auto-placed (connection issue) -- place it manually if you still want this trade.`,
+          data: { signalId: event.signal.id, pair: event.signal.pair },
+        });
       });
   });
 }

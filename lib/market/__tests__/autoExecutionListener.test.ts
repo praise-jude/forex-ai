@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasAdverseOpenPosition } from "../autoExecutionListener";
+import { hasAdverseOpenPosition, isTransientConnectionError } from "../autoExecutionListener";
 import type { ExecutedTrade, OpenPosition } from "../types";
 
 function buildTrade(overrides: Partial<ExecutedTrade> = {}): ExecutedTrade {
@@ -88,5 +88,27 @@ describe("hasAdverseOpenPosition", () => {
   it("ignores a trade whose broker position already closed naturally (no longer in the live list)", () => {
     const trade = buildTrade();
     expect(hasAdverseOpenPosition("EUR/USD", "15m", "long", [trade], [])).toBe(false);
+  });
+});
+
+describe("isTransientConnectionError", () => {
+  it("is retryable for MetaApi's own 'account not connected to broker yet' rejection -- a real, confirmed transient condition (2026-09-08)", () => {
+    expect(
+      isTransientConnectionError(
+        new Error("It seems like the account decd9958-81dc-428e-9f59-2299fbe29942 is not connected to broker yet or request URL you use does not match the account region.")
+      )
+    ).toBe(true);
+  });
+
+  it("is retryable for plain network-level connectivity errors", () => {
+    expect(isTransientConnectionError(new Error("connect ECONNREFUSED 127.0.0.1:443"))).toBe(true);
+    expect(isTransientConnectionError(new Error("socket hang up"))).toBe(true);
+    expect(isTransientConnectionError(new Error("getaddrinfo ENOTFOUND mt-client-api-v1.london.agiliumtrade.ai"))).toBe(true);
+  });
+
+  it("is NOT retryable for a genuine application-level rejection -- never silently retries into a misleadingly-late failure", () => {
+    expect(isTransientConnectionError(new Error("Invalid symbol"))).toBe(false);
+    expect(isTransientConnectionError(new Error("Unauthorized"))).toBe(false);
+    expect(isTransientConnectionError(new Error("Insufficient margin"))).toBe(false);
   });
 });
