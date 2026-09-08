@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ANALYSIS_STAGE_PCT, computeMoneyAtRisk, normalizeDirectionalPercentages } from "../pairAnalysisJob";
-import type { AnalysisStage } from "../types";
+import { ANALYSIS_STAGE_PCT, computeMoneyAtRisk, normalizeDirectionalPercentages, rawDirectionalScore } from "../pairAnalysisJob";
+import type { AnalysisStage, SignalEvaluation } from "../types";
+import { buildSignal } from "./fixtures";
 
 describe("computeMoneyAtRisk", () => {
   it("computes the same risk-amount math positionSizing.ts uses at execution time", () => {
@@ -13,6 +14,57 @@ describe("computeMoneyAtRisk", () => {
 
   it("is zero when balance is zero, never a fabricated amount", () => {
     expect(computeMoneyAtRisk(0, 1)).toEqual({ balance: 0, riskPct: 1, amount: 0 });
+  });
+});
+
+describe("rawDirectionalScore", () => {
+  it("is 0 for a null evaluation (that side never even ran)", () => {
+    expect(rawDirectionalScore(null)).toBe(0);
+  });
+
+  it("uses the real signal's confidence when the side qualified outright", () => {
+    const evaluation: SignalEvaluation = { status: "signal", signal: buildSignal({ confidence: 91 }) };
+    expect(rawDirectionalScore(evaluation)).toBe(91);
+  });
+
+  it("surfaces SMC's real near-miss entry score for below_threshold -- never fabricated, the same number the gate itself computed", () => {
+    const evaluation: SignalEvaluation = {
+      status: "no_trade",
+      reason: {
+        code: "below_threshold",
+        direction: { total: 85, tier: "strong_buy", reasons: [] },
+        entry: { total: 67, tier: "watch", reasons: [] },
+      },
+    };
+    expect(rawDirectionalScore(evaluation)).toBe(67);
+  });
+
+  it("surfaces the Range Engine's real combined total for range_below_threshold", () => {
+    const evaluation: SignalEvaluation = {
+      status: "no_trade",
+      reason: { code: "range_below_threshold", total: 55, impliedDirection: "long" },
+    };
+    expect(rawDirectionalScore(evaluation)).toBe(55);
+  });
+
+  it("is 0 for a hard-gate reason that never computed a score at all -- fabricating one here would violate the no-fabrication principle", () => {
+    const evaluation: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 14.2 } };
+    expect(rawDirectionalScore(evaluation)).toBe(0);
+  });
+
+  it("is 0 for every other hard-gate reason code too (outside_killzone, no_setup, blackouts, conflicts, etc.)", () => {
+    const hardGateReasons: SignalEvaluation[] = [
+      { status: "no_trade", reason: { code: "outside_killzone" } },
+      { status: "no_trade", reason: { code: "no_setup" } },
+      { status: "no_trade", reason: { code: "not_ranging", regime: "strong_uptrend" } },
+      { status: "no_trade", reason: { code: "no_range_detected" } },
+      { status: "no_trade", reason: { code: "no_boundary_touch" } },
+      { status: "no_trade", reason: { code: "signer_b_neutral", impliedDirection: "long" } },
+      { status: "no_trade", reason: { code: "m5_not_confirmed", impliedDirection: "short" } },
+    ];
+    for (const evaluation of hardGateReasons) {
+      expect(rawDirectionalScore(evaluation)).toBe(0);
+    }
   });
 });
 

@@ -140,6 +140,29 @@ export function normalizeDirectionalPercentages(rawBuy: number, rawSell: number)
   };
 }
 
+/**
+ * The real underlying score behind a directional read, even when it never fired --
+ * operator request (2026-09-08): the BUY/SELL bar was collapsing to a flat 0% for either
+ * side that didn't independently qualify, indistinguishable whether that side scored 65
+ * (a real near-miss) or never got scored at all (blocked by a hard gate before scoring
+ * ever ran, e.g. outside the killzone, weak ADX, no setup detected). Surfacing a real
+ * number wherever one actually exists: "below_threshold" (SMC) carries the real
+ * DimensionScore that missed the tier floor (entry.total -- the same dimension that
+ * actually gates tier/confidence, see confidenceScore.ts's own doc comment), and
+ * "range_below_threshold" (Range Engine) carries its own real combined total directly.
+ * Every other no_trade reason is a genuine hard gate with no scoring having happened at
+ * all -- 0 there is the honest answer, not a rounding-down of something real, and this
+ * function must never invent a number for those cases just to make the bar look fuller.
+ */
+export function rawDirectionalScore(evaluation: SignalEvaluation | null): number {
+  if (evaluation === null) return 0;
+  if (evaluation.status === "signal") return evaluation.signal.confidence;
+  const { reason } = evaluation;
+  if (reason.code === "below_threshold") return reason.entry.total;
+  if (reason.code === "range_below_threshold") return reason.total;
+  return 0;
+}
+
 /** Same math positionSizing.ts uses at actual execution time -- a real preview of what a
  * qualifying trade would risk in account currency, at the account's own currently
  * configured riskPerTradePct, extracted as its own pure function so this isn't only
@@ -240,8 +263,8 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
 
   // --- consensus: normalize the real per-direction confidences into a genuine 3-way
   // distribution, and assemble the real per-engine verdict breakdown. ---
-  const rawBuy = bullish?.status === "signal" ? bullish.signal.confidence : 0;
-  const rawSell = bearish?.status === "signal" ? bearish.signal.confidence : 0;
+  const rawBuy = rawDirectionalScore(bullish);
+  const rawSell = rawDirectionalScore(bearish);
   const { buyPct, sellPct, noTradePct } = normalizeDirectionalPercentages(rawBuy, rawSell);
 
   // A genuine conflict is both sides independently qualifying -- an inherently
