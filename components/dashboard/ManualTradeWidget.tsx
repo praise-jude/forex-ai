@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PAIRS, type Pair, type Signal } from "@/lib/market/types";
+import { PAIRS, type MarketRegime, type Pair, type Signal } from "@/lib/market/types";
 import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executionClient";
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
 import { decimals } from "@/lib/market/symbols";
@@ -16,9 +16,16 @@ interface ManualSignalResponse {
 
 interface SuggestResponse {
   entry?: number;
+  regime?: MarketRegime;
   stopLoss?: number;
   takeProfit?: number;
   error?: string;
+}
+
+interface RegimePerformance {
+  count: number;
+  winRate: number;
+  profitFactor: number | null;
 }
 
 /**
@@ -44,6 +51,8 @@ export function ManualTradeWidget() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [placeResult, setPlaceResult] = useState<ExecuteResponse | null>(null);
+  const [regime, setRegime] = useState<MarketRegime | undefined>(undefined);
+  const [rangePerformance, setRangePerformance] = useState<RegimePerformance | null>(null);
 
   // Same default source OnDemandSignalWidget/Dashboard.tsx already read -- a risk % typed
   // here matches whatever the account is actually configured to risk per trade.
@@ -54,6 +63,26 @@ export function ManualTradeWidget() {
         if (typeof body?.riskPerTradePct === "number") setRiskPct(body.riskPerTradePct);
       })
       .catch(() => {});
+  }, []);
+
+  // Fetched once (not per pair/direction) -- this is the operator's OWN whole-account
+  // track record for trading during a "range" regime, real and confirmed from a direct
+  // review of the journal (2026-09-08): every significant loss on record landed on a
+  // "range"-tagged trade, several times larger than the many small range-regime wins
+  // around them. Never a block on placing the trade -- the operator explicitly wants
+  // manual trading kept fully available; this only makes the real risk visible before
+  // the click instead of only after, via breakdownByRegime (already computed server-side
+  // for the Journal page's own "Performance by market regime" table).
+  useEffect(() => {
+    fetch("/api/trade-journal")
+      .then((res) => res.json())
+      .then((body: { breakdownByRegime?: Record<string, RegimePerformance> }) => {
+        const range = body.breakdownByRegime?.range;
+        if (range && range.count > 0) setRangePerformance(range);
+      })
+      .catch(() => {
+        // Best-effort -- absence of this context just means no warning banner shows.
+      });
   }, []);
 
   // Auto-fills a starting stop-loss/take-profit from this pair's own real recent
@@ -70,6 +99,7 @@ export function ManualTradeWidget() {
       .then((body: SuggestResponse) => {
         if (cancelled) return;
         if (typeof body.entry === "number") setEntry(body.entry);
+        setRegime(body.regime);
         if (typeof body.stopLoss === "number" && typeof body.takeProfit === "number") {
           const dp = decimals(pair);
           setStopLoss(body.stopLoss.toFixed(dp));
@@ -189,6 +219,21 @@ export function ManualTradeWidget() {
       {entry !== null && (
         <p className="mt-2.5 text-xs text-zinc-400">
           Current price: <span className="font-semibold text-zinc-200 tabular-nums">{formatPrice(pair, entry)}</span>
+        </p>
+      )}
+
+      {/* Real, journal-backed warning -- never a block (the operator explicitly wants
+          manual trading kept fully available as their own choice), just the actual risk
+          made visible before the click. Only shown when BOTH are true: this pair is
+          genuinely in a range regime right now (not a guess -- the same predictionStore
+          read the dashboard's own trend badge uses) AND there's enough range-regime
+          history on record to say something real about it. */}
+      {regime === "range" && rangePerformance && (
+        <p className="mt-2.5 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+          ⚠️ {pair} is currently in a <strong>range</strong> regime. Your own history trading range conditions:{" "}
+          <strong>{rangePerformance.winRate.toFixed(0)}% win rate</strong> across {rangePerformance.count} trades, but a{" "}
+          <strong>{rangePerformance.profitFactor === null ? "n/a" : rangePerformance.profitFactor.toFixed(2)} profit factor</strong> --
+          occasional losses in this regime have outweighed the many small wins. Not a block, just the real number before you click.
         </p>
       )}
 

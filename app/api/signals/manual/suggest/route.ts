@@ -1,6 +1,7 @@
 import { PAIRS, type Pair } from "@/lib/market/types";
 import { candleStore } from "@/lib/market/candleStore";
 import { priceStore } from "@/lib/market/priceStore";
+import { predictionStore } from "@/lib/market/predictionStore";
 import { suggestManualTradeLevels } from "@/lib/market/manualTradeSuggestion";
 
 export const runtime = "nodejs";
@@ -43,5 +44,11 @@ export async function GET(request: Request) {
     return Response.json({ error: "not enough candle history yet to suggest levels" }, { status: 400 });
   }
 
-  return Response.json({ entry, ...suggestion });
+  // Real, informational only -- the operator's own journal shows this pair/regime's
+  // actual historical track record (see ManualTradeWidget's own range-regime warning),
+  // never a block on placing the trade. Absent (undefined) is honest when no SMC
+  // evaluation has run yet for this pair -- never guessed.
+  const regime = predictionStore.get(pair, SUGGEST_TIMEFRAME, "smc")?.regime;
+
+  return Response.json({ entry, regime, ...suggestion });
 }
