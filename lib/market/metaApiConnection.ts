@@ -876,11 +876,21 @@ async function refreshDowngradedPairsOnce(account: MetatraderAccount): Promise<v
 const STALE_LIVE_REFRESH_INTERVAL_MS = 5 * 60_000;
 const STALE_LIVE_BAR_MULTIPLE = 2;
 
-function isPairTimeframeStale(pair: Pair, timeframe: Timeframe): boolean {
-  const known = candleStore.get(pair, timeframe);
-  const last = known[known.length - 1];
-  if (!last) return true;
-  return Date.now() - last.time > TIMEFRAME_MS[timeframe] * STALE_LIVE_BAR_MULTIPLE;
+// Real, confirmed gap (2026-09-09): this checked the raw LAST candle in the store, which
+// can be the still-forming current bar -- its `time` field is that bar's OPEN time, which
+// stays "recent" purely because a new bar hasn't started yet, even while the subscription
+// feeding it has gone completely silent (no real ticks arriving to actually update it).
+// That let a genuinely dead GBP/USD subscription hide from this safety net for up to an
+// extra bar's worth of time: pairAnalysisJob.ts's own market_data stage (which checks the
+// last CLOSED candle, dropping the forming one) correctly reported STALE MARKET DATA on
+// "Check a Pair" while this backstop -- checking the wrong candle -- kept reporting fresh
+// and never refreshed it. Now checks the same last-CLOSED candle pairAnalysisJob.ts does,
+// so the two can never disagree about what counts as stale again.
+export function isPairTimeframeStale(pair: Pair, timeframe: Timeframe): boolean {
+  const closedSeries = candleStore.get(pair, timeframe).slice(0, -1);
+  const lastClosed = closedSeries[closedSeries.length - 1];
+  if (!lastClosed) return true;
+  return Date.now() - lastClosed.time > TIMEFRAME_MS[timeframe] * STALE_LIVE_BAR_MULTIPLE;
 }
 
 async function refreshStaleLivePairsOnce(account: MetatraderAccount): Promise<void> {

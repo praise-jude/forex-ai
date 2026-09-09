@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isAccountConfigured, retryDelayFromError } from "../metaApiConnection";
+import { isAccountConfigured, isPairTimeframeStale, retryDelayFromError } from "../metaApiConnection";
+import { candleStore } from "../candleStore";
 
 // Deliberately a plain object shape, not an SDK class instance -- retryDelayFromError
 // duck-types on { metadata: { recommendedRetryTime } } rather than `instanceof
@@ -11,10 +12,11 @@ function rateLimitError(recommendedRetryTime: string | Date): unknown {
 
 const ENV_VARS = ["METAAPI_TOKEN", "METAAPI_ACCOUNT_ID", "METAAPI_DEMO_TOKEN", "METAAPI_DEMO_ACCOUNT_ID"];
 
-// Only isAccountConfigured is unit tested here (pure env-var presence check) -- the rest
-// of this module holds the real MetaApi SDK connection and is verified against live/demo
-// accounts instead, per the project's existing convention (see README's "Manual
-// execution" section).
+// isAccountConfigured, retryDelayFromError, and isPairTimeframeStale are unit tested
+// here (all pure, or pure-enough with a real in-memory store) -- the rest of this module
+// holds the real MetaApi SDK connection and is verified against live/demo accounts
+// instead, per the project's existing convention (see README's "Manual execution"
+// section).
 describe("isAccountConfigured", () => {
   // Cleared both before AND after each test -- vitest.setup.ts loads the real
   // .env.local globally now (needed for lib/account/__tests__/sessions.test.ts's own
@@ -74,5 +76,44 @@ describe("retryDelayFromError", () => {
     const delay = retryDelayFromError(error, 0);
     expect(delay).toBeGreaterThan(85_000);
     expect(delay).toBeLessThanOrEqual(90_000);
+  });
+});
+
+const FIFTEEN_MIN_MS = 15 * 60_000;
+
+function candleAt(time: number) {
+  return { time, open: 1, high: 1, low: 1, close: 1, tickVolume: 1 };
+}
+
+describe("isPairTimeframeStale", () => {
+  it("is false when the last CLOSED candle is recent, even with a fresh-looking forming candle on top", () => {
+    // Real bug fixed 2026-09-09: this used to check the RAW last candle (which can be
+    // the still-forming current bar, whose `time` is its OPEN time and looks "recent"
+    // regardless of whether real ticks are still arriving). Both entries here are within
+    // the window either way -- this just confirms the ordinary, healthy case still reads
+    // as fresh.
+    const now = Date.now();
+    candleStore.seed("EUR/USD", "15m", [candleAt(now - FIFTEEN_MIN_MS), candleAt(now - 60_000)]);
+    expect(isPairTimeframeStale("EUR/USD", "15m")).toBe(false);
+  });
+
+  it("is true when the last CLOSED candle is stale, even though the raw last (forming) entry alone would look fresh -- the real bug this fixes", () => {
+    const now = Date.now();
+    // The "forming" candle opened only 2 minutes ago (looks fresh by itself), but the
+    // candle before it -- the actual last CLOSED bar -- opened 35 minutes ago, well past
+    // the 30-minute (2x15m) threshold. A genuinely dead subscription frozen on this same
+    // forming candle for the last 33 minutes would look exactly like this.
+    candleStore.seed("EUR/USD", "15m", [candleAt(now - 35 * 60_000), candleAt(now - 2 * 60_000)]);
+    expect(isPairTimeframeStale("EUR/USD", "15m")).toBe(true);
+  });
+
+  it("is true when there's only one candle total -- nothing closed yet to check", () => {
+    candleStore.seed("EUR/USD", "15m", [candleAt(Date.now())]);
+    expect(isPairTimeframeStale("EUR/USD", "15m")).toBe(true);
+  });
+
+  it("is true when there's no data at all for this pair/timeframe", () => {
+    candleStore.seed("EUR/USD", "15m", []);
+    expect(isPairTimeframeStale("EUR/USD", "15m")).toBe(true);
   });
 });
