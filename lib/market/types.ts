@@ -450,6 +450,21 @@ export interface PairAnalysisResult {
    * transparency. Null whenever no qualifying direction exists yet (nothing to size) or
    * account balance isn't available (e.g. demo/live account not yet synced). */
   moneyAtRisk: { balance: number; riskPct: number; amount: number } | null;
+  /** Operator request (2026-09-09): buyPct/sellPct above answer "did a genuine trade
+   * setup qualify" and correctly collapse to 0/0/100 the moment SMC/Range Engine hit a
+   * hard gate (weak ADX, low volatility, outside the killzone, no setup detected, trend
+   * disagreement) -- which happens on the large majority of real checks, even during a
+   * clearly-trending, clearly-moving market, since neither engine is built to trade a
+   * quiet trend continuation (SMC hunts liquidity-sweep reversals; Range Engine only
+   * acts in a ranging regime). marketBias is a deliberately SEPARATE, always-attempted
+   * reading: Signer B's own real, independently-computed confidence (EMA trend +
+   * momentum/RSI divergence + volatility + currency strength + session -- see
+   * signerB.ts), which runs the moment the killzone/data gates pass regardless of
+   * whether SMC's own additional structural gates ever found anything. Never fabricated
+   * and never a trade signal on its own -- Signer B alone cannot execute anything (see
+   * decisionMatrix.ts) -- "unavailable" only when the same killzone/insufficient-data
+   * gates that block buyPct/sellPct entirely also block this. */
+  marketBias: { direction: "long" | "short" | "neutral" | "unavailable"; confidence: number };
 }
 
 /** An in-memory, short-lived record of one "Check a Pair" analysis run -- see

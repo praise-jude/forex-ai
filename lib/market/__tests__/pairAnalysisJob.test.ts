@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ANALYSIS_STAGE_PCT, computeMoneyAtRisk, normalizeDirectionalPercentages, rawDirectionalScore } from "../pairAnalysisJob";
+import { ANALYSIS_STAGE_PCT, computeMoneyAtRisk, deriveMarketBias, normalizeDirectionalPercentages, rawDirectionalScore } from "../pairAnalysisJob";
 import type { AnalysisStage, SignalEvaluation } from "../types";
 import { buildSignal } from "./fixtures";
 
@@ -78,6 +78,21 @@ describe("rawDirectionalScore", () => {
       reason: { code: "signer_conflict", impliedDirection: "short", signerBDirection: "long", signerBConfidence: 66, confidence: 91 },
     };
     expect(rawDirectionalScore(conflict)).toBe(91);
+  });
+});
+
+describe("deriveMarketBias", () => {
+  it("passes through a real long/short confidence unchanged", () => {
+    expect(deriveMarketBias("long", 84)).toEqual({ direction: "long", confidence: 84 });
+    expect(deriveMarketBias("short", 91)).toEqual({ direction: "short", confidence: 91 });
+  });
+
+  it("zeroes confidence for a neutral read -- a real tie, not a real number worth showing", () => {
+    expect(deriveMarketBias("neutral", 55)).toEqual({ direction: "neutral", confidence: 0 });
+  });
+
+  it("passes 'unavailable' through as-is, confidence forced to 0 -- Signer B never ran at all", () => {
+    expect(deriveMarketBias("unavailable", 0)).toEqual({ direction: "unavailable", confidence: 0 });
   });
 });
 

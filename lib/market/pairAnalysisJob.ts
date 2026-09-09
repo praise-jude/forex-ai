@@ -172,6 +172,24 @@ export function rawDirectionalScore(evaluation: SignalEvaluation | null): number
   return 0;
 }
 
+/**
+ * See PairAnalysisResult.marketBias's own doc comment for why this is a deliberately
+ * separate reading from buyPct/sellPct: Signer B's own real confidence, always attempted
+ * the moment the killzone/data gates pass, regardless of whether SMC's separate
+ * structural gates (ADX floor, volatility floor, sweep/zone detection) found anything.
+ * `confidence` is zeroed for a "neutral" direction -- a real tie/no-lean read, not a real
+ * number worth showing (mirrors Signal.signerBConfidence's own "only meaningful when
+ * direction !== neutral" contract in signerB.ts). "unavailable" is passed through as-is,
+ * confidence forced to 0 -- there is no real number to show when Signer B never ran.
+ */
+export function deriveMarketBias(
+  direction: "long" | "short" | "neutral" | "unavailable",
+  confidence: number
+): { direction: "long" | "short" | "neutral" | "unavailable"; confidence: number } {
+  if (direction === "long" || direction === "short") return { direction, confidence };
+  return { direction, confidence: 0 };
+}
+
 /** Same math positionSizing.ts uses at actual execution time -- a real preview of what a
  * qualifying trade would risk in account currency, at the account's own currently
  * configured riskPerTradePct, extracted as its own pure function so this isn't only
@@ -296,6 +314,14 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
   // constraint rather than fabricating a reading the existing pipeline would never have
   // produced for a killzone-blocked pair.
   let signerBDirection: "long" | "short" | "neutral" | "unavailable" = "unavailable";
+  // See PairAnalysisResult.marketBias's own doc comment: Signer B's real confidence,
+  // captured here regardless of whether SMC's own separate structural gates (ADX floor,
+  // volatility floor, trend agreement, sweep/zone detection) ever found anything -- a
+  // deliberately different, always-attempted question from buyPct/sellPct below.
+  let marketBias: { direction: "long" | "short" | "neutral" | "unavailable"; confidence: number } = {
+    direction: "unavailable",
+    confidence: 0,
+  };
   if (sharedContext) {
     const rsiSeries = calculateRsi(closedSeries);
     const supertrendPoint = calculateSupertrend(closedSeries)[closedSeries.length - 1];
@@ -303,6 +329,7 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
     const session = getActiveSession(lastClosed.time);
     const signerB = evaluateSignerB({ candles: closedSeries, pair, swings: sharedContext.swings, rsiSeries, supertrendPoint, usdStrength, session });
     signerBDirection = signerB.direction;
+    marketBias = deriveMarketBias(signerB.direction, signerB.confidence);
   }
 
   const engines: EngineVerdict[] = [
@@ -319,7 +346,7 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
   // just at the final result) becomes real and readable from this point on -- every
   // field here is already fully computed, just attached to the job now instead of only
   // at the very end.
-  Object.assign(job.result!, { buyPct, sellPct, noTradePct, conflicted: Boolean(conflicted), direction, engines });
+  Object.assign(job.result!, { buyPct, sellPct, noTradePct, conflicted: Boolean(conflicted), direction, engines, marketBias });
   await advanceStage(job, "risk_validation");
 
   // --- risk_validation: the same currently-execute-only checks (riskManager.ts/

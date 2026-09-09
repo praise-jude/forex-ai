@@ -4,6 +4,7 @@ import type { PairAnalysisResult, Signal } from "@/lib/market/types";
 import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason";
 import { deriveRiskLevel, scoreSetupQuality, type RiskLevel } from "@/lib/market/setupQualityScore";
 import { ProbabilityBar } from "./ProbabilityBar";
+import { MarketBiasBar } from "./MarketBiasBar";
 import { AiConsensusPanel } from "./AiConsensusPanel";
 import { PointRouteCard } from "./PointRouteCard";
 import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
@@ -98,6 +99,7 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
       )}
 
       <ProbabilityBar buyPct={result.buyPct} sellPct={result.sellPct} noTradePct={result.noTradePct} />
+      <MarketBiasBar direction={result.marketBias.direction} confidence={result.marketBias.confidence} />
 
       {!winningSignal && result.direction === "no_trade" && !result.conflicted && (
         <p className="text-xs text-zinc-500">
