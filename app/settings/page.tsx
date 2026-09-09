@@ -2,6 +2,7 @@ import Link from "next/link";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
 import { EngineTogglesControl } from "@/components/dashboard/EngineTogglesControl";
+import { MaintenanceControl } from "@/components/dashboard/MaintenanceControl";
 import { ConfirmationModeControl } from "@/components/dashboard/ConfirmationModeControl";
 import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
@@ -233,6 +234,9 @@ export default function SettingsPage() {
             <AutopilotLockControl />
             <ExecutionPolicyControl />
             <EngineTogglesControl />
+          </div>
+          <div className="mt-2">
+            <MaintenanceControl />
           </div>
           <div className="mt-2">
             <ConfirmationModeControl />

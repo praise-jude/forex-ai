@@ -67,7 +67,9 @@ import { dealDedup } from "./dealDedup";
 // self-referential -- still a real check (H1 EMA50/200 vs. the implied direction),
 // just tautological-sounding; not special-cased since it's harmless and avoids
 // branching complexity in signalEngine.ts for a cosmetic redundancy.
-const SIGNAL_TIMEFRAMES: Timeframe[] = ["15m", "30m", "1h"];
+// Exported so maintenanceCheck.ts's market-data scan checks the exact same set of
+// timeframes the live signal engines actually evaluate against, never a hand-duplicated copy.
+export const SIGNAL_TIMEFRAMES: Timeframe[] = ["15m", "30m", "1h"];
 const TRACKED_TIMEFRAMES: Timeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 
 // The demo account exists purely as a second AUTO-EXECUTION target for DEMO engine mode

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { getOptionalDb } from "../db/optionalClient";
 import { evaluationLog as evaluationLogTable } from "../db/tradingSchema";
 import type { Pair, SignalEvaluation, Timeframe } from "./types";
@@ -117,6 +117,50 @@ export async function getEvaluationHistory(query: EvaluationLogQuery): Promise<E
     pipelineStages: row.pipelineStages,
     createdAt: row.createdAt.getTime(),
   }));
+}
+
+export interface EvaluationSummary {
+  totalEvaluated: number;
+  qualified: number;
+  rejected: number;
+  /** Ordered highest-count first -- real reasonCode counts among rejected evaluations
+   * only, never fabricated categories. */
+  topBlockers: { reasonCode: string; count: number }[];
+}
+
+/**
+ * "Why no trade" over a real time window -- a direct aggregate COUNT/GROUP BY, not a
+ * client-side reduction over getEvaluationHistory's row-limited results (this table is
+ * high-volume enough, ~2000-2500 rows/day, that a 24h window can hold tens of thousands
+ * of rows -- see this file's own RETENTION_MS comment). Built for maintenanceCheck.ts's
+ * real health scan (operator request, 2026-09-09). Returns all-zero, not an error, when
+ * DATABASE_URL isn't configured -- same posture as every other optional-DB read here.
+ */
+export async function getEvaluationSummary(sinceMs: number): Promise<EvaluationSummary> {
+  const db = getOptionalDb();
+  if (!db) return { totalEvaluated: 0, qualified: 0, rejected: 0, topBlockers: [] };
+
+  const since = new Date(sinceMs);
+  const statusCounts = await db
+    .select({ status: evaluationLogTable.status, count: sql<string>`count(*)` })
+    .from(evaluationLogTable)
+    .where(gte(evaluationLogTable.createdAt, since))
+    .groupBy(evaluationLogTable.status);
+
+  const qualified = Number(statusCounts.find((r) => r.status === "signal")?.count ?? 0);
+  const rejected = Number(statusCounts.find((r) => r.status === "no_trade")?.count ?? 0);
+
+  const blockerRows = await db
+    .select({ reasonCode: evaluationLogTable.reasonCode, count: sql<string>`count(*)` })
+    .from(evaluationLogTable)
+    .where(and(gte(evaluationLogTable.createdAt, since), eq(evaluationLogTable.status, "no_trade")))
+    .groupBy(evaluationLogTable.reasonCode)
+    .orderBy(sql`count(*) desc`)
+    .limit(10);
+
+  const topBlockers = blockerRows.filter((r) => r.reasonCode !== null).map((r) => ({ reasonCode: r.reasonCode as string, count: Number(r.count) }));
+
+  return { totalEvaluated: qualified + rejected, qualified, rejected, topBlockers };
 }
 
 const globalKey = Symbol.for("forex-ai.evaluationLog.pruneState");
