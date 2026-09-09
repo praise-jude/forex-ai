@@ -2,7 +2,7 @@ import { PAIRS, type Pair } from "@/lib/market/types";
 import { candleStore } from "@/lib/market/candleStore";
 import { priceStore } from "@/lib/market/priceStore";
 import { buildManualTestSignal } from "@/lib/market/testTrade";
-import { attemptExecution } from "@/lib/market/executionEngine";
+import { attemptDryRun, attemptExecution } from "@/lib/market/executionEngine";
 import { isAccountConfigured } from "@/lib/market/metaApiConnection";
 import { publishSignal } from "@/lib/market/signalPublisher";
 import { tradeJournal } from "@/lib/market/tradeJournal";
@@ -24,6 +24,13 @@ function isPair(value: unknown): value is Pair {
 interface TestTradeRequestBody {
   pair?: string;
   direction?: string;
+  /** When true, runs against LIVE (the only real account this deployment has -- there is
+   * no demo account configured) through attemptDryRun instead of attemptExecution --
+   * every real gate a genuine signal would face, but the final step is a pure, read-only
+   * broker margin calculation, never a real order. See executionEngine.ts's own doc
+   * comment on attemptDryRun for why this is safe to run with real money in the account.
+   * Never journaled/published as a signal -- there is no real trade to record. */
+  dryRun?: boolean;
 }
 
 /**
@@ -43,24 +50,33 @@ interface TestTradeRequestBody {
  * correlation, spread, daily loss, execution policy, everything a real signal would face.
  * The only thing this bypasses is signalEngine.ts/rangeEngine.ts's own requirement that a
  * genuine setup exist first; it is not a shortcut around any risk or policy check.
+ *
+ * `dryRun: true` is a separate mode entirely (operator request, 2026-09-09: "signer can
+ * actually fire without money just to check if it work") -- this deployment has no demo
+ * account configured at all, so the DEMO path above has been silently unusable this whole
+ * time. Dry run targets LIVE instead, through attemptDryRun (see executionEngine.ts's own
+ * doc comment) -- every real gate a genuine signal would face, but the final step is a
+ * pure, read-only broker margin calculation, never a real order. Never published/
+ * journaled -- there's no real trade to record, just a diagnostic result.
  */
 export async function POST(request: Request) {
-  if (!isAccountConfigured("demo")) {
-    return Response.json(
-      { status: "blocked", code: "no_account", reason: "demo account is not configured (missing METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID)" },
-      { status: 400 }
-    );
-  }
-
   const body = (await request.json().catch(() => null)) as TestTradeRequestBody | null;
   const pair = body?.pair;
   const direction = body?.direction;
+  const dryRun = body?.dryRun === true;
 
   if (!isPair(pair)) {
     return Response.json({ error: `pair must be one of ${PAIRS.join(", ")}` }, { status: 400 });
   }
   if (direction !== "long" && direction !== "short") {
     return Response.json({ error: 'direction must be "long" or "short"' }, { status: 400 });
+  }
+
+  if (!dryRun && !isAccountConfigured("demo")) {
+    return Response.json(
+      { status: "blocked", code: "no_account", reason: "demo account is not configured (missing METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID) -- pass dryRun:true to test against live safely instead" },
+      { status: 400 }
+    );
   }
 
   const candles = candleStore.get(pair, TIMEFRAME);
@@ -71,6 +87,11 @@ export async function POST(request: Request) {
   }
 
   const { signal } = built;
+
+  if (dryRun) {
+    const result = await attemptDryRun(signal, "live");
+    return Response.json(result);
+  }
 
   // Same "register as a real, tracked signal before executing it" step
   // app/api/signals/evaluate/publish/route.ts already does for on-demand signals --

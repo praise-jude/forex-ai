@@ -1507,6 +1507,44 @@ export async function placeMarketOrder(
   };
 }
 
+export type MarginCheckResult = { success: true; marginRequired: number | null } | { success: false; message: string };
+
+/**
+ * A real, genuinely safe broker-side dry run -- calculates the margin a market order
+ * would require WITHOUT ever placing one (calculateMargin is a pure calculation RPC on
+ * MetaApi's own server; it never touches the account's open positions or balance). Built
+ * for the "does execution/broker connectivity actually work, independent of whether
+ * there's enough free margin to place a real trade" diagnostic (operator request,
+ * 2026-09-09) -- proves the full real round trip (connection alive, symbol resolves,
+ * broker accepts the request shape) without ever risking a real position, on LIVE or
+ * demo alike. `marginRequired: null` only when the broker genuinely can't calculate it
+ * (e.g. an unrecognized symbol) -- see Margin's own "if margin can not be calculated,
+ * then this field is not defined" doc comment; that's still a successful round trip, just
+ * an honest "couldn't price it" answer, not a failure of this check itself.
+ */
+export async function calculateOrderMargin(
+  pair: Pair,
+  direction: "long" | "short",
+  lots: number,
+  openPrice: number,
+  accountKey: AccountKey = "live"
+): Promise<MarginCheckResult> {
+  const connection = stateFor(accountKey).connection;
+  if (!connection) return { success: false, message: `no active MetaApi connection (${accountKey})` };
+  const symbol = brokerSymbol(pair);
+  try {
+    const result = await connection.calculateMargin({
+      symbol,
+      type: direction === "long" ? "ORDER_TYPE_BUY" : "ORDER_TYPE_SELL",
+      volume: lots,
+      openPrice,
+    });
+    return { success: true, marginRequired: result.margin ?? null };
+  } catch (error) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export type ModifyPositionResult = { success: true } | { success: false; numericCode?: number; stringCode?: string; message: string };
 
 export interface ModifyPositionInput {

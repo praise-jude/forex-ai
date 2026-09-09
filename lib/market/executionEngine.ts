@@ -11,6 +11,7 @@ import { tradeJournal, getConfidenceCalibration, getConfluenceBreakdown, default
 import { deEscalationSizeMultiplier } from "./deEscalation";
 import { engineSizeMultiplier, sessionSizeMultiplier } from "./adaptiveEdge";
 import {
+  calculateOrderMargin,
   getAccountInformation,
   getOpenPositionCount,
   getOpenPositions,
@@ -347,4 +348,131 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
       filledAt,
     },
   };
+}
+
+export type DryRunResult =
+  | { status: "blocked"; code: RiskBlockCode | "no_account" | "no_symbol_spec" | "watch_tier" | ExecutionPolicyBlockCode; reason: string }
+  | { status: "skipped_sizing"; reason: string }
+  | { status: "dry_run_ok"; lots: number; entry: number; stopLoss: number; takeProfit: number; marginRequired: number | null; freeMargin: number }
+  | { status: "dry_run_failed"; reason: string };
+
+/**
+ * Proves the real pipeline works -- every real gate a genuine signal would face (kill
+ * switch, execution policy, daily risk limits, correlated exposure, price drift, spread,
+ * position sizing) -- WITHOUT ever placing an order. The one and only difference from
+ * attemptExecution: the final step calls calculateOrderMargin (a pure, read-only broker
+ * RPC that MetaApi documents as never touching the account's positions or balance)
+ * instead of placeMarketOrder. Never touches positionStore (no attempt/fill recorded),
+ * never calls riskState.recordTradeOpened, never sends a trade_opened notification --
+ * there is genuinely no real trade anywhere in this function.
+ *
+ * Deliberately NOT refactored to share code with attemptExecution despite the real
+ * duplication -- keeping every line that could ever call placeMarketOrder physically
+ * confined to that one function, with nothing here that could accidentally end up on the
+ * same call path, is a real safety property worth the repetition (operator request,
+ * 2026-09-09: "signer can actually fire without money just to check if it work" -- this
+ * is that check, safe to run against LIVE with zero funds at risk).
+ *
+ * Skips confidence/de-escalation/adaptive sizing (deEscalation.ts/adaptiveEdge.ts) and
+ * manualOverride entirely -- this is a diagnostic for a synthetic test signal, not a real
+ * trade, so the plain configured riskPerTradePct is enough to prove sizing math works.
+ */
+export async function attemptDryRun(signal: Signal, accountKey: AccountKey = "live"): Promise<DryRunResult> {
+  if (signal.tier === "watch") {
+    return { status: "blocked", code: "watch_tier", reason: "watch-tier signals are informational only and cannot be executed" };
+  }
+
+  const config = loadExecutionConfig(accountKey);
+
+  if (isKillSwitchActive(config.killSwitchFile)) {
+    return { status: "blocked", code: "kill_switch", reason: "kill switch is active" };
+  }
+
+  const policyCheck = checkExecutionPolicy(signal, getExecutionPolicy());
+  if (!policyCheck.allowed) {
+    return { status: "blocked", code: policyCheck.code, reason: policyCheck.reason };
+  }
+
+  const now = Date.now();
+  const account = getAccountInformation(accountKey);
+  if (!account) {
+    const reason =
+      accountKey === "demo" && !isAccountConfigured("demo")
+        ? "demo account is not configured (missing METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID)"
+        : "no account information available yet";
+    return { status: "blocked", code: "no_account", reason };
+  }
+
+  const dayState = riskState.current(now, account.equity, accountKey);
+  const riskCheck = checkRiskLimits({
+    killSwitchActive: isKillSwitchActive(config.killSwitchFile),
+    haltedForToday: dayState.haltedForToday,
+    now,
+    cooldownUntil: dayState.cooldownUntil,
+    openPositionCount: getOpenPositionCount(accountKey),
+    maxConcurrentPositions: config.maxConcurrentPositions,
+    tradesOpenedToday: dayState.tradesOpenedToday,
+    maxTradesPerDay: config.maxTradesPerDay,
+    startOfDayEquity: dayState.startOfDayEquity,
+    currentEquity: account.equity,
+    maxDailyLossPct: config.maxDailyLossPct,
+  });
+  if (!riskCheck.allowed) {
+    return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
+  }
+
+  const correlationCheck = checkCorrelatedExposure({
+    pair: signal.pair,
+    direction: signal.direction,
+    openPositions: getOpenPositions(accountKey),
+    maxCorrelatedPositions: config.maxCorrelatedPositions,
+  });
+  if (!correlationCheck.allowed) {
+    return { status: "blocked", code: correlationCheck.code, reason: correlationCheck.reason };
+  }
+
+  const currentPrice = priceStore.get(signal.pair);
+  const priceDriftCheck = checkPriceDrift({
+    direction: signal.direction,
+    entry: signal.entry,
+    stopLoss: signal.stopLoss,
+    currentBid: currentPrice?.bid,
+    currentAsk: currentPrice?.ask,
+  });
+  if (!priceDriftCheck.allowed) {
+    return { status: "blocked", code: priceDriftCheck.code, reason: priceDriftCheck.reason };
+  }
+
+  const spreadCheck = checkSpread({
+    entry: signal.entry,
+    stopLoss: signal.stopLoss,
+    currentBid: currentPrice?.bid,
+    currentAsk: currentPrice?.ask,
+    maxSpreadFractionOfStop: config.maxSpreadFractionOfStop,
+  });
+  if (!spreadCheck.allowed) {
+    return { status: "blocked", code: spreadCheck.code, reason: spreadCheck.reason };
+  }
+
+  const spec = getSymbolSpecification(signal.pair, accountKey);
+  if (!spec) {
+    return { status: "blocked", code: "no_symbol_spec", reason: "no symbol specification available yet" };
+  }
+
+  const riskPct = confidenceAdjustedRiskPct(config.riskPerTradePct, signal.tier, config) * correlationCheck.sizeMultiplier;
+  const sizing = computeLotSize(signal, account.equity, riskPct, spec);
+  if ("skipped" in sizing) {
+    return { status: "skipped_sizing", reason: sizing.reason };
+  }
+
+  const entry = roundToTick(signal.entry, spec.point);
+  const stopLoss = roundToTick(signal.stopLoss, spec.point);
+  const takeProfit = roundToTick(signal.takeProfit, spec.point);
+
+  const margin = await calculateOrderMargin(signal.pair, signal.direction, sizing.lots, entry, accountKey);
+  if (!margin.success) {
+    return { status: "dry_run_failed", reason: margin.message };
+  }
+
+  return { status: "dry_run_ok", lots: sizing.lots, entry, stopLoss, takeProfit, marginRequired: margin.marginRequired, freeMargin: account.freeMargin };
 }
