@@ -5,6 +5,7 @@ import type { AnalysisJob, AnalysisStage, Pair, Timeframe } from "@/lib/market/t
 import { usePolledResource } from "@/lib/hooks/usePolledResource";
 import { ProbabilityBar } from "./ProbabilityBar";
 import { MarketBiasBar } from "./MarketBiasBar";
+import { SmcSetupProgressBar } from "./SmcSetupProgressBar";
 
 const POLL_INTERVAL_MS = 200;
 
@@ -136,6 +137,9 @@ export function AnalysisProgressScreen({
         <div className="mt-3.5 flex w-full flex-col gap-1.5">
           <p className="text-center text-[11px] font-bold text-zinc-500">ANALYZING... {pct}%</p>
           <ProbabilityBar buyPct={result.buyPct} sellPct={result.sellPct} noTradePct={result.noTradePct} compact />
+          {result.smcSetupProgress !== undefined && (
+            <SmcSetupProgressBar pct={result.smcSetupProgress.pct} label={result.smcSetupProgress.label} />
+          )}
           {result.marketBias !== undefined && <MarketBiasBar direction={result.marketBias.direction} confidence={result.marketBias.confidence} />}
         </div>
       )}

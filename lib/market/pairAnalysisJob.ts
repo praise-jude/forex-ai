@@ -12,7 +12,7 @@ import type {
 import { candleStore } from "./candleStore";
 import { priceStore } from "./priceStore";
 import { TIMEFRAME_MS } from "./timeframes";
-import { computeSharedGateContext, evaluateDirectionalCandidate, findSweepCandidates, type SharedGateContext } from "./signalEngine";
+import { ADX_HARD_MIN, computeSharedGateContext, evaluateDirectionalCandidate, findSweepCandidates, type SharedGateContext } from "./signalEngine";
 import { evaluateRangeSignal } from "./rangeEngine";
 import { detectMarketRegime } from "./marketRegime";
 import { calculateAdx } from "./indicators/adx";
@@ -170,6 +170,50 @@ export function rawDirectionalScore(evaluation: SignalEvaluation | null): number
   if (reason.code === "range_below_threshold") return reason.total;
   if (reason.code === "signer_b_neutral" || reason.code === "signer_conflict") return reason.confidence;
   return 0;
+}
+
+/** SMC's own genuine progress toward a real setup, distinct from rawDirectionalScore's
+ * plain number: it also covers the two hard gates that DO have a natural, real
+ * ratio-to-threshold (weak_trend_adx, low_volatility) instead of stopping at "0, nothing
+ * to show" for them -- operator request, 2026-09-09, after being shown "ADX 19.9, needs
+ * 20+" only as prose text, not as a number alongside Market Bias's own percentage.
+ * `pct` is null (never a fabricated ratio) for every other reason code: outside_killzone
+ * (a binary time window, not a continuous approach), no_setup/trend_disagreement/
+ * not_ranging/no_range_detected/no_boundary_touch (categorical structural reads, no
+ * natural single ratio), and the news/weekend/M5 holds (a setup was found but never
+ * scored -- see signalEngine.ts's own ordering, scoreSignal runs AFTER those checks).
+ * When both bullish and bearish candidates have a real number, the closer one wins --
+ * "how close is SMC, overall" is the honest question this answers, not "which specific
+ * direction." */
+export interface SmcSetupProgress {
+  pct: number | null;
+  label: string;
+}
+
+function smcSideProgress(evaluation: SignalEvaluation | null): SmcSetupProgress | null {
+  if (evaluation === null) return null;
+  if (evaluation.status === "signal") return { pct: 100, label: `Qualified -- scored ${evaluation.signal.confidence.toFixed(0)}/100` };
+  const { reason } = evaluation;
+  if (reason.code === "below_threshold") return { pct: reason.entry.total, label: `Scored ${reason.entry.total.toFixed(0)}/100 -- below the tier floor` };
+  if (reason.code === "signer_b_neutral" || reason.code === "signer_conflict") {
+    return { pct: reason.confidence, label: `Scored ${reason.confidence.toFixed(0)}/100 -- qualified, held by Signer B` };
+  }
+  if (reason.code === "weak_trend_adx") {
+    const pct = Math.min(100, (reason.adx / ADX_HARD_MIN) * 100);
+    return { pct, label: `ADX ${reason.adx.toFixed(1)} of ${ADX_HARD_MIN}+ needed` };
+  }
+  if (reason.code === "low_volatility") {
+    const pct = reason.atrAverage > 0 ? Math.min(100, (reason.atr / reason.atrAverage) * 100) : 0;
+    return { pct, label: `ATR ${pct.toFixed(0)}% of its recent average -- needs 100%+` };
+  }
+  return null;
+}
+
+export function smcSetupProgress(bullish: SignalEvaluation | null, bearish: SignalEvaluation | null): SmcSetupProgress {
+  const b = smcSideProgress(bullish);
+  const s = smcSideProgress(bearish);
+  if (b && s) return (b.pct ?? -1) >= (s.pct ?? -1) ? b : s;
+  return b ?? s ?? { pct: null, label: "No setup detected yet" };
 }
 
 /**
@@ -346,7 +390,16 @@ async function runAnalysisJob(job: AnalysisJob): Promise<void> {
   // just at the final result) becomes real and readable from this point on -- every
   // field here is already fully computed, just attached to the job now instead of only
   // at the very end.
-  Object.assign(job.result!, { buyPct, sellPct, noTradePct, conflicted: Boolean(conflicted), direction, engines, marketBias });
+  Object.assign(job.result!, {
+    buyPct,
+    sellPct,
+    noTradePct,
+    conflicted: Boolean(conflicted),
+    direction,
+    engines,
+    marketBias,
+    smcSetupProgress: smcSetupProgress(bullish, bearish),
+  });
   await advanceStage(job, "risk_validation");
 
   // --- risk_validation: the same currently-execute-only checks (riskManager.ts/

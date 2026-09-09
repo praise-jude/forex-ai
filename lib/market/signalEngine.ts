@@ -65,7 +65,9 @@ const FIXED_TAKE_PROFIT_DISTANCE: Partial<Record<Pair, number>> = {
   "BTC/USD": 1.5,
   USOIL: 1.5,
 };
-const ADX_HARD_MIN = 20;
+// Exported so pairAnalysisJob.ts's smcSetupProgress can report a real "ADX X of Y needed"
+// ratio without duplicating this number by hand and risking it drifting out of sync.
+export const ADX_HARD_MIN = 20;
 const ATR_AVERAGE_PERIOD = 20;
 // How many hours before the Friday 5pm New York weekly close a NEW entry is refused --
 // see marketHours.ts's isWithinWeekendCloseWindow for the reasoning. Env-configurable

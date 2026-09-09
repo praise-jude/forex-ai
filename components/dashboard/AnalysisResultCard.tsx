@@ -5,6 +5,7 @@ import { describeNoTradeReason, REGIME_LABEL } from "@/lib/market/noTradeReason"
 import { deriveRiskLevel, scoreSetupQuality, type RiskLevel } from "@/lib/market/setupQualityScore";
 import { ProbabilityBar } from "./ProbabilityBar";
 import { MarketBiasBar } from "./MarketBiasBar";
+import { SmcSetupProgressBar } from "./SmcSetupProgressBar";
 import { AiConsensusPanel } from "./AiConsensusPanel";
 import { PointRouteCard } from "./PointRouteCard";
 import { SetupQualityBreakdown } from "./SetupQualityBreakdown";
@@ -99,6 +100,7 @@ export function AnalysisResultCard({ result }: { result: PairAnalysisResult }) {
       )}
 
       <ProbabilityBar buyPct={result.buyPct} sellPct={result.sellPct} noTradePct={result.noTradePct} />
+      <SmcSetupProgressBar pct={result.smcSetupProgress.pct} label={result.smcSetupProgress.label} />
       <MarketBiasBar direction={result.marketBias.direction} confidence={result.marketBias.confidence} />
 
       {!winningSignal && result.direction === "no_trade" && !result.conflicted && (

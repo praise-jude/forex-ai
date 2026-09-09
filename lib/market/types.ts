@@ -465,6 +465,13 @@ export interface PairAnalysisResult {
    * decisionMatrix.ts) -- "unavailable" only when the same killzone/insufficient-data
    * gates that block buyPct/sellPct entirely also block this. */
   marketBias: { direction: "long" | "short" | "neutral" | "unavailable"; confidence: number };
+  /** SMC's own genuine progress toward a real setup (operator request, 2026-09-09) --
+   * see pairAnalysisJob.ts's smcSetupProgress for exactly which reasons produce a real
+   * ratio (below_threshold/signer_b_neutral/signer_conflict's real score; weak_trend_adx/
+   * low_volatility's real ratio-to-threshold) versus `pct: null` for a reason with no
+   * natural continuous number (outside_killzone, no_setup, trend_disagreement, etc.) --
+   * never a fabricated percentage for those. */
+  smcSetupProgress: { pct: number | null; label: string };
 }
 
 /** An in-memory, short-lived record of one "Check a Pair" analysis run -- see

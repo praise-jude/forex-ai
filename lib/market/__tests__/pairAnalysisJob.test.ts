@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ANALYSIS_STAGE_PCT, computeMoneyAtRisk, deriveMarketBias, normalizeDirectionalPercentages, rawDirectionalScore } from "../pairAnalysisJob";
+import {
+  ANALYSIS_STAGE_PCT,
+  computeMoneyAtRisk,
+  deriveMarketBias,
+  normalizeDirectionalPercentages,
+  rawDirectionalScore,
+  smcSetupProgress,
+} from "../pairAnalysisJob";
 import type { AnalysisStage, SignalEvaluation } from "../types";
 import { buildSignal } from "./fixtures";
 
@@ -93,6 +100,51 @@ describe("deriveMarketBias", () => {
 
   it("passes 'unavailable' through as-is, confidence forced to 0 -- Signer B never ran at all", () => {
     expect(deriveMarketBias("unavailable", 0)).toEqual({ direction: "unavailable", confidence: 0 });
+  });
+});
+
+describe("smcSetupProgress", () => {
+  it("is 'No setup detected yet' with a null pct when neither side has anything at all", () => {
+    expect(smcSetupProgress(null, null)).toEqual({ pct: null, label: "No setup detected yet" });
+  });
+
+  it("reports a real ADX ratio-to-floor for weak_trend_adx -- ADX 19.9 of the real 20 floor", () => {
+    const evaluation: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 19.9 } };
+    const result = smcSetupProgress(evaluation, evaluation);
+    expect(result.pct).toBeCloseTo(99.5, 1);
+    expect(result.label).toContain("19.9");
+  });
+
+  it("reports a real ATR-vs-average ratio for low_volatility, capped at 100", () => {
+    const overAverage: SignalEvaluation = { status: "no_trade", reason: { code: "low_volatility", atr: 0.5, atrAverage: 0.4 } };
+    expect(smcSetupProgress(overAverage, null).pct).toBe(100);
+
+    const underAverage: SignalEvaluation = { status: "no_trade", reason: { code: "low_volatility", atr: 0.276, atrAverage: 0.345 } };
+    const result = smcSetupProgress(underAverage, null);
+    expect(result.pct).toBeCloseTo(80, 0);
+  });
+
+  it("reports the real below_threshold score, same number as rawDirectionalScore", () => {
+    const evaluation: SignalEvaluation = {
+      status: "no_trade",
+      reason: { code: "below_threshold", direction: { total: 85, tier: "strong_buy", reasons: [] }, entry: { total: 67, tier: "watch", reasons: [] } },
+    };
+    expect(smcSetupProgress(evaluation, null).pct).toBe(67);
+  });
+
+  it("is null for a hard gate with no natural continuous ratio -- outside_killzone, no_setup, trend_disagreement", () => {
+    expect(smcSetupProgress({ status: "no_trade", reason: { code: "outside_killzone" } }, null).pct).toBeNull();
+    expect(smcSetupProgress({ status: "no_trade", reason: { code: "no_setup" } }, null).pct).toBeNull();
+    expect(
+      smcSetupProgress({ status: "no_trade", reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bullish", h4: "bearish", h1: "bullish" } }, null)
+        .pct
+    ).toBeNull();
+  });
+
+  it("picks whichever side is genuinely closer when both have a real number", () => {
+    const weak: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 10 } }; // 50%
+    const closer: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 19 } }; // 95%
+    expect(smcSetupProgress(weak, closer).pct).toBeCloseTo(95, 0);
   });
 });
 
