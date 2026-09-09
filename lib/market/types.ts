@@ -296,16 +296,22 @@ export type NoTradeReason =
   | { code: "weekend_close_blackout"; impliedDirection: "long" | "short"; hoursUntilClose: number }
   // SMC found a qualifying setup, but Signer B's independent read (see signerB.ts) had
   // no real lean either way -- a genuine tie/insufficient-data read, not a fabricated
-  // agreement. See decisionMatrix.ts.
-  | { code: "signer_b_neutral"; impliedDirection: "long" | "short" }
+  // agreement. See decisionMatrix.ts. `confidence` is SMC's own real score.total for
+  // this setup -- it already cleared the tier floor on its own merits before Signer B
+  // held it, so unlike below_threshold this is a setup that WOULD have fired, not one
+  // that fell short (operator request, 2026-09-09: don't show this as a flat 0% next to
+  // an actual near-miss, since it represents more real progress, not less).
+  | { code: "signer_b_neutral"; impliedDirection: "long" | "short"; confidence: number }
   // SMC found a qualifying setup, but Signer B's independent read points the opposite
   // direction -- a genuine conflict between the two independent signers, held rather
-  // than forced. See decisionMatrix.ts.
+  // than forced. See decisionMatrix.ts. `confidence` is the same real score.total as
+  // signer_b_neutral above, for the same reason.
   | {
       code: "signer_conflict";
       impliedDirection: "long" | "short";
       signerBDirection: "long" | "short";
       signerBConfidence: number;
+      confidence: number;
     }
   // Everything else passed (including Signer B agreement) but the most recently closed
   // 5-minute candle didn't confirm the setup's own direction -- see m5Confirmation.ts.

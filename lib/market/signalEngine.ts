@@ -417,12 +417,13 @@ export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: Liqu
   if (decision.blocked) {
     return noTrade(
       decision.blocked.code === "signer_b_neutral"
-        ? { code: "signer_b_neutral", impliedDirection: direction }
+        ? { code: "signer_b_neutral", impliedDirection: direction, confidence: score.total }
         : {
             code: "signer_conflict",
             impliedDirection: direction,
             signerBDirection: decision.blocked.signerBDirection,
             signerBConfidence: decision.blocked.signerBConfidence,
+            confidence: score.total,
           }
     );
   }

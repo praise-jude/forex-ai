@@ -39,9 +39,12 @@ export function rankNoTradeCloseness(reason: NoTradeReason): NoTradeCloseness {
     case "m5_not_confirmed":
       return { tier: 0, label: "Everything agrees -- waiting on the next 5-minute candle to confirm" };
     case "signer_b_neutral":
-      return { tier: 1, label: "Setup already qualified -- Signer B has no lean yet" };
+      return { tier: 1, label: `Scored ${reason.confidence.toFixed(0)}/100, qualified -- Signer B has no lean yet` };
     case "signer_conflict":
-      return { tier: 1, label: `Setup already qualified -- Signer B leans the other way (${reason.signerBConfidence.toFixed(0)}%)` };
+      return {
+        tier: 1,
+        label: `Scored ${reason.confidence.toFixed(0)}/100, qualified -- Signer B leans the other way (${reason.signerBConfidence.toFixed(0)}%)`,
+      };
     case "news_blackout":
       return { tier: 1, label: `Setup already qualified -- waiting out ${reason.event} (${reason.minutesUntil}m)` };
     case "weekend_close_blackout":

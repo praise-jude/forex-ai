@@ -146,10 +146,18 @@ export function normalizeDirectionalPercentages(rawBuy: number, rawSell: number)
  * side that didn't independently qualify, indistinguishable whether that side scored 65
  * (a real near-miss) or never got scored at all (blocked by a hard gate before scoring
  * ever ran, e.g. outside the killzone, weak ADX, no setup detected). Surfacing a real
- * number wherever one actually exists: "below_threshold" (SMC) carries the real
- * DimensionScore that missed the tier floor (entry.total -- the same dimension that
- * actually gates tier/confidence, see confidenceScore.ts's own doc comment), and
- * "range_below_threshold" (Range Engine) carries its own real combined total directly.
+ * number wherever one actually exists:
+ *  - "below_threshold" (SMC) carries the real DimensionScore that missed the tier floor
+ *    (entry.total -- the same dimension that actually gates tier/confidence, see
+ *    confidenceScore.ts's own doc comment).
+ *  - "range_below_threshold" (Range Engine) carries its own real combined total directly.
+ *  - "signer_b_neutral"/"signer_conflict" (found 2026-09-09 while investigating this same
+ *    request further) are a DIFFERENT shape of near-miss than below_threshold: SMC's own
+ *    score already cleared the tier floor here -- the setup would have fired on Signer
+ *    A's merits alone -- and was only held back by the separate, independent Signer B
+ *    check. That real confidence was being silently discarded down to 0, indistinguishable
+ *    from a setup that was never found at all, even though it represents MORE progress
+ *    than a below_threshold near-miss, not less. Both now carry their own `confidence`.
  * Every other no_trade reason is a genuine hard gate with no scoring having happened at
  * all -- 0 there is the honest answer, not a rounding-down of something real, and this
  * function must never invent a number for those cases just to make the bar look fuller.
@@ -160,6 +168,7 @@ export function rawDirectionalScore(evaluation: SignalEvaluation | null): number
   const { reason } = evaluation;
   if (reason.code === "below_threshold") return reason.entry.total;
   if (reason.code === "range_below_threshold") return reason.total;
+  if (reason.code === "signer_b_neutral" || reason.code === "signer_conflict") return reason.confidence;
   return 0;
 }
 

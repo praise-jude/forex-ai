@@ -60,7 +60,7 @@ describe("describeNoTradeReason", () => {
   });
 
   it("describes signer_b_neutral, naming SMC's implied direction", () => {
-    const text = describeNoTradeReason({ code: "signer_b_neutral", impliedDirection: "long" });
+    const text = describeNoTradeReason({ code: "signer_b_neutral", impliedDirection: "long", confidence: 84 });
     expect(text).toMatch(/bullish setup/i);
     expect(text).toMatch(/confirmation signer/i);
     expect(text).toMatch(/clear lean/i);
@@ -72,6 +72,7 @@ describe("describeNoTradeReason", () => {
       impliedDirection: "long",
       signerBDirection: "short",
       signerBConfidence: 72,
+      confidence: 84,
     });
     expect(text).toMatch(/bullish setup/i);
     expect(text).toMatch(/bearish/i);
@@ -132,7 +133,7 @@ describe("pipelineStages", () => {
   it("marks the failing stage first among two codes sharing one stage (signer_conflict)", () => {
     const evaluation: SignalEvaluation = {
       status: "no_trade",
-      reason: { code: "signer_conflict", impliedDirection: "long", signerBDirection: "short", signerBConfidence: 70 },
+      reason: { code: "signer_conflict", impliedDirection: "long", signerBDirection: "short", signerBConfidence: 70, confidence: 84 },
     };
     const stages = pipelineStages(evaluation, "smc");
     expect(stages.find((s) => s.label === "Confidence score")!.status).toBe("pass");

@@ -13,9 +13,18 @@ describe("rankNoTradeCloseness", () => {
   });
 
   it("ranks signer_b_neutral, signer_conflict, and news_blackout all as tier 1 -- already-qualified setups blocked by an external gate", () => {
-    expect(rankNoTradeCloseness({ code: "signer_b_neutral", impliedDirection: "long" }).tier).toBe(1);
-    expect(rankNoTradeCloseness({ code: "signer_conflict", impliedDirection: "long", signerBDirection: "short", signerBConfidence: 60 }).tier).toBe(1);
+    expect(rankNoTradeCloseness({ code: "signer_b_neutral", impliedDirection: "long", confidence: 84 }).tier).toBe(1);
+    expect(
+      rankNoTradeCloseness({ code: "signer_conflict", impliedDirection: "long", signerBDirection: "short", signerBConfidence: 60, confidence: 84 }).tier
+    ).toBe(1);
     expect(rankNoTradeCloseness({ code: "news_blackout", impliedDirection: "long", event: "NFP", currency: "USD", minutesUntil: 12 }).tier).toBe(1);
+  });
+
+  it("reports signer_b_neutral/signer_conflict's real SMC score in the label -- it already qualified, unlike a below_threshold near-miss", () => {
+    expect(rankNoTradeCloseness({ code: "signer_b_neutral", impliedDirection: "long", confidence: 84 }).label).toContain("84");
+    expect(
+      rankNoTradeCloseness({ code: "signer_conflict", impliedDirection: "long", signerBDirection: "short", signerBConfidence: 60, confidence: 91 }).label
+    ).toContain("91");
   });
 
   it("ranks below_threshold as tier 2 and reports the lower of direction/entry as the real score", () => {

@@ -52,19 +52,32 @@ describe("rawDirectionalScore", () => {
     expect(rawDirectionalScore(evaluation)).toBe(0);
   });
 
-  it("is 0 for every other hard-gate reason code too (outside_killzone, no_setup, blackouts, conflicts, etc.)", () => {
+  it("is 0 for every other hard-gate reason code too (outside_killzone, no_setup, blackouts, etc.)", () => {
     const hardGateReasons: SignalEvaluation[] = [
       { status: "no_trade", reason: { code: "outside_killzone" } },
       { status: "no_trade", reason: { code: "no_setup" } },
       { status: "no_trade", reason: { code: "not_ranging", regime: "strong_uptrend" } },
       { status: "no_trade", reason: { code: "no_range_detected" } },
       { status: "no_trade", reason: { code: "no_boundary_touch" } },
-      { status: "no_trade", reason: { code: "signer_b_neutral", impliedDirection: "long" } },
       { status: "no_trade", reason: { code: "m5_not_confirmed", impliedDirection: "short" } },
     ];
     for (const evaluation of hardGateReasons) {
       expect(rawDirectionalScore(evaluation)).toBe(0);
     }
+  });
+
+  it("surfaces SMC's real score for signer_b_neutral/signer_conflict -- found 2026-09-09: these setups already cleared SMC's own tier floor and were only held by the separate Signer B check, so they represent MORE progress than a below_threshold near-miss, not a hard gate with nothing scored", () => {
+    const neutral: SignalEvaluation = {
+      status: "no_trade",
+      reason: { code: "signer_b_neutral", impliedDirection: "long", confidence: 84 },
+    };
+    expect(rawDirectionalScore(neutral)).toBe(84);
+
+    const conflict: SignalEvaluation = {
+      status: "no_trade",
+      reason: { code: "signer_conflict", impliedDirection: "short", signerBDirection: "long", signerBConfidence: 66, confidence: 91 },
+    };
+    expect(rawDirectionalScore(conflict)).toBe(91);
   });
 });
 
