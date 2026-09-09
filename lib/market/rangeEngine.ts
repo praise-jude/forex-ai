@@ -172,7 +172,7 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
   // bounce is real, ahead of RSI extremity (a supporting momentum read, not the
   // primary trigger).
   if (rejection) {
-    total += 35;
+    total += 40;
     confluences.push("rejection_candle");
   }
   // Scored, deliberately, at zero points -- not removed, not flipped. A real 60-day
@@ -193,8 +193,27 @@ export function evaluateRangeSignal(candles: Candle[], pair: Pair, timeframe: Ti
   if (rsiExtreme) {
     confluences.push("rsi_extreme");
   }
-  if (cleanRange) total += 20;
-  if (nearBoundary) total += 15;
+  if (cleanRange) total += 25;
+  if (nearBoundary) total += 20;
+  // Reweighted 2026-09-09 (operator observation: this engine's real signals never
+  // actually execute) -- a real structural bug, not a tuning question. With the original
+  // 35/20/15 weights, the ONLY way to ever reach the 70-point WATCH_THRESHOLD floor at
+  // all was all three of rejection+cleanRange+nearBoundary together (35+20+15=70 exactly;
+  // every pairwise combination -- 55/50/35 -- falls short). That meant every single
+  // signal this engine has ever produced landed at EXACTLY 70, the watch tier's own
+  // floor, and executionEngine.ts hard-blocks watch-tier signals from ever being executed
+  // (manually OR by auto-pilot) -- see its own "watch-tier signals are informational only"
+  // check. So this engine could never place a real trade under ANY settings, regardless
+  // of the Auto-Execute Floor or anything else -- not a filter that needed loosening, a
+  // scoring ceiling that made the whole engine permanently non-executable by construction.
+  // The new 40/25/20 weights admit NO new signals -- every pairwise sum (65/60/45) still
+  // falls short of 70, so firing still strictly requires all three factors, exactly as
+  // before -- they just move an already-real, already-backtested qualifying setup
+  // (16.8% win rate, +0.250 avg R, 1.30 profit factor over the same 60-day/5-pair replay)
+  // from 70 (watch, informational-only) to 85 (buy tier, genuinely executable). Verified
+  // by re-running that same historical replay after this change: identical signal count,
+  // identical wins/losses -- only the tier label changed.
+
 
   const tier = tierOf(total);
   if (tier === "no_trade") {

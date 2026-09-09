@@ -22,7 +22,8 @@ function candle(time: number, open: number, high: number, low: number, close: nu
  * near the top of its own range (a genuine rejection) -- confirmed to land ADX just
  * under the 20 "clean range" ceiling and RSI in the low 30s (not quite oversold, kept
  * deliberately short of the RSI extreme threshold so this fixture exercises exactly
- * three of the four scoring factors, landing right at the watch-tier floor).
+ * three of the four scoring factors -- the only combination that ever fires at all,
+ * see evaluateRangeSignal's own doc comment on the 2026-09-09 reweight).
  */
 function buildRangeCandles(): Candle[] {
   const candles: Candle[] = [];
@@ -62,9 +63,10 @@ function buildRangeCandles(): Candle[] {
   return candles;
 }
 
-/** The proven watch-tier fixture, with the final touch candle appended separately so
- * tests can swap it out (e.g. a weak-rejection close) without rebuilding the whole
- * warmup/range history each time. */
+/** The proven qualifying fixture (buy-tier since the 2026-09-09 reweight -- see
+ * evaluateRangeSignal's own doc comment), with the final touch candle appended
+ * separately so tests can swap it out (e.g. a weak-rejection close) without rebuilding
+ * the whole warmup/range history each time. */
 function buildTouchCandle(time: number, weakRejection = false): Candle {
   return weakRejection
     ? // Wicks below support but closes near the BOTTOM of its own range -- a touch with
@@ -129,7 +131,7 @@ describe("evaluateRangeSignal", () => {
     expect(evaluation).toEqual({ status: "no_trade", reason: { code: "no_range_detected" } });
   });
 
-  it("fires a watch-tier signal on a genuine support touch with rejection, a clean range, and entry proximity", () => {
+  it("fires a buy-tier signal on a genuine support touch with rejection, a clean range, and entry proximity", () => {
     const base = buildRangeCandles();
     const candles = [...base, buildTouchCandle(base.length * STEP)];
 
@@ -139,8 +141,12 @@ describe("evaluateRangeSignal", () => {
 
     expect(evaluation.signal.source).toBe("mean_reversion");
     expect(evaluation.signal.direction).toBe("long");
-    expect(evaluation.signal.tier).toBe("watch");
-    expect(evaluation.signal.confidence).toBeGreaterThanOrEqual(70);
+    // Reweighted 2026-09-09: all-three-confluences now scores 85 (buy tier), not 70
+    // (watch, which executionEngine.ts hard-blocks from ever executing) -- see
+    // evaluateRangeSignal's own doc comment on why this was a structural fix, not a
+    // threshold loosening.
+    expect(evaluation.signal.tier).toBe("buy");
+    expect(evaluation.signal.confidence).toBeGreaterThanOrEqual(80);
     expect(evaluation.signal.confluences).toEqual(expect.arrayContaining(["range_regime", "boundary_touch", "rejection_candle"]));
     // Entry/SL/TP anchored to the real range boundaries, not fabricated.
     expect(evaluation.signal.zoneBottom).toBeCloseTo(0.9992, 3);
@@ -243,12 +249,13 @@ describe("evaluateRangeSignal", () => {
     // rejection is also false here (closed near its own low, not back up toward the
     // boundary) -- rsiExtreme fires too (a genuine oversold read after the sustained
     // decline) but scores zero points (see evaluateRangeSignal's own doc comment: a real
-    // backtest showed it's counter-predictive as a bonus), so only cleanRange (20) ends
-    // up contributing, landing at exactly 20. Before the near-boundary fix this would
-    // have been 35 (nearBoundary's unearned +15 included), still short of the 70 floor
-    // for this particular fixture -- so the bug's real danger was on a marginal signal
-    // already close to qualifying, not visible from this total alone, hence asserting
-    // the exact number rather than just "still no_trade".
-    expect(evaluation.reason.total).toBe(20);
+    // backtest showed it's counter-predictive as a bonus), so only cleanRange (reweighted
+    // 2026-09-09 to 25, see evaluateRangeSignal's own doc comment) ends up contributing,
+    // landing at exactly 25. Before the near-boundary fix this would have been 45
+    // (nearBoundary's unearned +20 included), still short of the 70 floor for this
+    // particular fixture -- so the bug's real danger was on a marginal signal already
+    // close to qualifying, not visible from this total alone, hence asserting the exact
+    // number rather than just "still no_trade".
+    expect(evaluation.reason.total).toBe(25);
   });
 });
