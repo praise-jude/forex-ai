@@ -175,6 +175,17 @@ export const autopilotLockState = pgTable("autopilot_lock_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
 
+// A real dashboard on/off switch for a detection-only engine (Range Engine, Trend
+// Continuation), replacing the env-var-only posture those engines launched with -- see
+// engineToggles.ts's own doc comment. `id` is `${account}:${engine}` (e.g.
+// "live:trend_continuation"); a row's absence means "no override yet, use the env var
+// default" -- this table only ever holds an EXPLICIT operator choice, never a default.
+export const engineToggleState = pgTable("engine_toggle_state", {
+  id: text("id").primaryKey(),
+  enabled: boolean("enabled").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
 // Durable dedup ledger for metaApiConnection.ts's onDealAdded -- the MetaApi SDK can
 // (and, per the "another cooldown" reports on 2026-08-27, does) redeliver the same
 // historical closing deal as a fresh onDealAdded event across a reconnect resync or a

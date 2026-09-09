@@ -6,6 +6,7 @@ import { AutopilotLockControl } from "@/components/dashboard/AutopilotLockContro
 import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
+import { EngineTogglesControl } from "@/components/dashboard/EngineTogglesControl";
 import { DisclaimerFooter } from "@/components/dashboard/DisclaimerFooter";
 
 export default function DashboardPage() {
@@ -42,6 +43,7 @@ export default function DashboardPage() {
           <EngineModeControl />
           <AutopilotLockControl />
           <ExecutionPolicyControl />
+          <EngineTogglesControl />
           <EmergencyStopControl />
         </div>
       </header>

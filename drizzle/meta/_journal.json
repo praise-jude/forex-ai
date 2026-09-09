@@ -64,6 +64,13 @@
       "when": 1788249142126,
       "tag": "0008_awesome_maverick",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788959588807,
+      "tag": "0009_yellow_peter_parker",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnectio
 import { checkEngineModeAfterRestart, startEngineModeReminder } from "./engineMode";
 import { startEvaluationLogPruning, startEvaluationHealthMonitor } from "./evaluationLog";
 import { hydrateAutopilotLock } from "./autopilotLock";
+import { hydrateEngineToggles } from "./engineToggles";
 import { startAutoExecutionListener } from "./autoExecutionListener";
 import { startConnectionWatcher } from "./connectionWatcher";
 import { startConnectionWatchdog } from "./connectionWatchdog";
@@ -88,6 +89,14 @@ export function startMarketEngine(): void {
   // slower than this DB round trip -- so this can't be raced in practice.
   hydrateAutopilotLock().catch((error: unknown) => {
     console.error("[market] failed to hydrate autopilot lock:", error);
+  });
+
+  // Fire-and-forget, same posture as every hydrate above -- restores whatever Range
+  // Engine/Trend Continuation on/off overrides were last set from the dashboard (see
+  // engineToggles.ts), so a Railway redeploy doesn't silently drop an explicit operator
+  // choice back to the env var default.
+  hydrateEngineToggles().catch((error: unknown) => {
+    console.error("[market] failed to hydrate engine toggles:", error);
   });
 
   ensureMetaApiConnection("live").catch((error: unknown) => {

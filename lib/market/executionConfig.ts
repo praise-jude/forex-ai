@@ -1,4 +1,5 @@
 import type { AccountKey } from "./types";
+import { getEngineToggleOverride } from "./engineToggles";
 
 export interface ExecutionConfig {
   /** Manual approvals may bypass account-level circuit breakers when explicitly enabled. */
@@ -173,8 +174,12 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     riskMultiplierBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_BUY`, 1.0),
     riskMultiplierStrongBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_STRONG_BUY`, 1.5),
     confluenceSizingEnabled: envBoolean(`${prefix}CONFLUENCE_SIZING_ENABLED`, false),
-    rangeEngineEnabled: envBoolean(`${prefix}RANGE_ENGINE_ENABLED`, false),
-    trendContinuationEnabled: envBoolean(`${prefix}TREND_CONTINUATION_ENABLED`, false),
+    // A real dashboard toggle (see engineToggles.ts) can override the env var default at
+    // runtime -- checked first, since an explicit operator choice always wins over a
+    // deploy-time default. Falls back to the env var exactly as before this feature
+    // existed when no override has ever been set.
+    rangeEngineEnabled: getEngineToggleOverride(account, "range_engine") ?? envBoolean(`${prefix}RANGE_ENGINE_ENABLED`, false),
+    trendContinuationEnabled: getEngineToggleOverride(account, "trend_continuation") ?? envBoolean(`${prefix}TREND_CONTINUATION_ENABLED`, false),
     deEscalationEnabled: envBoolean(`${prefix}DE_ESCALATION_ENABLED`, true),
     deEscalationFraction: envNumber(`${prefix}DE_ESCALATION_FRACTION`, 0.5),
     deEscalationSizeMultiplier: envNumber(`${prefix}DE_ESCALATION_SIZE_MULTIPLIER`, 0.5),
