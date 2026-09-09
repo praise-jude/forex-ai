@@ -117,7 +117,10 @@ export function hasAdverseOpenPosition(
  * source === "mean_reversion" (rangeEngine.ts) additionally requires
  * executionConfig.ts's rangeEngineEnabled for the target account -- that engine has no
  * backtest history yet, so it ships detection-only (visible on the dashboard, never
- * executed) until explicitly turned on.
+ * executed) until explicitly turned on. source === "trend_continuation"
+ * (trendContinuationEngine.ts) is the same posture, gated on trendContinuationEnabled --
+ * it DOES have a real backtest behind it (see that file's own doc comment), but still
+ * ships opt-in, same as Range Engine did.
  *
  * Reacts to a signal from any of the three signal engines (15m/30m/1h -- see
  * metaApiConnection.ts's SIGNAL_TIMEFRAMES) equally; nothing here narrows that set on
@@ -131,7 +134,7 @@ export function startAutoExecutionListener(): void {
 
   eventBus.subscribe((event) => {
     if (event.type !== "signal") return;
-    if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion") return;
+    if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion" && event.signal.source !== "trend_continuation") return;
 
     // The operator's own manual master switch for the autopilot specifically -- see
     // autopilotLock.ts's doc comment for how this differs from the kill switch (which
@@ -145,6 +148,7 @@ export function startAutoExecutionListener(): void {
     if (!accountKey) return; // ANALYSIS: no-op
 
     if (event.signal.source === "mean_reversion" && !loadExecutionConfig(accountKey).rangeEngineEnabled) return;
+    if (event.signal.source === "trend_continuation" && !loadExecutionConfig(accountKey).trendContinuationEnabled) return;
 
     // A halt/cooldown that has since cleared on its own (day rollover, cooldown timer)
     // still blocks auto-execution here until a human explicitly acknowledges it (see

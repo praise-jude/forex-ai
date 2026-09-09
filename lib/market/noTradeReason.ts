@@ -112,6 +112,16 @@ function describeReason(reason: NoTradeReason): string {
       const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";
       return `A ${directionWord} boundary touch happened, but the combined confidence (${reason.total.toFixed(0)}%) didn't clear the threshold -- not enough RSI extremity, rejection strength, or range cleanliness together.`;
     }
+    case "not_trending":
+      return `Market regime is ${REGIME_LABEL[reason.regime]} -- the trend-continuation engine only looks for setups in a genuine strong uptrend or downtrend.`;
+    case "no_higher_timeframe_confluence": {
+      const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";
+      return `The market is in a real ${directionWord} trend, but the daily and 4-hour trend reads don't both agree with it yet -- waiting for the bigger picture to line up.`;
+    }
+    case "no_pullback_reset": {
+      const directionWord = reason.impliedDirection === "long" ? "bullish" : "bearish";
+      return `A real ${directionWord} trend is established and the daily/4-hour timeframes agree, but this candle isn't a genuine pullback-and-resume moment yet -- waiting for momentum to cool off and turn back in the trend's direction.`;
+    }
   }
 }
 
@@ -148,17 +158,24 @@ const RANGE_STAGES: { label: string; codes: NoTradeReason["code"][] }[] = [
   { label: "Confidence score", codes: ["range_below_threshold"] },
 ];
 
+// Mirrors evaluateTrendContinuation's own gate order in trendContinuationEngine.ts.
+const TREND_CONTINUATION_STAGES: { label: string; codes: NoTradeReason["code"][] }[] = [
+  { label: "Trending regime", codes: ["not_trending"] },
+  { label: "D1/H4 confluence", codes: ["no_higher_timeframe_confluence"] },
+  { label: "Pullback-and-resume trigger", codes: ["no_pullback_reset"] },
+];
+
 /**
  * Turns one evaluation into an ordered PASS/FAIL/NOT-REACHED checklist -- the "why isn't
  * this firing" breakdown a plain no_trade reason alone doesn't show: which gates this
  * candidate actually cleared before hitting the one that held it. Built entirely from
- * evaluateSignal/evaluateRangeSignal's own real, fixed gate order (see the two stage
- * lists above) -- every stage before the failing one passed by construction (the
- * function returns at the first gate that fails), and nothing after it ever ran.
- * A `signal` evaluation means every stage for that source passed.
+ * evaluateSignal/evaluateRangeSignal/evaluateTrendContinuation's own real, fixed gate
+ * order (see the stage lists above) -- every stage before the failing one passed by
+ * construction (the function returns at the first gate that fails), and nothing after it
+ * ever ran. A `signal` evaluation means every stage for that source passed.
  */
-export function pipelineStages(evaluation: SignalEvaluation, source: "smc" | "mean_reversion"): PipelineStage[] {
-  const order = source === "smc" ? SMC_STAGES : RANGE_STAGES;
+export function pipelineStages(evaluation: SignalEvaluation, source: "smc" | "mean_reversion" | "trend_continuation"): PipelineStage[] {
+  const order = source === "smc" ? SMC_STAGES : source === "mean_reversion" ? RANGE_STAGES : TREND_CONTINUATION_STAGES;
   if (evaluation.status === "signal") {
     return order.map((s) => ({ label: s.label, status: "pass" as const }));
   }

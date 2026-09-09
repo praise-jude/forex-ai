@@ -162,7 +162,12 @@ export type Confluence =
   | "range_regime"
   | "boundary_touch"
   | "rsi_extreme"
-  | "rejection_candle";
+  | "rejection_candle"
+  // trendContinuationEngine.ts confluences below -- neither SMC nor Range Engine
+  // produces these.
+  | "trend_regime"
+  | "higher_timeframe_confluence"
+  | "pullback_reset";
 
 export const CONFLUENCES: Confluence[] = [
   "liquidity_sweep",
@@ -187,11 +192,14 @@ export const CONFLUENCES: Confluence[] = [
   "boundary_touch",
   "rsi_extreme",
   "rejection_candle",
+  "trend_regime",
+  "higher_timeframe_confluence",
+  "pullback_reset",
 ];
 
 export type ConfidenceTier = "strong_buy" | "buy" | "watch";
 
-export type SignalSource = "smc" | "tradingview" | "mean_reversion" | "manual_test" | "manual";
+export type SignalSource = "smc" | "tradingview" | "mean_reversion" | "trend_continuation" | "manual_test" | "manual";
 
 /** Sources whose `confidence`/`directionScore`/`entryScore` are placeholders rather than
  * a real weighted score -- TradingView hardcodes tier "buy" by design (see
@@ -338,7 +346,29 @@ export type NoTradeReason =
   // shared tierOf floor -- a single total, not SMC's two-dimension DimensionScore
   // shape, since this engine scores one combined dimension, not direction+entry
   // separately.
-  | { code: "range_below_threshold"; total: number; impliedDirection: "long" | "short" };
+  | { code: "range_below_threshold"; total: number; impliedDirection: "long" | "short" }
+  // --- trendContinuationEngine.ts reasons below -- neither SMC nor Range Engine
+  // produces these. Real, evidence-backed strategy (2026-09-09): validated via a
+  // 120-day/5-pair backtest against the app's own real live position-management system
+  // (129 trades, 50.4% win rate, +0.381 avg R, 1.88 profit factor) before being wired in
+  // here -- trades a calm, multi-timeframe-agreeing trend that neither SMC (liquidity-
+  // sweep reversals) nor Range Engine (mean-reversion) is built to touch. A pure boolean
+  // gate cascade, not a graduated score (like Range Engine's own single-total shape) --
+  // every one of these three gates must pass for a signal to fire at all, so unlike
+  // below_threshold/range_below_threshold there is no partial/near-miss numeric score to
+  // report here yet; a future refinement, not a blocker to shipping the validated entry. ---
+  // The market isn't in a real, established trend at all (see marketRegime.ts) -- this
+  // engine only trades a genuine strong_uptrend/strong_downtrend regime, never a range,
+  // consolidation, or merely "high_volatility"/"low_volatility" read.
+  | { code: "not_trending"; regime: MarketRegime }
+  // The regime is a real trend, but the bigger-picture D1/H4 EMA trend reads don't both
+  // agree with it -- a genuine disagreement between timeframes, not a numeric miss.
+  | { code: "no_higher_timeframe_confluence"; impliedDirection: "long" | "short" }
+  // The trend and higher-timeframe agreement are both real, but this candle isn't the
+  // specific pullback-and-resume moment this engine enters on (RSI hasn't both reached
+  // an extended reading recently AND reset back into the resume zone on this candle) --
+  // the single most common "waiting for entry" state once a real trend is established.
+  | { code: "no_pullback_reset"; impliedDirection: "long" | "short" };
 
 export type SignalEvaluation = { status: "signal"; signal: Signal } | { status: "no_trade"; reason: NoTradeReason };
 

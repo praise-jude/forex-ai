@@ -19,7 +19,7 @@ export interface EvaluationLogEntry {
   id: string;
   pair: Pair;
   timeframe: Timeframe;
-  source: "smc" | "mean_reversion";
+  source: "smc" | "mean_reversion" | "trend_continuation";
   status: "signal" | "no_trade";
   reasonCode: string | null;
   reasonDetail: Record<string, unknown> | null;
@@ -42,7 +42,7 @@ export interface EvaluationLogEntry {
 export async function logEvaluation(
   pair: Pair,
   timeframe: Timeframe,
-  source: "smc" | "mean_reversion",
+  source: "smc" | "mean_reversion" | "trend_continuation",
   evaluation: SignalEvaluation,
   time: number
 ): Promise<void> {
@@ -77,7 +77,7 @@ export async function logEvaluation(
 
 export interface EvaluationLogQuery {
   pair?: Pair;
-  source?: "smc" | "mean_reversion";
+  source?: "smc" | "mean_reversion" | "trend_continuation";
   limit?: number;
 }
 
@@ -108,7 +108,7 @@ export async function getEvaluationHistory(query: EvaluationLogQuery): Promise<E
     id: row.id,
     pair: row.pair as Pair,
     timeframe: row.timeframe as Timeframe,
-    source: row.source as "smc" | "mean_reversion",
+    source: row.source as "smc" | "mean_reversion" | "trend_continuation",
     status: row.status as "signal" | "no_trade",
     reasonCode: row.reasonCode,
     reasonDetail: row.reasonDetail,

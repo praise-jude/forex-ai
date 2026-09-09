@@ -7,8 +7,8 @@ function isPair(value: string | null): value is Pair {
   return value !== null && PAIRS.includes(value as Pair);
 }
 
-function isSource(value: string | null): value is "smc" | "mean_reversion" {
-  return value === "smc" || value === "mean_reversion";
+function isSource(value: string | null): value is "smc" | "mean_reversion" | "trend_continuation" {
+  return value === "smc" || value === "mean_reversion" || value === "trend_continuation";
 }
 
 /** Backs the evaluation-history view -- every evaluation an engine has run recently

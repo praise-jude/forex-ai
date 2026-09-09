@@ -41,7 +41,9 @@ let started = false;
  * source === "mean_reversion" (rangeEngine.ts) is included too, but gated per-trade on
  * executionConfig.ts's rangeEngineEnabled for that trade's own account -- until that
  * engine is explicitly turned on for an account, its signals must not affect real
- * positions there at all, invalidation included.
+ * positions there at all, invalidation included. source === "trend_continuation"
+ * (trendContinuationEngine.ts) mirrors this exact same posture, gated on
+ * trendContinuationEnabled instead.
  */
 export function startPositionInvalidation(): void {
   if (started) return;
@@ -49,13 +51,14 @@ export function startPositionInvalidation(): void {
 
   eventBus.subscribe((event) => {
     if (event.type !== "signal") return;
-    if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion") return;
+    if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion" && event.signal.source !== "trend_continuation") return;
 
     const openTrades = positionStore.all().filter((t) => t.status === "filled");
     const invalidated = findInvalidatedTrades(event.signal, openTrades);
 
     for (const trade of invalidated) {
       if (event.signal.source === "mean_reversion" && !loadExecutionConfig(trade.account).rangeEngineEnabled) continue;
+      if (event.signal.source === "trend_continuation" && !loadExecutionConfig(trade.account).trendContinuationEnabled) continue;
 
       const brokerPositionId = trade.brokerPositionId;
       if (!brokerPositionId) continue;

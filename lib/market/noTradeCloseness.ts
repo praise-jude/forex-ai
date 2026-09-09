@@ -71,5 +71,11 @@ export function rankNoTradeCloseness(reason: NoTradeReason): NoTradeCloseness {
       return { tier: 5, label: "Market isn't currently ranging" };
     case "no_range_detected":
       return { tier: 5, label: "No tradeable range established yet" };
+    case "not_trending":
+      return { tier: 5, label: "Market isn't in a real trend right now" };
+    case "no_higher_timeframe_confluence":
+      return { tier: 4, label: "Daily and 4-hour trend don't both agree yet" };
+    case "no_pullback_reset":
+      return { tier: 3, label: "A real trend exists -- no pullback-and-resume moment yet" };
   }
 }

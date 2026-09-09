@@ -78,6 +78,15 @@ export interface ExecutionConfig {
    * shipped), so it stays detection-only (visible on the dashboard, journaled, never
    * executed) until deliberately turned on. */
   rangeEngineEnabled: boolean;
+  /** Master on/off switch for trendContinuationEngine.ts's signals ever reaching
+   * autoExecutionListener.ts/positionInvalidation.ts. Defaults OFF, same "off until
+   * explicitly configured" posture as rangeEngineEnabled -- this engine shipped
+   * 2026-09-09 with a real 120-day/5-pair backtest behind it (validated against the
+   * app's own live position-management logic, not an idealized target: 129 trades,
+   * 50.4% win rate, +0.381 avg R, 1.88 profit factor), but that's still one backtest
+   * window on one strategy -- it stays detection-only until deliberately turned on,
+   * ideally on demo first, same as every other new engine here. */
+  trendContinuationEnabled: boolean;
   /** See deEscalation.ts -- graduated daily-loss response. Between the de-escalation
    * threshold and the hard daily-loss halt, new trades open at a reduced size instead
    * of full size. Defaults ON: this can only make execution smaller, never larger, so a
@@ -165,6 +174,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     riskMultiplierStrongBuy: envPositiveMultiplier(`${prefix}RISK_MULTIPLIER_STRONG_BUY`, 1.5),
     confluenceSizingEnabled: envBoolean(`${prefix}CONFLUENCE_SIZING_ENABLED`, false),
     rangeEngineEnabled: envBoolean(`${prefix}RANGE_ENGINE_ENABLED`, false),
+    trendContinuationEnabled: envBoolean(`${prefix}TREND_CONTINUATION_ENABLED`, false),
     deEscalationEnabled: envBoolean(`${prefix}DE_ESCALATION_ENABLED`, true),
     deEscalationFraction: envNumber(`${prefix}DE_ESCALATION_FRACTION`, 0.5),
     deEscalationSizeMultiplier: envNumber(`${prefix}DE_ESCALATION_SIZE_MULTIPLIER`, 0.5),

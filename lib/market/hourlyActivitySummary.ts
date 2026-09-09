@@ -33,6 +33,9 @@ function reasonLabel(code: string): string {
     no_range_detected: "no range detected",
     no_boundary_touch: "no boundary touch",
     range_below_threshold: "range confidence too low",
+    not_trending: "not trending",
+    no_higher_timeframe_confluence: "D1/H4 disagree",
+    no_pullback_reset: "no pullback trigger yet",
   };
   return labels[code] ?? code;
 }

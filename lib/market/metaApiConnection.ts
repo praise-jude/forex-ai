@@ -20,6 +20,7 @@ import { priceStore } from "./priceStore";
 import { eventBus } from "./eventBus";
 import { evaluateSignalDualDirection, evaluateSpecificDirection } from "./signalEngine";
 import { evaluateRangeSignal } from "./rangeEngine";
+import { evaluateTrendContinuation } from "./trendContinuationEngine";
 import { confirmsDirection, M5_CONFIRMATION_BARS } from "./m5Confirmation";
 import { publishSignal } from "./signalPublisher";
 import { predictionStore } from "./predictionStore";
@@ -782,6 +783,72 @@ async function ingestCandle(pair: Pair, timeframe: Timeframe, candle: Candle): P
         createdAt: rangeSignal.createdAt,
         confluences: rangeSignal.confluences,
         source: rangeSignal.source,
+      });
+    }
+  }
+
+  // trendContinuationEngine.ts's trend-continuation engine, evaluated independently
+  // alongside SMC and Range Engine on the exact same closed candle -- 15m only, matching
+  // the exact timeframe its own backtest validation ran on (see that file's doc
+  // comment). Reuses `higherTimeframes` computed above for SMC's own evaluation --
+  // same real h1/h4/d1 series, no separate fetch. Same scoreSetupQuality-is-SMC-shaped
+  // reasoning as Range Engine's own block above means setupQuality is left undefined
+  // here too.
+  if (barJustClosed && timeframe === "15m") {
+    // Out of scope here (declared inside the SMC-only `if` block above) -- recomputed
+    // fresh from the same real candleStore series, never a separate fetch.
+    const trendHigherTimeframes = { h1: candleStore.get(pair, "1h"), h4: candleStore.get(pair, "4h"), d1: candleStore.get(pair, "1d") };
+    const trendEvaluation = evaluateTrendContinuation(priorSeries, pair, timeframe, trendHigherTimeframes);
+    const trendTime = Date.now();
+    const trendLastClosed = priorSeries[priorSeries.length - 1];
+    const trendRegime = detectMarketRegime(priorSeries, calculateAdx(priorSeries), calculateAtr(priorSeries), checkNews(pair, trendLastClosed.time));
+    const trendTrends = {
+      d1: emaTrendDirection(candleStore.get(pair, "1d")),
+      h4: emaTrendDirection(candleStore.get(pair, "4h")),
+      h1: emaTrendDirection(candleStore.get(pair, "1h")),
+      d1Gap: emaTrendGapPct(candleStore.get(pair, "1d")),
+      h4Gap: emaTrendGapPct(candleStore.get(pair, "4h")),
+      h1Gap: emaTrendGapPct(candleStore.get(pair, "1h")),
+    };
+    predictionStore.set(pair, timeframe, {
+      pair,
+      timeframe,
+      source: "trend_continuation",
+      evaluation: trendEvaluation,
+      time: trendTime,
+      regime: trendRegime,
+      trends: trendTrends,
+    });
+    eventBus.publish({
+      type: "prediction",
+      pair,
+      timeframe,
+      source: "trend_continuation",
+      evaluation: trendEvaluation,
+      time: trendTime,
+      regime: trendRegime,
+      trends: trendTrends,
+    });
+    void logEvaluation(pair, timeframe, "trend_continuation", trendEvaluation, trendTime);
+    if (trendEvaluation.status === "signal") {
+      publishSignal(trendEvaluation.signal);
+      const trendSignal = trendEvaluation.signal;
+      tradeJournal.recordSignalContext({
+        signalId: trendSignal.id,
+        pair: trendSignal.pair,
+        timeframe: trendSignal.timeframe,
+        direction: trendSignal.direction,
+        regime: trendRegime,
+        confidence: trendSignal.confidence,
+        signerBDirection: trendSignal.signerBDirection,
+        signerBConfidence: trendSignal.signerBConfidence,
+        adx: trendSignal.adx,
+        rsi: trendSignal.rsi,
+        newsStatus: trendSignal.newsStatus,
+        session: trendSignal.session,
+        createdAt: trendSignal.createdAt,
+        confluences: trendSignal.confluences,
+        source: trendSignal.source,
       });
     }
   }

@@ -20,14 +20,14 @@ const POLL_INTERVAL_MS = 10000;
 /** The most recently-updated prediction for a pair and a specific engine (source),
  * across whichever of its concurrent timeframes last evaluated -- this panel is a
  * per-pair overview, not a per-timeframe drilldown (PredictionCard.tsx already covers
- * that for the selected pair/timeframe on the main dashboard). Source-aware since two
- * independent engines (SMC, rangeEngine.ts's mean-reversion engine) can both evaluate
- * the same pair without one silently shadowing the other's status. */
+ * that for the selected pair/timeframe on the main dashboard). Source-aware since three
+ * independent engines (SMC, rangeEngine.ts's mean-reversion engine, trendContinuationEngine.ts)
+ * can all evaluate the same pair without one silently shadowing another's status. */
 function latestForPair(predictions: PredictionUpdate[], pair: Pair, source: PredictionUpdate["source"]): PredictionUpdate | undefined {
   return predictions.filter((p) => p.pair === pair && p.source === source).sort((a, b) => b.time - a.time)[0];
 }
 
-const ENGINE_LABEL: Record<"smc" | "mean_reversion", string> = { smc: "SMC", mean_reversion: "Range" };
+const ENGINE_LABEL: Record<"smc" | "mean_reversion" | "trend_continuation", string> = { smc: "SMC", mean_reversion: "Range", trend_continuation: "Trend" };
 
 /** The most recent execution attempt for a signal, if any -- a fired signal with no
  * match here simply hasn't been approved/auto-fired yet (e.g. Confirmation Mode
@@ -94,7 +94,7 @@ function HistoryEntryRow({ entry }: { entry: EvaluationLogEntry }) {
  * live card above it (which only ever shows the LATEST evaluation, overwritten on the
  * next candle close). Answers "what did this signal actually go through an hour/a day
  * ago", which nothing else on the dashboard can. */
-function HistoryToggle({ pair, source }: { pair: Pair; source: "smc" | "mean_reversion" }) {
+function HistoryToggle({ pair, source }: { pair: Pair; source: "smc" | "mean_reversion" | "trend_continuation" }) {
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<EvaluationLogEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -154,7 +154,7 @@ function ExecutionStatus({ trade }: { trade: ExecutedTrade | undefined }) {
  * which already joins predictions/signals/executedTrades. Nothing new is invented here;
  * this only surfaces what already exists in one scannable place.
  */
-function EngineRow({ pair, source, data }: { pair: Pair; source: "smc" | "mean_reversion"; data: SignalsResponse }) {
+function EngineRow({ pair, source, data }: { pair: Pair; source: "smc" | "mean_reversion" | "trend_continuation"; data: SignalsResponse }) {
   const update = latestForPair(data.predictions, pair, source);
   if (!update) {
     return (
@@ -213,6 +213,7 @@ export function SignalDiagnosticsPanel() {
           <span className="font-semibold text-zinc-200">{pair}</span>
           <EngineRow pair={pair} source="smc" data={data} />
           <EngineRow pair={pair} source="mean_reversion" data={data} />
+          <EngineRow pair={pair} source="trend_continuation" data={data} />
         </div>
       ))}
     </div>
