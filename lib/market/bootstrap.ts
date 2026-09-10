@@ -1,5 +1,6 @@
 import { ensureMetaApiConnection, isAccountConfigured } from "./metaApiConnection";
 import { checkEngineModeAfterRestart, startEngineModeReminder } from "./engineMode";
+import { startLiveModeRecovery } from "./liveModeRecovery";
 import { startEvaluationLogPruning, startEvaluationHealthMonitor } from "./evaluationLog";
 import { hydrateAutopilotLock } from "./autopilotLock";
 import { hydrateEngineToggles } from "./engineToggles";
@@ -62,12 +63,17 @@ export function startMarketEngine(): void {
     console.error("[market] failed to hydrate signal/execution/journal/device/risk-state/deal-dedup history from the database:", error);
   });
 
-  // Fire-and-forget, same reasoning as above -- if this restart silently dropped engine
-  // mode out of LIVE/DEMO back to its safe ANALYSIS default (see engineMode.ts), sends a
-  // push notification rather than that only being discoverable by chance.
-  checkEngineModeAfterRestart().catch((error: unknown) => {
-    console.error("[market] failed to check engine mode across restart:", error);
-  });
+  // Fire-and-forget, same reasoning as above. checkEngineModeAfterRestart notifies/handles
+  // a DEMO restart itself and reports the pre-restart mode; startLiveModeRecovery then
+  // decides, conditionally, whether to re-arm a pre-restart LIVE mode (connection stable
+  // for minutes + equity + no risk halt + not a restart loop) or leave it on ANALYSIS
+  // with its own notification -- see liveModeRecovery.ts. It also records this boot for
+  // cross-restart loop detection regardless of the previous mode.
+  checkEngineModeAfterRestart()
+    .then((previousMode) => startLiveModeRecovery(previousMode))
+    .catch((error: unknown) => {
+      console.error("[market] failed to check engine mode across restart:", error);
+    });
   // Idempotent (intervalStarted guard inside) -- safe to call on every boot without
   // spawning a second interval. See engineMode.ts's own doc comment: the one-time
   // notification just above is easy to miss on a chaotic night; this is the recurring

@@ -4,6 +4,7 @@ import { KillSwitchControl } from "@/components/dashboard/KillSwitchControl";
 import { EmergencyStopControl } from "@/components/dashboard/EmergencyStopControl";
 import { AutopilotLockControl } from "@/components/dashboard/AutopilotLockControl";
 import { ConnectionStatus } from "@/components/dashboard/ConnectionStatus";
+import { SystemAlertBell } from "@/components/dashboard/SystemAlertBell";
 import { EngineModeControl } from "@/components/dashboard/EngineModeControl";
 import { ExecutionPolicyControl } from "@/components/dashboard/ExecutionPolicyControl";
 import { EngineTogglesControl } from "@/components/dashboard/EngineTogglesControl";
@@ -36,6 +37,7 @@ export default function DashboardPage() {
             <Link href="/settings" className="rounded-md border border-white/10 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">
               Settings
             </Link>
+            <SystemAlertBell />
             <ConnectionStatus />
             <KillSwitchControl />
           </div>

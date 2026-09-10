@@ -92,13 +92,15 @@ describe("checkEngineModeAfterRestart", () => {
     );
   });
 
-  it("never auto-resumes LIVE -- stays in ANALYSIS and notifies that it was reset", async () => {
+  it("never auto-resumes LIVE here -- leaves mode ANALYSIS, reports the previous mode, and defers notifying to liveModeRecovery", async () => {
     getOptionalDb.mockReturnValue(fakeDb([{ mode: "live" }]));
-    await checkEngineModeAfterRestart();
+    const previousMode = await checkEngineModeAfterRestart();
     expect(getEngineMode()).toBe("analysis");
-    expect(sendNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ category: "engine_mode_reset", title: expect.stringContaining("reset to Analysis") })
-    );
+    // The "was LIVE" signal is handed back for liveModeRecovery.startLiveModeRecovery to
+    // act on -- this function itself no longer notifies for the LIVE case (nor persists
+    // "analysis" over it, so a second restart mid-recovery still knows to keep trying).
+    expect(previousMode).toBe("live");
+    expect(sendNotification).not.toHaveBeenCalled();
   });
 
   it("does nothing when no mode was ever persisted before (first-ever boot)", async () => {

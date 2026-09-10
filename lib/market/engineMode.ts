@@ -66,7 +66,11 @@ export const LIVE_CONFIRMATION_PHRASE = "ENABLE LIVE TRADING";
  *
  * THIS FUNCTION MUST NEVER BE CALLED FROM ANYWHERE EXCEPT the POST /api/engine-mode
  * route handler, in direct response to an explicit user submission -- never from
- * bootstrap, a listener, or any timer/retry.
+ * bootstrap, a listener, or any timer/retry. The ONE other sanctioned path to "live"
+ * is resumeLiveModeAfterRestart below, which re-arms a mode the operator had ALREADY
+ * explicitly confirmed before a self-restart dropped it -- and only after
+ * liveModeRecovery.ts's full connection-stability / equity / risk / restart-loop
+ * gauntlet has passed.
  */
 export function enableLiveMode(confirmationPhrase: string): { ok: true } | { ok: false; error: string } {
   if (confirmationPhrase.trim() !== LIVE_CONFIRMATION_PHRASE) {
@@ -75,6 +79,24 @@ export function enableLiveMode(confirmationPhrase: string): { ok: true } | { ok:
   state.mode = "live";
   void persistMode("live");
   return { ok: true };
+}
+
+/**
+ * The SECOND (and only other) sanctioned way mode becomes "live" -- see enableLiveMode's
+ * doc comment. Deliberately separate from it, and with no phrase check, so that a grep
+ * for enableLiveMode still shows exactly one caller (the route) and this restart-recovery
+ * path is audited on its own terms.
+ *
+ * MUST ONLY be called by liveModeRecovery.ts, and only after every one of its guard
+ * conditions holds: the previous persisted mode was "live" (the operator had already
+ * typed the phrase for this session), the MT5 connection has been continuously healthy
+ * for several minutes, equity is positive, no risk halt/cooldown is awaiting review, and
+ * the app is not in a restart loop. It re-arms a decision the operator already made; it
+ * never makes that decision itself.
+ */
+export function resumeLiveModeAfterRestart(): void {
+  state.mode = "live";
+  void persistMode("live");
 }
 
 /** Only used by tests -- resets mode back to the safe default between test cases. */
@@ -153,10 +175,15 @@ export function autoExecutionAccount(mode: EngineMode): AccountKey | null {
  * `state.mode` at "analysis" for this fresh process. Reads back whatever mode was
  * persisted right before this restart.
  *
- * LIVE never auto-resumes -- that restart drops real-money auto-trading to ANALYSIS and
- * stays there (the intended, unconditional safety behavior, not a bug -- see the "Always
- * boots to analysis" comment above), and a push notification fires so that's visible
- * instead of only being discoverable by chance later.
+ * LIVE does not resume HERE -- module load already forced `state.mode` to "analysis", so
+ * on return from this function auto-execution is off. Whether it comes back is decided
+ * separately and conditionally by liveModeRecovery.ts (started right after this in
+ * bootstrap.ts, given this function's return value): it re-arms LIVE only once the
+ * connection has been continuously healthy for minutes, equity is positive, no risk
+ * halt is pending, and the app isn't in a restart loop -- otherwise it stays ANALYSIS
+ * and notifies. That's why the "live" branch below neither notifies nor re-persists
+ * "analysis": liveModeRecovery owns both, and leaving "live" persisted is what lets a
+ * second restart before recovery finishes still know it should be trying to get back.
  *
  * DEMO is different: it trades no real money, and connectionWatchdog.ts's own escalation
  * path (a `process.exit(1)` restart after a stuck MetaApi connection survives two soft
@@ -168,35 +195,40 @@ export function autoExecutionAccount(mode: EngineMode): AccountKey | null {
  * its own, distinctly-worded notification -- this is a real event worth knowing about, not
  * a silent one) rather than requiring the same manual re-arm LIVE deliberately does.
  *
- * Immediately re-persists the resulting mode afterward so a second restart, before anyone
- * has changed anything, doesn't re-notify for the same already-reported transition.
- * No-ops silently when DATABASE_URL isn't set, same as every other DB touch in this file.
+ * For the DEMO and analysis cases, re-persists the resulting mode afterward so a second
+ * restart, before anyone has changed anything, doesn't re-notify for the same
+ * already-reported transition. Returns the previous persisted mode so bootstrap.ts can
+ * hand it to liveModeRecovery.ts. No-ops silently (returns undefined) when DATABASE_URL
+ * isn't set, same as every other DB touch in this file.
  */
-export async function checkEngineModeAfterRestart(): Promise<void> {
+export async function checkEngineModeAfterRestart(): Promise<EngineMode | undefined> {
   const db = getOptionalDb();
-  if (!db) return;
+  if (!db) return undefined;
 
   try {
     const rows = await db.select().from(engineModeState).where(eq(engineModeState.id, SINGLETON_ID)).limit(1);
     const previousMode = rows[0]?.mode as EngineMode | undefined;
 
-    if (previousMode === "live") {
-      await sendNotification({
-        category: "engine_mode_reset",
-        title: "JUDE AI — Engine Mode reset to Analysis",
-        body: "A restart dropped Engine Mode from LIVE back to ANALYSIS. Auto-trading is OFF until you re-enable it in Settings.",
-      });
-    } else if (previousMode === "demo") {
+    if (previousMode === "demo") {
       state.mode = "demo";
       await sendNotification({
         category: "engine_mode_reset",
         title: "JUDE AI — Demo Auto-Trade resumed after restart",
         body: "A restart (likely clearing a stuck connection) took Engine Mode down. Since DEMO risks no real money, it resumed DEMO auto-trading automatically -- no action needed unless you wanted it off.",
       });
+      await persistMode(state.mode);
+    } else if (previousMode !== "live") {
+      // "analysis" or a first-ever boot -- nothing to restore; keep the persisted row in
+      // sync with the fresh default.
+      await persistMode(state.mode);
     }
+    // previousMode === "live": intentionally NOT persisted over and NOT notified here.
+    // liveModeRecovery.ts (called next from bootstrap.ts with this return value) decides
+    // whether to conditionally re-arm LIVE or fall back to ANALYSIS with its own
+    // notification -- and needs the persisted "live" to survive a second restart mid-recovery.
+    return previousMode;
   } catch (error) {
     console.error("[engineMode] failed to check mode across restart:", error);
+    return undefined;
   }
-
-  await persistMode(state.mode);
 }

@@ -164,6 +164,22 @@ export const engineModeState = pgTable("engine_mode_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
 
+// Backs liveModeRecovery.ts's conditional "switch LIVE back on after a self-restart"
+// logic (see that module's doc comment). Engine mode itself still boots to ANALYSIS
+// unconditionally (engineMode.ts) -- this table does NOT change that. It only records
+// recent process-boot timestamps so a restart LOOP (the connection watchdog escalating
+// process.exit(1) over and over into a broken connection) can be detected across
+// restarts and recovery held off, rather than re-arming real-money auto-trading on
+// every crash. `recentBootsMs` is a small capped array of epoch-ms boot times; always
+// exactly one row (id "singleton"). A missing/unmigrated table degrades to "loop
+// detection off" -- liveModeRecovery.ts's own connection-stability gate is the primary
+// safety check either way.
+export const liveRecoveryState = pgTable("live_recovery_state", {
+  id: text("id").primaryKey(),
+  recentBootsMs: jsonb("recent_boots_ms").notNull().$type<number[]>(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
 // Same "survive a Railway redeploy" reasoning as engineModeState above, but for
 // autopilotLock.ts -- unlike engine mode (which always boots back to the safe ANALYSIS
 // default on purpose, see engineMode.ts), a lock IS the safe state, so this one DOES get
