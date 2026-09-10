@@ -30,6 +30,15 @@ interface MaintenanceReport {
   manualApprovalRequired: number;
   criticalIssues: number;
   availableRepairs: { section: string; label: string; action: RepairAction }[];
+  lastQualifiedSignal: {
+    pair: string;
+    source: string;
+    tier: string;
+    confidence: number;
+    createdAt: number;
+    outcome: "executed" | "rejected" | "not_executed";
+    outcomeDetail: string;
+  } | null;
 }
 interface RepairOutcome {
   label: string;
@@ -219,6 +228,31 @@ export function MaintenanceControl() {
                   </div>
                 </div>
               ))}
+
+              <div className="flex flex-col gap-1 rounded-lg border border-white/5 p-2.5">
+                <span className="text-xs font-bold uppercase tracking-wide text-zinc-400">Last Qualified Signal</span>
+                {report.lastQualifiedSignal ? (
+                  <>
+                    <p className="text-[11px] text-zinc-300">
+                      {report.lastQualifiedSignal.pair} · {report.lastQualifiedSignal.source} · {report.lastQualifiedSignal.tier} ·{" "}
+                      {report.lastQualifiedSignal.confidence}% · {new Date(report.lastQualifiedSignal.createdAt).toLocaleString()}
+                    </p>
+                    <p
+                      className={`text-[11px] font-semibold ${
+                        report.lastQualifiedSignal.outcome === "executed"
+                          ? "text-emerald-400"
+                          : report.lastQualifiedSignal.outcome === "rejected"
+                            ? "text-rose-400"
+                            : "text-amber-400"
+                      }`}
+                    >
+                      {report.lastQualifiedSignal.outcome.replace("_", " ").toUpperCase()} — {report.lastQualifiedSignal.outcomeDetail}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[11px] text-zinc-500">No buy/strong-buy signal in the recent window yet.</p>
+                )}
+              </div>
 
               <div className="flex flex-col gap-1.5 rounded-lg border border-white/5 p-2.5">
                 <span className="text-xs font-bold uppercase tracking-wide text-zinc-400">Why No Trade -- Last 24 Hours</span>

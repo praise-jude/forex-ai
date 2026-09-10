@@ -13,8 +13,10 @@ import {
   SIGNAL_TIMEFRAMES,
 } from "./metaApiConnection";
 import { loadExecutionConfig } from "./executionConfig";
-import { getEvaluationSummary } from "./evaluationLog";
+import { getEvaluationSummary, getLastEvaluationAt } from "./evaluationLog";
 import { positionStore } from "./positionStore";
+import { signalStore } from "./signalStore";
+import { getExecutionPolicy } from "./executionPolicy";
 import { getOptionalDb } from "../db/optionalClient";
 
 /**
@@ -91,6 +93,19 @@ export interface MaintenanceReport {
   /** Every currently-available safe repair, flattened across sections -- the "Apply Safe
    * Repairs" button applies each of these in turn. Empty when there's nothing to repair. */
   availableRepairs: { section: string; label: string; action: RepairAction }[];
+  /** The single most recent buy/strong_buy signal from any engine, and what became of it
+   * -- the direct "did anything real fire, and did it actually execute" answer that
+   * otherwise takes a manual DB dig every time. Null when no qualifying signal exists in
+   * the in-memory signal store's window at all. */
+  lastQualifiedSignal: {
+    pair: string;
+    source: string;
+    tier: string;
+    confidence: number;
+    createdAt: number;
+    outcome: "executed" | "rejected" | "not_executed";
+    outcomeDetail: string;
+  } | null;
 }
 
 export function sectionHealth(items: CheckItem[]): number {
@@ -119,6 +134,16 @@ async function checkAutopilotCore(accountKey: AccountKey): Promise<MaintenanceSe
   const locked = isAutopilotLocked();
   items.push({ label: "Autopilot lock", status: locked ? "warning" : "pass", detail: locked ? "Locked -- autoExecutionListener will not open new trades" : "Unlocked" });
 
+  const policy = getExecutionPolicy();
+  items.push({
+    label: "Auto-execute floor",
+    status: "pass",
+    detail:
+      policy.minTier === "strong_buy"
+        ? "Strong buy only -- 'buy'-tier signals are held, not auto-executed"
+        : `Buy or higher${policy.minRiskReward > 0 ? `, R:R >= ${policy.minRiskReward}` : ""}`,
+  });
+
   const account = getAccountInformation(accountKey);
   const equity = account?.equity ?? 0;
   const dayState = riskState.current(Date.now(), equity, accountKey);
@@ -141,6 +166,64 @@ async function checkAutopilotCore(accountKey: AccountKey): Promise<MaintenanceSe
   });
 
   return { name: "Autopilot Core", healthPct: sectionHealth(items), items };
+}
+
+/** The check that would have made the last two days obvious at a glance: an account with
+ * no equity can't size a trade at all (riskAmount = equity * riskPct = 0 -> zero lots ->
+ * skipped_sizing), so every qualifying signal silently goes nowhere no matter how healthy
+ * everything else is. */
+async function checkFunding(accountKey: AccountKey): Promise<MaintenanceSection> {
+  const items: CheckItem[] = [];
+  const account = getAccountInformation(accountKey);
+  if (!account) {
+    items.push({ label: "Account", status: "fail", detail: "No account information available yet -- the connection may still be syncing." });
+    return { name: "Funding", healthPct: sectionHealth(items), items };
+  }
+
+  items.push({
+    label: "Equity",
+    status: account.equity > 0 ? "pass" : "fail",
+    detail:
+      account.equity > 0
+        ? `$${account.equity.toFixed(2)} -- enough to size a trade`
+        : "$0.00 -- position sizing returns zero lots, so no signal can execute regardless of how good it is",
+  });
+  items.push({
+    label: "Free margin",
+    status: account.freeMargin > 0 ? "pass" : "warning",
+    detail: `$${account.freeMargin.toFixed(2)} available`,
+  });
+  items.push({
+    label: "Broker trade permission",
+    status: account.tradeAllowed ? "pass" : "fail",
+    detail: account.tradeAllowed ? "Trading allowed on this account" : "The broker is currently NOT allowing trades on this account",
+  });
+
+  return { name: "Funding", healthPct: sectionHealth(items), items };
+}
+
+/** Section 17 of the operator's own spec -- a heartbeat on the analysis loop itself.
+ * This app has a real history of the SDK-level resync loop silently freezing signal
+ * evaluation while the connection still reads "live"; evaluationLog.ts already tracks the
+ * last completed evaluation for its own periodic alert, this just surfaces it on demand. */
+function checkEngineHealth(): MaintenanceSection {
+  const items: CheckItem[] = [];
+  const lastEval = getLastEvaluationAt();
+  const STALL_MS = 25 * 60 * 1000;
+  if (lastEval === null) {
+    items.push({ label: "Analysis loop", status: "warning", detail: "No evaluation has completed yet since the last restart -- may still be warming up." });
+  } else {
+    const ageMin = Math.round((Date.now() - lastEval) / 60000);
+    items.push({
+      label: "Analysis loop",
+      status: Date.now() - lastEval > STALL_MS ? "fail" : "pass",
+      detail:
+        Date.now() - lastEval > STALL_MS
+          ? `Last completed evaluation was ${ageMin} min ago -- normally one completes every ~15 min. The signal engine may be stuck.`
+          : `Last completed evaluation ${ageMin} min ago -- healthy (one is expected roughly every 15 min).`,
+    });
+  }
+  return { name: "Engine Health", healthPct: sectionHealth(items), items };
 }
 
 async function checkMarketData(): Promise<MaintenanceSection> {
@@ -213,17 +296,48 @@ function checkExecutionErrors(accountKey: AccountKey): { reason: string; count: 
     .sort((a, b) => b.count - a.count);
 }
 
+/** "Did anything real fire, and did it actually execute" -- the exact question that
+ * otherwise takes a manual DB dig. Reads the in-memory stores only (both hydrated at
+ * boot), no new query. */
+function getLastQualifiedSignal(accountKey: AccountKey): MaintenanceReport["lastQualifiedSignal"] {
+  const qualified = signalStore
+    .all()
+    .filter((s) => (s.source === "smc" || s.source === "mean_reversion" || s.source === "trend_continuation") && (s.tier === "buy" || s.tier === "strong_buy"))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const signal = qualified[0];
+  if (!signal) return null;
+
+  const trade = positionStore.all().find((t) => t.signalId === signal.id && t.account === accountKey);
+  let outcome: "executed" | "rejected" | "not_executed";
+  let outcomeDetail: string;
+  if (trade?.status === "filled") {
+    outcome = "executed";
+    outcomeDetail = `Auto-executed at ${trade.filledEntry ?? trade.requestedEntry}.`;
+  } else if (trade?.status === "rejected") {
+    outcome = "rejected";
+    outcomeDetail = `Reached the broker but was rejected: ${trade.rejectReason ?? "unknown reason"}.`;
+  } else {
+    outcome = "not_executed";
+    outcomeDetail =
+      "Never reached an execution attempt -- most often means it fired while Engine Mode wasn't LIVE, the account had no equity to size it, or a risk gate blocked it before the broker call (which leaves no trade record).";
+  }
+
+  return { pair: signal.pair, source: signal.source, tier: signal.tier, confidence: signal.confidence, createdAt: signal.createdAt, outcome, outcomeDetail };
+}
+
 /** The one Mode 1 entry point -- runs every section, never mutates anything. */
 export async function runMaintenanceScan(accountKey: AccountKey = "live"): Promise<MaintenanceReport> {
-  const [core, marketData, connection, storage, last24h] = await Promise.all([
+  const [core, funding, engineHealth, marketData, connection, storage, last24h] = await Promise.all([
     checkAutopilotCore(accountKey),
+    checkFunding(accountKey),
+    Promise.resolve(checkEngineHealth()),
     checkMarketData(),
     checkConnection(),
     checkStorage(),
     getEvaluationSummary(Date.now() - 24 * 60 * 60 * 1000),
   ]);
 
-  const sections = [core, marketData, connection, storage];
+  const sections = [core, funding, engineHealth, marketData, connection, storage];
   const overallHealthPct = Math.round(sections.reduce((sum, s) => sum + s.healthPct, 0) / sections.length);
 
   const allItems = sections.flatMap((s) => s.items.map((item) => ({ section: s.name, item })));
@@ -248,6 +362,7 @@ export async function runMaintenanceScan(accountKey: AccountKey = "live"): Promi
     manualApprovalRequired: problems.length - availableRepairs.length,
     criticalIssues: allItems.filter(({ item }) => item.status === "fail").length,
     availableRepairs,
+    lastQualifiedSignal: getLastQualifiedSignal(accountKey),
   };
 }
 

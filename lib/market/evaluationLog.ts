@@ -214,6 +214,14 @@ const healthState: HealthState =
  * this monitor needs. Also clears (and announces the recovery of) an active alert, the
  * same "tell me the moment it's not wrong anymore" posture positionRiskNarration.ts
  * already established for Caution/Warning clearing. */
+/** Read-only accessor for maintenanceCheck.ts's Engine Health section -- the same
+ * in-memory heartbeat checkEvaluationHealth alerts on, exposed so the on-demand scan can
+ * show "last evaluation Xm ago" / "stalled" without waiting for the periodic alert. Null
+ * only before the very first evaluation of a fresh process. */
+export function getLastEvaluationAt(): number | null {
+  return healthState.lastEvaluationAt;
+}
+
 function recordHeartbeat(): void {
   const wasAlerting = healthState.alertActive;
   healthState.lastEvaluationAt = Date.now();
