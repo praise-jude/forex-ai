@@ -962,6 +962,24 @@ export function isPairTimeframeStale(pair: Pair, timeframe: Timeframe): boolean 
   return Date.now() - lastClosed.time > TIMEFRAME_MS[timeframe] * STALE_LIVE_BAR_MULTIPLE;
 }
 
+/**
+ * The one manual, on-demand repair maintenanceCheck.ts's Safe Repair mode is allowed to
+ * trigger for stale market data -- exactly the same REST refresh the periodic safety net
+ * already runs automatically, just callable immediately instead of waiting for the next
+ * STALE_LIVE_REFRESH_INTERVAL_MS tick. Never places an order, never touches config --
+ * purely fetches fresh candles and feeds them through the same ingestCandle path a live
+ * tick would use. Re-checks isPairTimeframeStale after the refresh so the caller gets a
+ * real, verified before/after answer, not just "we tried". Fails closed (returns false)
+ * if this account has no live connection/account object at all.
+ */
+export async function repairStaleMarketData(pair: Pair, timeframe: Timeframe, accountKey: AccountKey = "live"): Promise<{ success: boolean; stillStale: boolean }> {
+  const account = stateFor(accountKey).account;
+  if (!account) return { success: false, stillStale: isPairTimeframeStale(pair, timeframe) };
+  await refreshPairTimeframeFromRest(account, pair, timeframe, "maintenance-repair");
+  const stillStale = isPairTimeframeStale(pair, timeframe);
+  return { success: !stillStale, stillStale };
+}
+
 async function refreshStaleLivePairsOnce(account: MetatraderAccount): Promise<void> {
   for (const pair of PAIRS) {
     for (const timeframe of SIGNAL_TIMEFRAMES) {

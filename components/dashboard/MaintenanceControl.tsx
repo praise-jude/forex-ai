@@ -2,10 +2,17 @@
 
 import { useState } from "react";
 
+interface RepairAction {
+  type: "reconnect" | "refresh_market_data";
+  account?: string;
+  pair?: string;
+  timeframe?: string;
+}
 interface CheckItem {
   label: string;
   status: "pass" | "warning" | "fail" | "not_configured";
   detail: string;
+  repair?: RepairAction;
 }
 interface MaintenanceSection {
   name: string;
@@ -18,6 +25,17 @@ interface MaintenanceReport {
   sections: MaintenanceSection[];
   last24h: { totalEvaluated: number; qualified: number; rejected: number; topBlockers: { reasonCode: string; count: number }[] };
   recentExecutionErrors: { reason: string; count: number }[];
+  problemsFound: number;
+  safeRepairsAvailable: number;
+  manualApprovalRequired: number;
+  criticalIssues: number;
+  availableRepairs: { section: string; label: string; action: RepairAction }[];
+}
+interface RepairOutcome {
+  label: string;
+  applied: boolean;
+  success: boolean;
+  message: string;
 }
 
 const STATUS_STYLE: Record<CheckItem["status"], { icon: string; color: string }> = {
@@ -40,23 +58,27 @@ function healthBadge(pct: number): string {
 }
 
 /**
- * A permanent, on-demand health check (operator request, 2026-09-09) -- consolidates
- * every real gate/subsystem check this session verified manually into one button.
- * SCAN ONLY: this never changes anything, only reads and reports real state (see
- * maintenanceCheck.ts's own doc comment for why repair/rollback automation is
- * deliberately out of scope for this first pass). Mirrors forex-ai-mobile's
- * MaintenanceControl.tsx.
+ * A permanent, on-demand health check (operator request, 2026-09-09) with a real Safe
+ * Repair mode (added 2026-09-10). SCAN reads real state and never changes anything.
+ * "Apply Safe Repairs" applies only the two repair kinds this codebase can genuinely do
+ * without any risk (reconnect, refresh stale market data -- see maintenanceCheck.ts's
+ * own doc comment for why nothing else qualifies) -- every other problem the scan finds
+ * is a deliberate safety state with its own dedicated control elsewhere in this app, and
+ * is deliberately NOT duplicated here. Mirrors forex-ai-mobile's MaintenanceControl.tsx.
  */
 export function MaintenanceControl() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<MaintenanceReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResults, setRepairResults] = useState<RepairOutcome[]>([]);
 
   async function runScan() {
     setOpen(true);
     setBusy(true);
     setError(null);
+    setRepairResults([]);
     try {
       const res = await fetch("/api/maintenance");
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -66,6 +88,30 @@ export function MaintenanceControl() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function applySafeRepairs() {
+    if (!report) return;
+    setRepairing(true);
+    setRepairResults([]);
+    const results: RepairOutcome[] = [];
+    for (const repair of report.availableRepairs) {
+      try {
+        const res = await fetch("/api/maintenance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: repair.action }),
+        });
+        const outcome = (await res.json()) as RepairOutcome;
+        results.push(outcome);
+      } catch {
+        results.push({ label: repair.label, applied: false, success: false, message: "Network error" });
+      }
+      setRepairResults([...results]);
+    }
+    setRepairing(false);
+    // Re-scan so the sections/summary above reflect what was just repaired.
+    await runScan();
   }
 
   return (
@@ -87,7 +133,8 @@ export function MaintenanceControl() {
             </button>
           </div>
           <p className="text-xs text-zinc-500">
-            Scan only -- reads real system state, changes nothing. Re-run any time you suspect something is broken.
+            Scan reads real system state and changes nothing. Safe Repair only ever reconnects a dropped connection or refreshes stale market
+            data -- both already run automatically in this app; this just lets you trigger them right now instead of waiting.
           </p>
 
           {busy && <p className="text-xs text-zinc-400">Running scan…</p>}
@@ -102,6 +149,54 @@ export function MaintenanceControl() {
                 </span>
               </div>
 
+              <div className="grid grid-cols-2 gap-2 rounded-lg bg-zinc-800/40 p-2.5 text-[11px] sm:grid-cols-4">
+                <div className="flex flex-col">
+                  <span className="text-zinc-500">Problems found</span>
+                  <span className="text-sm font-bold text-zinc-100">{report.problemsFound}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-zinc-500">Safe repairs available</span>
+                  <span className="text-sm font-bold text-sky-400">{report.safeRepairsAvailable}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-zinc-500">Manual approval needed</span>
+                  <span className="text-sm font-bold text-amber-400">{report.manualApprovalRequired}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-zinc-500">Critical issues</span>
+                  <span className="text-sm font-bold text-rose-400">{report.criticalIssues}</span>
+                </div>
+              </div>
+
+              {report.safeRepairsAvailable > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={applySafeRepairs}
+                    disabled={repairing}
+                    className="w-fit rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {repairing ? "Applying…" : `Apply Safe Repairs (${report.availableRepairs.length})`}
+                  </button>
+                  {report.availableRepairs.map((r) => (
+                    <p key={`${r.section}-${r.label}`} className="text-[11px] text-zinc-500">
+                      • {r.label} ({r.section})
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {repairResults.length > 0 && (
+                <div className="flex flex-col gap-1 rounded-lg border border-white/5 p-2.5">
+                  <span className="text-xs font-bold uppercase tracking-wide text-zinc-400">Repair Results</span>
+                  {repairResults.map((r) => (
+                    <p key={r.label} className={`text-[11px] ${r.success ? "text-emerald-400" : "text-rose-400"}`}>
+                      {r.success ? "✓" : "✗"} {r.label}: {r.message}
+                    </p>
+                  ))}
+                </div>
+              )}
+
               {report.sections.map((section) => (
                 <div key={section.name} className="flex flex-col gap-1.5 rounded-lg border border-white/5 p-2.5">
                   <div className="flex items-center justify-between">
@@ -114,6 +209,11 @@ export function MaintenanceControl() {
                         <span className={STATUS_STYLE[item.status].color}>{STATUS_STYLE[item.status].icon}</span>
                         <span className="font-semibold text-zinc-300">{item.label}:</span>
                         <span className="text-zinc-500">{item.detail}</span>
+                        {item.status !== "pass" && item.status !== "not_configured" && (
+                          <span className={item.repair ? "text-sky-500" : "text-zinc-600"}>
+                            {item.repair ? "(safe repair available)" : "(needs your own review)"}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>
