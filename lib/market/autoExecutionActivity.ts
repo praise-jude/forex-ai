@@ -38,6 +38,12 @@ interface AutoExecutionActivityState {
   lastSignalSeen: { pair: Pair; tier: ConfidenceTier; source: SignalSource } | null;
   attemptsTotal: number;
   filledTotal: number;
+  /** Count of every attempt ever recorded, grouped by resultKey (see normalizeResultKey
+   * below) -- e.g. "blocked: stale_price" -- so a specific question like "how often is
+   * the tightened price-drift tolerance actually rejecting signals" has a real, running
+   * answer instead of needing to scan recentAttempts by hand. Since boot, same as every
+   * other counter here -- see this module's own doc comment on why that's honest. */
+  resultCounts: Record<string, number>;
   /** Ring buffer, most recent first -- capped, see MAX_RECORDS. */
   recentAttempts: AutoExecutionAttemptRecord[];
 }
@@ -55,6 +61,7 @@ const state: AutoExecutionActivityState =
     lastSignalSeen: null,
     attemptsTotal: 0,
     filledTotal: 0,
+    resultCounts: {},
     recentAttempts: [],
   });
 
@@ -67,6 +74,17 @@ export function recordSignalSeen(pair: Pair, tier: ConfidenceTier, source: Signa
   state.lastSignalSeen = { pair, tier, source };
 }
 
+/** "blocked: <code>" is kept verbatim -- that fixed, small set of reason codes is exactly
+ * what's worth counting individually (e.g. "blocked: stale_price"). "rejected: <reason>"
+ * and "error: <message>" carry unbounded free text (a real broker rejection message, a
+ * thrown error's own message) that would otherwise fragment resultCounts into one entry
+ * per unique message instead of one meaningful bucket. */
+function normalizeResultKey(result: string): string {
+  if (result.startsWith("rejected:")) return "rejected";
+  if (result.startsWith("error:")) return "error";
+  return result;
+}
+
 /** Called for every real execution attempt AND every early gate that stops one before
  * attemptExecution is even called (autopilot lock, analysis mode, engine disabled, risk
  * acknowledgement, adverse open position) -- `result` should name which. */
@@ -74,6 +92,8 @@ export function recordAttempt(record: Omit<AutoExecutionAttemptRecord, "at">): v
   const full: AutoExecutionAttemptRecord = { ...record, at: Date.now() };
   state.attemptsTotal++;
   if (record.result === "filled") state.filledTotal++;
+  const key = normalizeResultKey(record.result);
+  state.resultCounts[key] = (state.resultCounts[key] ?? 0) + 1;
   state.recentAttempts = [full, ...state.recentAttempts].slice(0, MAX_RECORDS);
 }
 
@@ -83,11 +103,12 @@ export interface AutoExecutionActivitySnapshot {
   lastSignalSeen: { pair: Pair; tier: ConfidenceTier; source: SignalSource } | null;
   attemptsTotal: number;
   filledTotal: number;
+  resultCounts: Record<string, number>;
   recentAttempts: AutoExecutionAttemptRecord[];
 }
 
 export function getAutoExecutionActivity(): AutoExecutionActivitySnapshot {
-  return { ...state, recentAttempts: [...state.recentAttempts] };
+  return { ...state, resultCounts: { ...state.resultCounts }, recentAttempts: [...state.recentAttempts] };
 }
 
 /** Test-only. */
@@ -97,5 +118,6 @@ export function resetAutoExecutionActivityForTests(): void {
   state.lastSignalSeen = null;
   state.attemptsTotal = 0;
   state.filledTotal = 0;
+  state.resultCounts = {};
   state.recentAttempts = [];
 }

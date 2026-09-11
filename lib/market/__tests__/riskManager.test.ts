@@ -125,7 +125,14 @@ describe("checkPriceDrift", () => {
   it("allows execution right at the tolerance boundary and blocks just past it", () => {
     const stopDistance = 0.01;
     const tolerance = STALE_PRICE_FRACTION_OF_STOP * stopDistance;
-    expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance })).allowed).toBe(true);
+    // A small margin either side of the boundary, not the mathematically-exact edge --
+    // this tolerance is computed here from a hardcoded stopDistance, while
+    // checkPriceDrift recomputes its own from entry-stopLoss internally; the two can
+    // differ by float epsilon at the literal edge (surfaced when
+    // STALE_PRICE_FRACTION_OF_STOP moved from 0.25, which happens to be exact in binary
+    // floating point, to 0.15, which isn't) even though nothing about the real gate
+    // logic changed. "close to the boundary" is what this test is actually protecting.
+    expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance - 0.00001 })).allowed).toBe(true);
     expect(checkPriceDrift(buildDriftInput({ currentAsk: 1.1 + tolerance + 0.00001 })).allowed).toBe(false);
   });
 });

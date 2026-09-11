@@ -14,6 +14,7 @@ describe("autoExecutionActivity", () => {
       lastSignalSeen: null,
       attemptsTotal: 0,
       filledTotal: 0,
+      resultCounts: {},
       recentAttempts: [],
     });
   });
@@ -56,5 +57,30 @@ describe("autoExecutionActivity", () => {
     const snapshot = getAutoExecutionActivity();
     recordSignalSeen("XAU/USD", "buy", "smc");
     expect(snapshot.signalsSeen).toBe(1);
+  });
+
+  describe("resultCounts", () => {
+    it("groups a fixed reason code (blocked: <code>) verbatim, so a specific code like stale_price is countable on its own", () => {
+      recordAttempt({ signalId: "1", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "blocked: stale_price" });
+      recordAttempt({ signalId: "2", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "blocked: stale_price" });
+      recordAttempt({ signalId: "3", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "blocked: kill_switch" });
+      const activity = getAutoExecutionActivity();
+      expect(activity.resultCounts).toEqual({ "blocked: stale_price": 2, "blocked: kill_switch": 1 });
+    });
+
+    it("collapses free-text rejected/error results into one bucket each, not one per unique message", () => {
+      recordAttempt({ signalId: "1", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "rejected: broker says no" });
+      recordAttempt({ signalId: "2", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "rejected: a completely different reason" });
+      recordAttempt({ signalId: "3", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "error: network blip" });
+      const activity = getAutoExecutionActivity();
+      expect(activity.resultCounts).toEqual({ rejected: 2, error: 1 });
+    });
+
+    it("does not mutate the caller's snapshot object on a later recordAttempt", () => {
+      recordAttempt({ signalId: "1", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "filled" });
+      const snapshot = getAutoExecutionActivity();
+      recordAttempt({ signalId: "2", pair: "GBP/USD", tier: "buy", source: "smc", direction: "long", account: "live", result: "filled" });
+      expect(snapshot.resultCounts.filled).toBe(1);
+    });
   });
 });

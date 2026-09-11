@@ -284,6 +284,20 @@ function checkAutoExecutionActivity(): MaintenanceSection {
     items.push({ label: "Execution attempts", status: "not_configured", detail: "No signals seen yet since restart, so nothing to attempt." });
   }
 
+  // Specifically surfaced (not just left in the raw recentAttempts list) after the
+  // price-drift tolerance was tightened 2026-09-11 without real drift data to calibrate
+  // it -- see riskManager.ts's STALE_PRICE_FRACTION_OF_STOP doc comment. This is the
+  // real feedback loop: watch this number after the change, loosen it back if it starts
+  // rejecting a meaningful share of otherwise-good signals.
+  const staleCount = activity.resultCounts["blocked: stale_price"] ?? 0;
+  if (staleCount > 0) {
+    items.push({
+      label: "Stale-price rejections",
+      status: "not_configured",
+      detail: `${staleCount} signal(s) since boot rejected for moving too far from their entry before execution (the price-drift tolerance). Not itself a fault -- watch this if it climbs after a tolerance change.`,
+    });
+  }
+
   return { name: "Auto-Execution Activity", healthPct: sectionHealth(items), items };
 }
 

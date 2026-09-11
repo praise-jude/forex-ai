@@ -1512,15 +1512,46 @@ export async function placeMarketOrder(
   }
 
   // The trade response doesn't carry the actual fill price — read it back from the
-  // now-open position if the local terminal state has already synced it, falling back
-  // to the requested price (which was the current ask/bid at signal time) otherwise.
-  const openedPosition = connection.terminalState.positions.find((p) => p.id === Number(response.positionId));
+  // now-open position once the local terminal state has synced it. A real, confirmed
+  // gap (2026-09-11): checking immediately, only once, missed the real fill on 18 of 21
+  // real signal-sourced trades on record (silently falling back to requestedEntry
+  // instead, making every one of them LOOK like exactly zero slippage happened -- not
+  // because it didn't, but because the position sync genuinely hadn't caught up yet at
+  // that exact synchronous instant). Short, bounded retry here closes that gap: the
+  // order has already been placed by this point regardless, so this wait only affects
+  // how accurate the RECORDED fill price is, never whether/when the trade itself
+  // executes. Falls back to requestedEntry only if the position still hasn't appeared
+  // after the full window -- an honest "couldn't confirm the real price" case, not
+  // expected to be common.
+  const openedPosition = await waitForOpenedPosition(connection, response.positionId);
   return {
     success: true,
     filledEntry: openedPosition?.openPrice ?? requestedEntry,
     brokerPositionId: response.positionId,
     brokerOrderId: response.orderId,
   };
+}
+
+const FILL_PRICE_POLL_TIMEOUT_MS = 2_000;
+const FILL_PRICE_POLL_INTERVAL_MS = 150;
+
+/** Polls the connection's own terminal state for the newly-opened position (real
+ * fill price included) for up to FILL_PRICE_POLL_TIMEOUT_MS -- see placeMarketOrder's
+ * own doc comment for why a single immediate check missed it most of the time. Never
+ * throws; returns undefined on timeout, letting the caller fall back honestly. */
+async function waitForOpenedPosition(
+  connection: StreamingMetaApiConnectionInstance,
+  positionId: string | undefined
+): Promise<{ openPrice: number } | undefined> {
+  if (positionId === undefined) return undefined;
+  const numericId = Number(positionId);
+  const deadline = Date.now() + FILL_PRICE_POLL_TIMEOUT_MS;
+  for (;;) {
+    const position = connection.terminalState.positions.find((p) => p.id === numericId);
+    if (position) return position;
+    if (Date.now() >= deadline) return undefined;
+    await new Promise((resolve) => setTimeout(resolve, FILL_PRICE_POLL_INTERVAL_MS));
+  }
 }
 
 export type MarginCheckResult = { success: true; marginRequired: number | null } | { success: false; message: string };

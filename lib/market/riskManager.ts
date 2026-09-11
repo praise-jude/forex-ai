@@ -165,11 +165,25 @@ export interface PriceDriftInput {
 
 // A fraction of stop-distance, not a flat pip count -- consistent with this codebase's
 // existing preference for ATR/stop-relative thresholds over flat pip counts (e.g. the
-// sweep tolerance and SL buffer are both stop/ATR-relative). 25% of stop distance is
-// deliberately generous: it only catches genuinely stale quotes (a fast news spike, a
-// long gap between signal generation and a slow voice confirmation), not normal spread
-// noise around the entry.
-export const STALE_PRICE_FRACTION_OF_STOP = 0.25;
+// sweep tolerance and SL buffer are both stop/ATR-relative).
+//
+// Tightened from 0.25 to 0.15 on 2026-09-11 (operator request: better entry timing).
+// Honesty about this one, unlike the ADX_HARD_MIN change the same night: this is NOT
+// backed by measured historical drift data or a backtest -- neither is possible for
+// this specific gate. A backtest assumes the signal's own computed entry IS the fill
+// price by construction, so it has no "real live price that moved since" to simulate at
+// all. And the real trade history on record couldn't answer it either: of 21 real
+// signal-sourced executions checked, 18 had no genuine broker-confirmed fill price on
+// file (a separate bug placeMarketOrder's own doc comment now covers), so their recorded
+// "drift" was always exactly 0 -- an artifact of the fallback, not evidence real
+// drift never happens. 0.15 is a principled, more conservative default chosen without
+// that data, not a calibrated one. Watch autoExecutionActivity's per-reason counts
+// (maintenanceCheck.ts's Auto-Execution Activity section) for how often "blocked:
+// stale_price" actually fires under this tighter value -- if it starts rejecting a
+// meaningful share of otherwise-good signals, loosen it back, ideally once
+// placeMarketOrder's fill-price fix has built up enough real drift data to calibrate
+// this properly instead of guessing.
+export const STALE_PRICE_FRACTION_OF_STOP = 0.15;
 
 /**
  * Blocks execution if the market has moved too far from the signal's entry since it was
