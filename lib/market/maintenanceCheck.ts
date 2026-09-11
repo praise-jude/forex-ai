@@ -20,6 +20,30 @@ import { getExecutionPolicy } from "./executionPolicy";
 import { getOptionalDb } from "../db/optionalClient";
 import { getAutoExecutionActivity } from "./autoExecutionActivity";
 
+// A real, repeated source of false alarm tonight (2026-09-11): every restart -- and
+// there have been many, each one a deliberate deploy -- made "Engine Health" and
+// "Auto-Execution Activity" both show an amber ⚠ warning immediately, even though
+// "nothing has happened yet" seconds after a restart is completely normal, not a fault.
+// Both checks already distinguish this from a genuine stall once enough time has passed
+// (Engine Health's own 25-min STALL_MS; the auto-execution one below) -- the missing
+// piece was treating the FIRST few minutes after boot as an actual warning rather than
+// a neutral "still warming up, this is expected" read. globalThis-keyed so a restart
+// (a fresh heap) naturally gives a fresh boot time, same pattern as every other
+// "since boot" store in this codebase.
+const bootTimeKey = Symbol.for("forex-ai.maintenanceCheck.bootTime");
+type GlobalWithBootTime = typeof globalThis & { [bootTimeKey]?: number };
+const gBoot = globalThis as GlobalWithBootTime;
+const BOOT_TIME_MS: number = gBoot[bootTimeKey] ?? (gBoot[bootTimeKey] = Date.now());
+const WARMUP_GRACE_MS = 10 * 60_000;
+
+function minutesSinceBoot(now: number): number {
+  return Math.round((now - BOOT_TIME_MS) / 60_000);
+}
+
+function stillWithinWarmup(now: number): boolean {
+  return now - BOOT_TIME_MS < WARMUP_GRACE_MS;
+}
+
 /**
  * A real, read-only health scan across every real gate/subsystem this app already has --
  * built by consolidating the exact manual checks run tonight (2026-09-09) into one
@@ -223,7 +247,15 @@ function checkEngineHealth(): MaintenanceSection {
   const lastEval = getLastEvaluationAt();
   const STALL_MS = 25 * 60 * 1000;
   if (lastEval === null) {
-    items.push({ label: "Analysis loop", status: "warning", detail: "No evaluation has completed yet since the last restart -- may still be warming up." });
+    const now = Date.now();
+    const warmingUp = stillWithinWarmup(now);
+    items.push({
+      label: "Analysis loop",
+      status: warmingUp ? "not_configured" : "warning",
+      detail: warmingUp
+        ? `No evaluation yet -- ${minutesSinceBoot(now)} min since restart, still inside the normal warm-up window (the next candle close can take up to ~15 min).`
+        : `Still no evaluation ${minutesSinceBoot(now)} min after restart -- past the normal warm-up window. Worth a look if the connection reads live the whole time.`,
+    });
   } else {
     const ageMin = Math.round((Date.now() - lastEval) / 60000);
     items.push({
@@ -253,10 +285,13 @@ function checkAutoExecutionActivity(): MaintenanceSection {
   const now = Date.now();
 
   if (activity.signalsSeen === 0) {
+    const warmingUp = stillWithinWarmup(now);
     items.push({
       label: "Signals reaching auto-execution",
-      status: "warning",
-      detail: "No signal has reached the auto-execution listener yet since the last restart -- may just be waiting for one, or the listener isn't wired up. Give it time before treating this as broken.",
+      status: warmingUp ? "not_configured" : "warning",
+      detail: warmingUp
+        ? `No signal seen yet -- ${minutesSinceBoot(now)} min since restart, still normal (qualifying signals aren't constant; averages roughly one an hour across all pairs).`
+        : `Still no signal reached the listener ${minutesSinceBoot(now)} min after restart -- past the normal warm-up window. May just be a genuinely quiet market; check the connection and Engine Health if it keeps reading 0 for a while.`,
     });
   } else {
     const last = activity.lastSignalSeen;
