@@ -8,6 +8,8 @@ import { loadExecutionConfig } from "./executionConfig";
 import { positionStore } from "./positionStore";
 import { isAutopilotLocked } from "./autopilotLock";
 import { sendNotification } from "./pushNotifier";
+import { recordAttempt, recordSignalSeen } from "./autoExecutionActivity";
+import { recordBlockedOutcome, SKIPPED_SIZING_CODE } from "./blockedOutcomeStore";
 
 let started = false;
 
@@ -60,6 +62,15 @@ function notifyBlocked(signal: Signal, reason: string): void {
     body: reason,
     data: { signalId: signal.id, pair: signal.pair },
   });
+}
+
+/** Records this signal's outcome in the in-memory activity trail (see
+ * autoExecutionActivity.ts's own doc comment) -- called at every exit point below,
+ * including the early gates that stop a signal before attemptExecution is ever called,
+ * so "did the autopilot even see this signal, and what happened to it" never again
+ * requires a manual database query to answer. */
+function recordOutcome(signal: Signal, accountKey: AccountKey | null, result: string): void {
+  recordAttempt({ signalId: signal.id, pair: signal.pair, tier: signal.tier, source: signal.source, direction: signal.direction, account: accountKey, result });
 }
 
 /**
@@ -136,26 +147,45 @@ export function startAutoExecutionListener(): void {
     if (event.type !== "signal") return;
     if (event.signal.source !== "smc" && event.signal.source !== "mean_reversion" && event.signal.source !== "trend_continuation") return;
 
+    // The direct answer to "is the listener even receiving signals at all" -- recorded
+    // for every signal it looks at, before any gate below has a chance to stop it. See
+    // autoExecutionActivity.ts's own doc comment for why this exists.
+    recordSignalSeen(event.signal.pair, event.signal.tier, event.signal.source);
+    console.log(`[auto-execution] signal seen: ${event.signal.pair} ${event.signal.tier} ${event.signal.source} ${event.signal.id} mode=${getEngineMode()}`);
+
     // The operator's own manual master switch for the autopilot specifically -- see
     // autopilotLock.ts's doc comment for how this differs from the kill switch (which
     // also blocks manual clicks) and from engine mode (analysis/demo/live).
     if (isAutopilotLocked()) {
       console.log(`[auto-execution] skip ${event.signal.pair} ${event.signal.id}: autopilot is locked`);
+      recordOutcome(event.signal, null, "blocked: autopilot_locked");
       return;
     }
 
     const accountKey = autoExecutionAccount(getEngineMode());
-    if (!accountKey) return; // ANALYSIS: no-op
+    if (!accountKey) {
+      recordOutcome(event.signal, null, "blocked: analysis_mode");
+      return; // ANALYSIS: no-op
+    }
 
-    if (event.signal.source === "mean_reversion" && !loadExecutionConfig(accountKey).rangeEngineEnabled) return;
-    if (event.signal.source === "trend_continuation" && !loadExecutionConfig(accountKey).trendContinuationEnabled) return;
+    if (event.signal.source === "mean_reversion" && !loadExecutionConfig(accountKey).rangeEngineEnabled) {
+      recordOutcome(event.signal, accountKey, "blocked: range_engine_disabled");
+      return;
+    }
+    if (event.signal.source === "trend_continuation" && !loadExecutionConfig(accountKey).trendContinuationEnabled) {
+      recordOutcome(event.signal, accountKey, "blocked: trend_continuation_disabled");
+      return;
+    }
 
     // A halt/cooldown that has since cleared on its own (day rollover, cooldown timer)
     // still blocks auto-execution here until a human explicitly acknowledges it (see
     // riskState.ts's own doc comment) -- manual confirm-mode execution is unaffected,
     // it already has a human reviewing every trade via the proposal/approve flow.
     const equity = getAccountInformation(accountKey)?.equity ?? 0;
-    if (requiresAcknowledgement(riskState.current(Date.now(), equity, accountKey))) return;
+    if (requiresAcknowledgement(riskState.current(Date.now(), equity, accountKey))) {
+      recordOutcome(event.signal, accountKey, "blocked: risk_ack_required");
+      return;
+    }
 
     // Per-pair/timeframe brake: don't add to a same-direction position that's already
     // carrying a loss -- wait for it to close (SL/TP, or an opposite-signal invalidation
@@ -167,6 +197,8 @@ export function startAutoExecutionListener(): void {
       const reason = `Your existing ${event.signal.direction} ${event.signal.pair} ${event.signal.timeframe} position is currently losing -- waiting for it to close before adding another in the same direction.`;
       console.log(`[auto-execution] skip ${event.signal.pair} ${event.signal.timeframe} ${event.signal.id} (${accountKey}): ${reason}`);
       notifyBlocked(event.signal, reason);
+      recordBlockedOutcome(event.signal.id, "adverse_position", reason);
+      recordOutcome(event.signal, accountKey, "blocked: adverse_position");
       return;
     }
 
@@ -175,9 +207,25 @@ export function startAutoExecutionListener(): void {
         // "duplicate"/"rejected"/"filled" are either uninteresting (idempotency replay)
         // or already notified elsewhere (order_rejected in executionEngine.ts itself,
         // trade_opened on fill) -- only the two silent-by-default outcomes get a signal_
-        // blocked push here.
-        if (result.status === "blocked") notifyBlocked(event.signal, result.reason);
-        if (result.status === "skipped_sizing") notifyBlocked(event.signal, result.reason);
+        // blocked push here. Every outcome still lands in the activity trail (and,
+        // for the two silent ones, blockedOutcomeStore -- see that module's own doc
+        // comment on why a signal auto-executed with no client-side click needs this to
+        // seed the dashboard card's status the way a manual attempt already does).
+        if (result.status === "blocked") {
+          notifyBlocked(event.signal, result.reason);
+          recordBlockedOutcome(event.signal.id, result.code, result.reason);
+          recordOutcome(event.signal, accountKey, `blocked: ${result.code}`);
+        } else if (result.status === "skipped_sizing") {
+          notifyBlocked(event.signal, result.reason);
+          recordBlockedOutcome(event.signal.id, SKIPPED_SIZING_CODE, result.reason);
+          recordOutcome(event.signal, accountKey, "skipped_sizing");
+        } else if (result.status === "filled") {
+          recordOutcome(event.signal, accountKey, "filled");
+        } else if (result.status === "rejected") {
+          recordOutcome(event.signal, accountKey, `rejected: ${result.trade.rejectReason ?? "unknown"}`);
+        } else {
+          recordOutcome(event.signal, accountKey, "duplicate");
+        }
       })
       .catch((error: unknown) => {
         console.error(`[auto-execution] error executing ${event.signal.pair} ${event.signal.id} (${accountKey}):`, error);
@@ -187,12 +235,15 @@ export function startAutoExecutionListener(): void {
         // trade never appeared and placing it manually themselves. Every other failure
         // path here already pushes a notification (notifyBlocked above); this was the
         // one silent exception.
+        const message = error instanceof Error ? error.message : String(error);
         void sendNotification({
           category: "signal_blocked",
           title: `JUDE AI — Auto-execution failed: ${event.signal.pair}`,
           body: `A qualifying ${event.signal.direction} signal fired but couldn't be auto-placed (connection issue) -- place it manually if you still want this trade.`,
           data: { signalId: event.signal.id, pair: event.signal.pair },
         });
+        recordBlockedOutcome(event.signal.id, "auto_execution_error", message);
+        recordOutcome(event.signal, accountKey, `error: ${message}`);
       });
   });
 }

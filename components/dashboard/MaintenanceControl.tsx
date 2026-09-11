@@ -39,6 +39,14 @@ interface MaintenanceReport {
     outcome: "executed" | "rejected" | "not_executed";
     outcomeDetail: string;
   } | null;
+  autoExecutionActivity: {
+    signalsSeen: number;
+    lastSignalSeenAt: number | null;
+    lastSignalSeen: { pair: string; tier: string; source: string } | null;
+    attemptsTotal: number;
+    filledTotal: number;
+    recentAttempts: { pair: string; tier: string; source: string; direction: string; account: string | null; result: string; at: number }[];
+  };
 }
 interface RepairOutcome {
   label: string;
@@ -251,6 +259,27 @@ export function MaintenanceControl() {
                   </>
                 ) : (
                   <p className="text-[11px] text-zinc-500">No buy/strong-buy signal in the recent window yet.</p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5 rounded-lg border border-white/5 p-2.5">
+                <span className="text-xs font-bold uppercase tracking-wide text-zinc-400">Auto-Execution Activity (since boot)</span>
+                <p className="text-[11px] text-zinc-300">
+                  {report.autoExecutionActivity.signalsSeen} signal{report.autoExecutionActivity.signalsSeen === 1 ? "" : "s"} reached the
+                  listener · {report.autoExecutionActivity.attemptsTotal} attempt{report.autoExecutionActivity.attemptsTotal === 1 ? "" : "s"} ·{" "}
+                  {report.autoExecutionActivity.filledTotal} filled
+                </p>
+                {report.autoExecutionActivity.recentAttempts.length === 0 ? (
+                  <p className="text-[11px] text-zinc-500">No execution attempts yet since restart.</p>
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    {report.autoExecutionActivity.recentAttempts.slice(0, 5).map((a, i) => (
+                      <p key={i} className="text-[11px] text-zinc-400">
+                        <span className={a.result === "filled" ? "font-semibold text-emerald-400" : "text-zinc-300"}>{a.result}</span> —{" "}
+                        {a.pair} {a.tier} ({a.source}) {a.direction} · {new Date(a.at).toLocaleTimeString()}
+                      </p>
+                    ))}
+                  </div>
                 )}
               </div>
 

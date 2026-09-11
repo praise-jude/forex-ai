@@ -14,12 +14,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const LEAD_IN_DAYS = { d1: 220, h4: 40, h1: 10, primary: 3 };
 
 async function main() {
-  const { getBacktestAccount, loadHistoricalRange } = await import("./lib/market/backtest/historyLoader");
+  const { getBacktestAccount, loadHistoricalRange, loadSymbolSpecs } = await import("./lib/market/backtest/historyLoader");
   const { runBacktest } = await import("./lib/market/backtest/backtestEngine");
   const { applyEarlyInvalidation } = await import("./lib/market/backtest/backtestInvalidation");
-  const { toJournalEntries } = await import("./lib/market/backtest/backtestStats");
+  const { toJournalEntries, DEFAULT_HYPOTHETICAL_EQUITY } = await import("./lib/market/backtest/backtestStats");
   const { getPerformanceStats } = await import("./lib/market/tradeJournal");
   const { evaluateSignal } = await import("./lib/market/signalEngine");
+  const { loadExecutionConfig } = await import("./lib/market/executionConfig");
+  const { DEFAULT_REALISTIC_SPREAD_FRACTION } = await import("./lib/market/backtest/constants");
   const { PAIRS } = await import("./lib/market/types");
   type Pair = (typeof PAIRS)[number];
   type Timeframe = "15m" | "30m" | "1h";
@@ -27,6 +29,12 @@ async function main() {
   const timeframe = (process.argv[2] ?? "15m") as Timeframe;
   const lookbackDays = Number(process.argv[3] ?? 60);
   const pairsArg = process.argv[4];
+  // Pass "realistic" as a 5th arg to simulate real spread cost + break-even/trailing/
+  // partial-close position management and real lot-size-based sizing (see
+  // backtestEngine.ts's simulateRealisticOutcome) instead of the idealized fixed
+  // SL-vs-TP1 outcome -- closer to what would actually happen live, at the cost of one
+  // extra RPC connection (loadSymbolSpecs) per run.
+  const realisticFlag = process.argv[5] === "realistic";
   const pairs = (pairsArg ? (pairsArg.split(",") as Pair[]) : (["BTC/USD"] as Pair[])).filter((p) => PAIRS.includes(p));
   if (pairs.length === 0) {
     console.error("no valid pairs given");
@@ -59,7 +67,29 @@ async function main() {
     console.error(`  ${pair}: ${primary.length} ${timeframe} bars loaded`);
   }
 
-  console.log(`\nTimeframe: ${timeframe}  Lookback: ${lookbackDays}d  Pairs: ${pairs.join(", ")}`);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let realisticSim: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let realisticSizing: any;
+  if (realisticFlag) {
+    console.error("fetching real symbol specs for realistic sim...");
+    const liveConfig = loadExecutionConfig("live");
+    const specs = await loadSymbolSpecs(account, pairs);
+    realisticSim = {
+      positionManagement: {
+        breakEvenTriggerR: liveConfig.breakEvenTriggerR,
+        trailingArmTriggerR: liveConfig.trailingArmTriggerR,
+        trailingDistanceFractionOfStop: liveConfig.trailingDistanceFractionOfStop,
+        partialCloseEnabled: liveConfig.partialCloseEnabled,
+      },
+      partialCloseFraction: liveConfig.partialCloseFraction,
+      spreadFractionOfStop: DEFAULT_REALISTIC_SPREAD_FRACTION,
+      specs,
+    };
+    realisticSizing = { specs, equity: DEFAULT_HYPOTHETICAL_EQUITY, riskPct: liveConfig.riskPerTradePct };
+  }
+
+  console.log(`\nTimeframe: ${timeframe}  Lookback: ${lookbackDays}d  Pairs: ${pairs.join(", ")}  Realistic: ${realisticFlag}`);
   console.log("(profit is a hypothetical $100-risk-per-trade figure -- only useful for RELATIVE comparison across rows, not a real P&L)\n");
   console.log(
     "variant".padEnd(48) +
@@ -96,11 +126,12 @@ async function main() {
         windowStart,
         windowEnd,
         evaluate,
+        realistic: realisticSim,
       });
       allResults.push(...applyEarlyInvalidation(raw));
     }
 
-    const converted = toJournalEntries(allResults);
+    const converted = toJournalEntries(allResults, undefined, realisticSizing);
     const stats = getPerformanceStats(converted.entries);
     const pf = stats.profitFactor === null ? "n/a" : stats.profitFactor.toFixed(2);
     const avgR = stats.averageR === null ? "n/a" : stats.averageR.toFixed(2);

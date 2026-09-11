@@ -18,6 +18,7 @@ import { positionStore } from "./positionStore";
 import { signalStore } from "./signalStore";
 import { getExecutionPolicy } from "./executionPolicy";
 import { getOptionalDb } from "../db/optionalClient";
+import { getAutoExecutionActivity } from "./autoExecutionActivity";
 
 /**
  * A real, read-only health scan across every real gate/subsystem this app already has --
@@ -106,6 +107,17 @@ export interface MaintenanceReport {
     outcome: "executed" | "rejected" | "not_executed";
     outcomeDetail: string;
   } | null;
+  /** The direct, permanent answer to "is the autopilot even receiving signals, and what
+   * happens to them" -- see autoExecutionActivity.ts's own doc comment for the incident
+   * (2026-09-11) that made a manual database query the only way to answer this. */
+  autoExecutionActivity: {
+    signalsSeen: number;
+    lastSignalSeenAt: number | null;
+    lastSignalSeen: { pair: string; tier: string; source: string } | null;
+    attemptsTotal: number;
+    filledTotal: number;
+    recentAttempts: { pair: string; tier: string; source: string; direction: string; account: string | null; result: string; at: number }[];
+  };
 }
 
 export function sectionHealth(items: CheckItem[]): number {
@@ -226,6 +238,55 @@ function checkEngineHealth(): MaintenanceSection {
   return { name: "Engine Health", healthPct: sectionHealth(items), items };
 }
 
+function minutesAgo(at: number, now: number): string {
+  const min = Math.round((now - at) / 60000);
+  return min < 1 ? "just now" : min === 1 ? "1 min ago" : `${min} min ago`;
+}
+
+/** The permanent fix for a real incident (2026-09-11): the operator had no way to tell
+ * whether the autopilot had EVER actually auto-fired a trade, short of a manual
+ * database query proving it via a millisecond-scale timestamp gap. Reads
+ * autoExecutionActivity.ts's in-memory trail -- see that module's own doc comment. */
+function checkAutoExecutionActivity(): MaintenanceSection {
+  const items: CheckItem[] = [];
+  const activity = getAutoExecutionActivity();
+  const now = Date.now();
+
+  if (activity.signalsSeen === 0) {
+    items.push({
+      label: "Signals reaching auto-execution",
+      status: "warning",
+      detail: "No signal has reached the auto-execution listener yet since the last restart -- may just be waiting for one, or the listener isn't wired up. Give it time before treating this as broken.",
+    });
+  } else {
+    const last = activity.lastSignalSeen;
+    items.push({
+      label: "Signals reaching auto-execution",
+      status: "pass",
+      detail: `${activity.signalsSeen} seen since boot -- last: ${last?.pair} ${last?.tier} (${last?.source}) ${activity.lastSignalSeenAt ? minutesAgo(activity.lastSignalSeenAt, now) : ""}`,
+    });
+  }
+
+  if (activity.attemptsTotal > 0) {
+    const last = activity.recentAttempts[0];
+    items.push({
+      label: "Execution attempts",
+      status: "pass",
+      detail: `${activity.attemptsTotal} attempted, ${activity.filledTotal} filled since boot -- last: ${last.pair} ${last.result} ${minutesAgo(last.at, now)}`,
+    });
+  } else if (activity.signalsSeen > 0) {
+    items.push({
+      label: "Execution attempts",
+      status: "warning",
+      detail: `${activity.signalsSeen} signal(s) reached the listener but none led to an execution attempt -- every one was stopped by an early gate (engine mode, autopilot lock, disabled engine, or risk acknowledgement). Check Autopilot Core.`,
+    });
+  } else {
+    items.push({ label: "Execution attempts", status: "not_configured", detail: "No signals seen yet since restart, so nothing to attempt." });
+  }
+
+  return { name: "Auto-Execution Activity", healthPct: sectionHealth(items), items };
+}
+
 async function checkMarketData(): Promise<MaintenanceSection> {
   const items: CheckItem[] = [];
   for (const pair of PAIRS) {
@@ -327,17 +388,18 @@ function getLastQualifiedSignal(accountKey: AccountKey): MaintenanceReport["last
 
 /** The one Mode 1 entry point -- runs every section, never mutates anything. */
 export async function runMaintenanceScan(accountKey: AccountKey = "live"): Promise<MaintenanceReport> {
-  const [core, funding, engineHealth, marketData, connection, storage, last24h] = await Promise.all([
+  const [core, funding, engineHealth, autoExecActivitySection, marketData, connection, storage, last24h] = await Promise.all([
     checkAutopilotCore(accountKey),
     checkFunding(accountKey),
     Promise.resolve(checkEngineHealth()),
+    Promise.resolve(checkAutoExecutionActivity()),
     checkMarketData(),
     checkConnection(),
     checkStorage(),
     getEvaluationSummary(Date.now() - 24 * 60 * 60 * 1000),
   ]);
 
-  const sections = [core, funding, engineHealth, marketData, connection, storage];
+  const sections = [core, funding, engineHealth, autoExecActivitySection, marketData, connection, storage];
   const overallHealthPct = Math.round(sections.reduce((sum, s) => sum + s.healthPct, 0) / sections.length);
 
   const allItems = sections.flatMap((s) => s.items.map((item) => ({ section: s.name, item })));
@@ -363,6 +425,7 @@ export async function runMaintenanceScan(accountKey: AccountKey = "live"): Promi
     criticalIssues: allItems.filter(({ item }) => item.status === "fail").length,
     availableRepairs,
     lastQualifiedSignal: getLastQualifiedSignal(accountKey),
+    autoExecutionActivity: getAutoExecutionActivity(),
   };
 }
 
