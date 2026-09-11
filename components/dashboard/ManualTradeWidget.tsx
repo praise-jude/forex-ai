@@ -6,7 +6,7 @@ import { executeSignalRequest, type ExecuteResponse } from "@/lib/market/executi
 import { buildConfirmPhrase } from "@/lib/voice/grammar";
 import { decimals } from "@/lib/market/symbols";
 import { formatPrice } from "@/lib/market/format";
-import { describeManualTradePlan } from "@/lib/market/manualTradeSuggestion";
+import { describeManualTradePlan, describeRangePerformance, type RangePerformanceTone } from "@/lib/market/manualTradeSuggestion";
 import { describeExecuteResponse } from "./TradeProposalCard";
 
 interface ManualSignalResponse {
@@ -27,6 +27,16 @@ interface RegimePerformance {
   winRate: number;
   profitFactor: number | null;
 }
+
+// Styling for describeRangePerformance's tone -- warning stays the original amber (a
+// genuinely losing regime), neutral is a plain informational gray (no losses yet, or
+// roughly breakeven), positive is emerald (this regime has actually been profitable).
+// Never a block regardless of tone -- see describeRangePerformance's own doc comment.
+const RANGE_PERFORMANCE_STYLE: Record<RangePerformanceTone, { icon: string; className: string }> = {
+  warning: { icon: "⚠️", className: "border-amber-700/50 bg-amber-950/30 text-amber-300" },
+  neutral: { icon: "ℹ️", className: "border-white/10 bg-zinc-800/50 text-zinc-300" },
+  positive: { icon: "✅", className: "border-emerald-700/50 bg-emerald-950/30 text-emerald-300" },
+};
 
 /**
  * A trade the operator builds entirely by hand -- pair, direction, stop-loss, take-profit
@@ -228,14 +238,15 @@ export function ManualTradeWidget() {
           genuinely in a range regime right now (not a guess -- the same predictionStore
           read the dashboard's own trend badge uses) AND there's enough range-regime
           history on record to say something real about it. */}
-      {regime === "range" && rangePerformance && (
-        <p className="mt-2.5 rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-          ⚠️ {pair} is currently in a <strong>range</strong> regime. Your own history trading range conditions:{" "}
-          <strong>{rangePerformance.winRate.toFixed(0)}% win rate</strong> across {rangePerformance.count} trades, but a{" "}
-          <strong>{rangePerformance.profitFactor === null ? "n/a" : rangePerformance.profitFactor.toFixed(2)} profit factor</strong> --
-          occasional losses in this regime have outweighed the many small wins. Not a block, just the real number before you click.
-        </p>
-      )}
+      {regime === "range" && rangePerformance && (() => {
+        const narrative = describeRangePerformance(pair, rangePerformance);
+        const style = RANGE_PERFORMANCE_STYLE[narrative.tone];
+        return (
+          <p className={`mt-2.5 rounded-lg border px-3 py-2 text-xs ${style.className}`}>
+            {style.icon} {narrative.text}
+          </p>
+        );
+      })()}
 
       {/* The plain-language "just look and click" summary -- recomputed live from
           whatever's actually in the fields below (the AI's own suggestion by default,

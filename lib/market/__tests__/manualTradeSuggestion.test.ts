@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeManualTradePlan, suggestManualTradeLevels } from "../manualTradeSuggestion";
+import { describeManualTradePlan, describeRangePerformance, suggestManualTradeLevels } from "../manualTradeSuggestion";
 import type { Candle } from "../types";
 
 // 20 candles with a steady, real true-range so calculateAtr (period 14) has enough
@@ -64,5 +64,49 @@ describe("describeManualTradePlan", () => {
     expect(text).toContain("Sell EUR/USD now, around 1.08500");
     expect(text).toContain("rises to 1.08700");
     expect(text).toContain("falls to 1.08100");
+  });
+});
+
+describe("describeRangePerformance", () => {
+  // The real bug this covers: the warning sentence used to be hardcoded regardless of
+  // the actual profitFactor value, so a genuinely great number (e.g. 17.77) still
+  // rendered "occasional losses... have outweighed the many small wins" -- the opposite
+  // of what a profit factor that high means (grossProfit / grossLoss > 1 => profitable).
+  it("warns when the regime is genuinely losing money (profitFactor < 1)", () => {
+    const result = describeRangePerformance("GBP/USD", { count: 120, winRate: 86, profitFactor: 0.62 });
+    expect(result.tone).toBe("warning");
+    expect(result.text).toContain("occasional losses in this regime have outweighed the many small wins");
+    expect(result.text).toContain("0.62 profit factor");
+  });
+
+  it("is neutral, not a warning, for a thin/roughly-breakeven profit factor", () => {
+    const result = describeRangePerformance("GBP/USD", { count: 40, winRate: 70, profitFactor: 1.2 });
+    expect(result.tone).toBe("neutral");
+    expect(result.text).not.toContain("outweighed");
+    expect(result.text).toContain("roughly breaking even");
+  });
+
+  it("is positive, not a warning, for a genuinely healthy profit factor", () => {
+    const result = describeRangePerformance("GBP/USD", { count: 120, winRate: 86, profitFactor: 17.77 });
+    expect(result.tone).toBe("positive");
+    expect(result.text).not.toContain("outweighed");
+    expect(result.text).toContain("solidly profitable");
+    expect(result.text).toContain("17.77 profit factor");
+  });
+
+  it("is neutral and calls out the missing ratio when there are no losing trades to measure against", () => {
+    const result = describeRangePerformance("GBP/USD", { count: 15, winRate: 100, profitFactor: null });
+    expect(result.tone).toBe("neutral");
+    expect(result.text).toContain("no losing range-regime trades on record yet");
+  });
+
+  it("treats exactly 1.0 as the marginal band, not a warning", () => {
+    const result = describeRangePerformance("GBP/USD", { count: 10, winRate: 50, profitFactor: 1.0 });
+    expect(result.tone).toBe("neutral");
+  });
+
+  it("treats exactly 1.5 as positive, not marginal", () => {
+    const result = describeRangePerformance("GBP/USD", { count: 10, winRate: 50, profitFactor: 1.5 });
+    expect(result.tone).toBe("positive");
   });
 });

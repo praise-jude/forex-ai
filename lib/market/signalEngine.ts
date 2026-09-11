@@ -35,6 +35,31 @@ import { scoreSignal } from "./confidenceScore";
 import { evaluateSignerB } from "./signerB";
 import { combineSigners } from "./decisionMatrix";
 
+/**
+ * Only ever passed by the backtester (see lib/market/backtest/) -- undefined at every
+ * live call site, so live behavior is unchanged unless a caller explicitly opts in.
+ * usdStrength/newsStatus feed live-cache reads with no per-bar timestamp of their own,
+ * which the backtester replaces with real historical values computed per bar (see
+ * evaluateSignal's own doc comment). atrAverageMultiplier/minAdx exist so the backtester
+ * can measure whether LOOSENING the low_volatility/weak_trend_adx hard gates (see
+ * evaluateDirectionalCandidate below) is a real edge improvement or just more trades --
+ * added 2026-09-11 after an operator asked to lower these thresholds live off the back
+ * of one quiet night; this is the actual way to answer that with real historical data
+ * instead of a guess, without ever touching the live gates until a backtest confirms it.
+ */
+export interface SignalEvaluationOverrides {
+  usdStrength?: UsdStrength;
+  newsStatus?: NewsStatus;
+  /** Multiplier applied to the low_volatility gate's ATR-average threshold: requires
+   * `atr > atrAverage * atrAverageMultiplier`. Defaults to 1 (today's live behavior --
+   * ATR must exceed its own recent average). A value below 1 loosens the gate (allows
+   * firing at a below-average-but-not-too-far-below reading); above 1 tightens it. */
+  atrAverageMultiplier?: number;
+  /** Overrides ADX_HARD_MIN's floor for the weak_trend_adx gate. Defaults to
+   * ADX_HARD_MIN (20) when unset. */
+  minAdx?: number;
+}
+
 const SWEEP_LOOKBACK_CANDLES = 30;
 // Fraction of the instrument's own ATR used as the SL buffer beyond the swept swing
 // level. Replaces a flat pip count, which doesn't scale across instruments — a
@@ -121,7 +146,7 @@ export interface SharedGateContext {
   d1Trend: "bullish" | "bearish" | "neutral";
   h4Trend: "bullish" | "bearish" | "neutral";
   h1Trend: "bullish" | "bearish" | "neutral";
-  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus };
+  overrides?: SignalEvaluationOverrides;
 }
 
 /**
@@ -136,7 +161,7 @@ export function computeSharedGateContext(
   pair: Pair,
   timeframe: Timeframe,
   higherTimeframes: HigherTimeframeCandles,
-  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
+  overrides?: SignalEvaluationOverrides
 ): { context: SharedGateContext } | { blocked: NoTradeReason } {
   if (candles.length < 10) return { blocked: { code: "no_setup" } };
   const lastIndex = candles.length - 1;
@@ -259,9 +284,15 @@ export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: Liqu
     return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: ctx.d1Trend, h4: ctx.h4Trend, h1: ctx.h1Trend });
   }
 
-  if (Number.isNaN(adx) || adx < ADX_HARD_MIN) return noTrade({ code: "weak_trend_adx", adx: Number.isNaN(adx) ? 0 : adx });
+  // Both floors below default to today's live values when overrides is unset (every
+  // live call site) -- only the backtester ever supplies these, to measure whether
+  // loosening either gate is a real edge improvement. See SignalEvaluationOverrides's
+  // own doc comment.
+  const minAdx = overrides?.minAdx ?? ADX_HARD_MIN;
+  if (Number.isNaN(adx) || adx < minAdx) return noTrade({ code: "weak_trend_adx", adx: Number.isNaN(adx) ? 0 : adx });
 
-  if (Number.isNaN(atr) || !(atr > atrAverage)) {
+  const atrThreshold = atrAverage * (overrides?.atrAverageMultiplier ?? 1);
+  if (Number.isNaN(atr) || !(atr > atrThreshold)) {
     return noTrade({ code: "low_volatility", atr: Number.isNaN(atr) ? 0 : atr, atrAverage });
   }
 
@@ -544,7 +575,7 @@ export function evaluateSignal(
   // historical data (currencyStrength.ts's computeHistoricalUsdStrength,
   // newsFilter.ts's checkHistoricalNews) when a historical source is configured, or a
   // deterministic "unavailable"/"clear" default otherwise.
-  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
+  overrides?: SignalEvaluationOverrides
 ): SignalEvaluation {
   const shared = computeSharedGateContext(candles, pair, timeframe, higherTimeframes, overrides);
   if ("blocked" in shared) return { status: "no_trade", reason: shared.blocked };
@@ -581,7 +612,7 @@ export function evaluateSignalDualDirection(
   pair: Pair,
   timeframe: Timeframe,
   higherTimeframes: HigherTimeframeCandles,
-  overrides?: { usdStrength?: UsdStrength; newsStatus?: NewsStatus }
+  overrides?: SignalEvaluationOverrides
 ): SignalEvaluation {
   const shared = computeSharedGateContext(candles, pair, timeframe, higherTimeframes, overrides);
   if ("blocked" in shared) return { status: "no_trade", reason: shared.blocked };
