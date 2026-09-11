@@ -2,6 +2,7 @@ import { Expo } from "expo-server-sdk";
 import type { ExpoPushMessage } from "expo-server-sdk";
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationCategory, type PushDevice } from "./types";
 import { deviceStore } from "./deviceStore";
+import { forwardToAllConfiguredWebhooks } from "./webhookNotifier";
 
 // Which NotificationPrefs boolean gates each category -- kept as one table so adding a
 // category later is a one-line change here, not a scattered set of if/else checks.
@@ -65,8 +66,20 @@ function eligibleDevices(payload: NotificationPayload): PushDevice[] {
  * logged, never thrown -- a push failure must never take down the signal engine or
  * execution path that triggered it. Invalid tokens (DeviceNotRegistered) are pruned from
  * deviceStore so a stale/uninstalled device stops being retried on every future signal.
+ *
+ * Also the ONE place every notification reaches the configured Telegram/Discord
+ * webhook(s), via forwardToAllConfiguredWebhooks -- see that function's own doc comment
+ * for the real gap this closes (2026-09-11): only 4 of this function's ~35 call sites
+ * had ever separately remembered to also call the webhook notifier directly. Fired
+ * independent of the push logic below (its own early returns -- no eligible device, an
+ * invalid token, Expo itself failing -- must never also silently skip the webhook), and
+ * never awaited into it, so a slow/failing webhook can't delay a push send or vice versa.
  */
 export async function sendNotification(payload: NotificationPayload): Promise<void> {
+  void forwardToAllConfiguredWebhooks(payload).catch((error: unknown) => {
+    console.error(`[webhook] forwarding ${payload.category} failed:`, error);
+  });
+
   const devices = eligibleDevices(payload);
   if (devices.length === 0) return;
 

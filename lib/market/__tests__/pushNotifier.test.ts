@@ -6,9 +6,21 @@ const sendPushNotificationsAsync = vi.fn();
 const chunkPushNotifications = vi.fn((messages: unknown[]) => [messages]);
 const removeByToken = vi.fn();
 const all = vi.fn<() => PushDevice[]>();
+const forwardToAllConfiguredWebhooks = vi.fn(() => Promise.resolve());
 
 vi.mock("../deviceStore", () => ({
   deviceStore: { all, removeByToken },
+}));
+
+// sendNotification now also forwards every call to forwardToAllConfiguredWebhooks (see
+// pushNotifier.ts's own doc comment) -- mocked here so these tests never make a real
+// network call. vitest.setup.ts deliberately loads the real .env.local (for an unrelated
+// Postgres-tunnel test), which means an unmocked webhookNotifier would post to whatever
+// real ALERT_WEBHOOK_URL happens to be configured on this machine -- confirmed as a real
+// incident (2026-09-11): running this suite without this mock sent real placeholder test
+// text to a real, live Telegram bot.
+vi.mock("../webhookNotifier", () => ({
+  forwardToAllConfiguredWebhooks: (...args: unknown[]) => forwardToAllConfiguredWebhooks(...(args as [])),
 }));
 
 vi.mock("expo-server-sdk", () => {
@@ -115,5 +127,28 @@ describe("pushNotifier", () => {
     const { sendNotification } = await import("../pushNotifier");
 
     await expect(sendNotification({ category: "risk_alert", title: "t", body: "b" })).resolves.toBeUndefined();
+  });
+
+  it("forwards every notification to the configured webhook(s), independent of push eligibility", async () => {
+    // Zero eligible devices -- push itself is a no-op here, but the webhook forward
+    // must still fire. This is the actual bug this test exists to catch: before
+    // 2026-09-11, only 4 of this function's ~35 call sites separately remembered to
+    // call the webhook notifier at all.
+    all.mockReturnValue([]);
+    const { sendNotification } = await import("../pushNotifier");
+    const payload = { category: "connection_alert" as const, title: "t", body: "b" };
+
+    await sendNotification(payload);
+
+    expect(forwardToAllConfiguredWebhooks).toHaveBeenCalledWith(payload);
+  });
+
+  it("a webhook-forwarding failure never blocks or throws from sendNotification", async () => {
+    all.mockReturnValue([device()]);
+    forwardToAllConfiguredWebhooks.mockRejectedValue(new Error("webhook down"));
+    const { sendNotification } = await import("../pushNotifier");
+
+    await expect(sendNotification({ category: "risk_alert", title: "t", body: "b" })).resolves.toBeUndefined();
+    expect(sendPushNotificationsAsync).toHaveBeenCalledTimes(1);
   });
 });

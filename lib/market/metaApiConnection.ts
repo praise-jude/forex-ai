@@ -33,7 +33,6 @@ import { loadExecutionConfig } from "./executionConfig";
 import { isDailyLossBreached } from "./riskManager";
 import { riskState } from "./riskState";
 import { sendNotification } from "./pushNotifier";
-import { sendWebhookNotification } from "./webhookNotifier";
 import { isPending } from "./pendingInvalidationClose";
 import { calculateAdx } from "./indicators/adx";
 import { calculateAtr } from "./indicators/atr";
@@ -464,7 +463,6 @@ class MarketSyncListener extends SynchronizationListener {
     if (pair) {
       const closeNotification = closedPositionNotification(pair, deal, this.accountKey, wasInvalidation);
       void sendNotification(closeNotification);
-      void sendWebhookNotification(closeNotification, this.accountKey);
     }
     // Sibling recording action alongside the notification above -- never alters the
     // risk-state logic below it. Only ever produces a journal entry for a close this
@@ -486,7 +484,6 @@ class MarketSyncListener extends SynchronizationListener {
         body: `${config.maxConsecutiveLosses} consecutive losses on ${this.accountKey}. New entries paused for ${config.cooldownMinutes} minutes.`,
       };
       void sendNotification(cooldownNotification);
-      void sendWebhookNotification(cooldownNotification, this.accountKey);
     }
 
     if (!dayState.haltedForToday && isDailyLossBreached(dayState.startOfDayEquity, equity, config.maxDailyLossPct)) {
@@ -497,7 +494,6 @@ class MarketSyncListener extends SynchronizationListener {
         body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${this.accountKey}. No new trades until the next trading day.`,
       };
       void sendNotification(haltNotification);
-      void sendWebhookNotification(haltNotification, this.accountKey);
     }
   }
 }

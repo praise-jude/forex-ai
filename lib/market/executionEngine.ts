@@ -20,7 +20,6 @@ import {
   placeMarketOrder,
 } from "./metaApiConnection";
 import { sendNotification } from "./pushNotifier";
-import { sendWebhookNotification } from "./webhookNotifier";
 import { formatPrice } from "./format";
 
 export type ExecutionResult =
@@ -127,7 +126,6 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
           body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${accountKey}. No new trades until the next trading day.`,
         };
         void sendNotification(haltNotification);
-        void sendWebhookNotification(haltNotification, accountKey);
       }
       return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
     }
