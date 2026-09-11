@@ -244,7 +244,7 @@ export function MaintenanceControl() {
                   </div>
                   <div className="flex flex-col gap-1">
                     {section.items.map((item) => (
-                      <div key={item.label} className="flex items-start gap-2 text-[11px]">
+                      <div key={item.label} className="flex flex-wrap items-start gap-x-2 gap-y-1 text-[11px]">
                         <span className={STATUS_STYLE[item.status].color}>{STATUS_STYLE[item.status].icon}</span>
                         <span className="font-semibold text-zinc-300">{item.label}:</span>
                         <span className="text-zinc-500">{item.detail}</span>
