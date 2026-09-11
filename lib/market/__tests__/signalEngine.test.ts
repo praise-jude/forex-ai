@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { candle } from "../detectors/__tests__/fixtures";
-import { assembleSignals, evaluateSignal, evaluateSignalDualDirection } from "../signalEngine";
+import { ADX_HARD_MIN, assembleSignals, evaluateSignal, evaluateSignalDualDirection } from "../signalEngine";
 import { calculateAtr } from "../indicators/atr";
 import { resetNewsFilterForTests, setNewsFilterStateForTests, type EconomicEvent } from "../newsFilter";
 import { resetCurrencyStrengthForTests, setCurrencyStrengthStateForTests } from "../currencyStrength";
@@ -255,9 +255,10 @@ describe("evaluateSignal", () => {
     expect(evaluation.signal.entry).toBeLessThanOrEqual(evaluation.signal.zoneTop!);
     // Real ADX/RSI readings, not fabricated -- both hard-gated/scored elsewhere in this
     // same evaluation, so a qualifying signal can only ever carry real values: ADX must
-    // have cleared the ADX_HARD_MIN=20 pre-gate, and RSI must be >50 for rsiAgrees to
-    // have contributed to this long signal's entry score.
-    expect(evaluation.signal.adx).toBeGreaterThanOrEqual(20);
+    // have cleared the ADX_HARD_MIN pre-gate, and RSI must be >50 for rsiAgrees to
+    // have contributed to this long signal's entry score. Asserted against the real
+    // constant, not a hardcoded number, so this can never silently drift from it.
+    expect(evaluation.signal.adx).toBeGreaterThanOrEqual(ADX_HARD_MIN);
     expect(evaluation.signal.rsi).toBeGreaterThan(50);
   });
 

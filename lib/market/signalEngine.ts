@@ -56,7 +56,8 @@ export interface SignalEvaluationOverrides {
    * firing at a below-average-but-not-too-far-below reading); above 1 tightens it. */
   atrAverageMultiplier?: number;
   /** Overrides ADX_HARD_MIN's floor for the weak_trend_adx gate. Defaults to
-   * ADX_HARD_MIN (20) when unset. */
+   * ADX_HARD_MIN (15, lowered from 20 on 2026-09-11 -- see that constant's own doc
+   * comment for the backtest evidence) when unset. */
   minAdx?: number;
 }
 
@@ -92,7 +93,22 @@ const FIXED_TAKE_PROFIT_DISTANCE: Partial<Record<Pair, number>> = {
 };
 // Exported so pairAnalysisJob.ts's smcSetupProgress can report a real "ADX X of Y needed"
 // ratio without duplicating this number by hand and risking it drifting out of sync.
-export const ADX_HARD_MIN = 20;
+//
+// Lowered from 20 to 15 on 2026-09-11, backed by real historical data, not a hunch --
+// _backtest-gate-comparison.ts replayed the SAME candle series through evaluateSignal at
+// both floors, isolating this one variable. Over 90 days (5 pairs, 15m): baseline 48
+// trades / 72.9% win rate / 3.42 profit factor vs. ADX>=15's 78 trades / 71.8% / 4.88.
+// Over 180 days: 102 trades / 78.4% / 4.26 vs. 159 trades / 76.1% / 4.72. Both windows
+// agree: more trades, a slightly lower win rate, but a HIGHER profit factor and higher
+// average R -- not just "more trades", genuinely better quality ones too. A companion
+// loosening of the low_volatility ATR gate was tested at the same time and made every
+// metric worse (confirmed that gate is doing real work) -- ATR was left untouched.
+// Caveat this change accepts: only tested on 15m with idealized (non-realistic) fills,
+// since this deployment has no DEMO MetaApi account to safely run realistic-mode
+// (spread/position-management) simulation against without contending with the live
+// connection's own rate limit. If live results (Journal -> Performance by engine, "smc")
+// don't track this after a couple of weeks, revert this single constant back to 20.
+export const ADX_HARD_MIN = 15;
 const ATR_AVERAGE_PERIOD = 20;
 // How many hours before the Friday 5pm New York weekly close a NEW entry is refused --
 // see marketHours.ts's isWithinWeekendCloseWindow for the reasoning. Env-configurable

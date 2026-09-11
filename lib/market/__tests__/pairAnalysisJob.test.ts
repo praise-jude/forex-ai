@@ -9,6 +9,7 @@ import {
 } from "../pairAnalysisJob";
 import type { AnalysisStage, SignalEvaluation } from "../types";
 import { buildSignal } from "./fixtures";
+import { ADX_HARD_MIN } from "../signalEngine";
 
 describe("computeMoneyAtRisk", () => {
   it("computes the same risk-amount math positionSizing.ts uses at execution time", () => {
@@ -108,11 +109,14 @@ describe("smcSetupProgress", () => {
     expect(smcSetupProgress(null, null)).toEqual({ pct: null, label: "No setup detected yet" });
   });
 
-  it("reports a real ADX ratio-to-floor for weak_trend_adx -- ADX 19.9 of the real 20 floor", () => {
-    const evaluation: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 19.9 } };
+  it("reports a real ADX ratio-to-floor for weak_trend_adx -- just under the real floor", () => {
+    // Expressed relative to the real ADX_HARD_MIN (not a hardcoded number) so this test
+    // never silently drifts from whatever that constant actually is.
+    const adx = Number((ADX_HARD_MIN - 0.1).toFixed(1));
+    const evaluation: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx } };
     const result = smcSetupProgress(evaluation, evaluation);
-    expect(result.pct).toBeCloseTo(99.5, 1);
-    expect(result.label).toContain("19.9");
+    expect(result.pct).toBeCloseTo((adx / ADX_HARD_MIN) * 100, 1);
+    expect(result.label).toContain(adx.toFixed(1));
   });
 
   it("reports a real ATR-vs-average ratio for low_volatility, capped at 100", () => {
@@ -142,8 +146,10 @@ describe("smcSetupProgress", () => {
   });
 
   it("picks whichever side is genuinely closer when both have a real number", () => {
-    const weak: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 10 } }; // 50%
-    const closer: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: 19 } }; // 95%
+    // Same relative-to-the-real-floor approach as the test above -- 50% and 95% of
+    // whatever ADX_HARD_MIN actually is, not fixed absolute ADX values.
+    const weak: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: ADX_HARD_MIN * 0.5 } };
+    const closer: SignalEvaluation = { status: "no_trade", reason: { code: "weak_trend_adx", adx: ADX_HARD_MIN * 0.95 } };
     expect(smcSetupProgress(weak, closer).pct).toBeCloseTo(95, 0);
   });
 });
