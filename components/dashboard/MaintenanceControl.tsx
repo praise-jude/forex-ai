@@ -131,6 +131,28 @@ export function MaintenanceControl() {
     await runScan();
   }
 
+  /** Same POST-then-rescan flow as applySafeRepairs, for exactly one item -- added
+   * (operator request, 2026-09-11) so a specific problem can be fixed right where it's
+   * listed, without scrolling up to the bulk button and re-fixing everything else too. */
+  async function applyOneRepair(action: RepairAction, label: string) {
+    setRepairing(true);
+    setRepairResults([]);
+    try {
+      const res = await fetch("/api/maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const outcome = (await res.json()) as RepairOutcome;
+      setRepairResults([outcome]);
+    } catch {
+      setRepairResults([{ label, applied: false, success: false, message: "Network error" }]);
+    } finally {
+      setRepairing(false);
+    }
+    await runScan();
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <button
@@ -226,11 +248,20 @@ export function MaintenanceControl() {
                         <span className={STATUS_STYLE[item.status].color}>{STATUS_STYLE[item.status].icon}</span>
                         <span className="font-semibold text-zinc-300">{item.label}:</span>
                         <span className="text-zinc-500">{item.detail}</span>
-                        {item.status !== "pass" && item.status !== "not_configured" && (
-                          <span className={item.repair ? "text-sky-500" : "text-zinc-600"}>
-                            {item.repair ? "(safe repair available)" : "(needs your own review)"}
-                          </span>
-                        )}
+                        {item.status !== "pass" &&
+                          item.status !== "not_configured" &&
+                          (item.repair ? (
+                            <button
+                              type="button"
+                              onClick={() => item.repair && void applyOneRepair(item.repair, item.label)}
+                              disabled={repairing}
+                              className="shrink-0 rounded border border-sky-700 bg-sky-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-sky-400 transition hover:bg-sky-900/50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {repairing ? "…" : "Repair"}
+                            </button>
+                          ) : (
+                            <span className="text-zinc-600">(needs your own review)</span>
+                          ))}
                       </div>
                     ))}
                   </div>
