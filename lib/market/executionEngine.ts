@@ -116,7 +116,19 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
     if (!riskCheck.allowed) {
       console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${riskCheck.reason}`);
       if (riskCheck.code === "daily_loss") {
+        // Real, confirmed gap (2026-09-12): a daily_loss trip was recorded in
+        // autoExecutionActivity's trail (BTC/USD, mean_reversion) but neither the
+        // persisted halt nor the "Autopilot locked" alert showed up afterward -- the
+        // operator never got notified, and riskDailyState's own row showed no evidence a
+        // halt ever tripped (pausedAt stayed null). Root cause not yet found by reading
+        // the code alone (this branch looks correct); this logging exists so the NEXT
+        // occurrence leaves a real trail instead of another unexplained gap. Deliberately
+        // verbose -- this is the account's real financial safety net, worth the noise.
+        console.log(
+          `[risk] daily_loss trip: ${signal.pair} ${signal.id} (${accountKey}) equity=${account.equity} startOfDayEquity=${dayState.startOfDayEquity} maxDailyLossPct=${config.maxDailyLossPct} haltedForToday(before)=${dayState.haltedForToday}`
+        );
         riskState.setHaltedForToday(now, account.equity, accountKey);
+        console.log(`[risk] daily_loss trip: haltedForToday(after)=${riskState.current(now, account.equity, accountKey).haltedForToday}`);
         // Mirrors metaApiConnection.ts's own daily-loss halt trip -- this one fires when the
         // threshold is first crossed on a manual/voice execution attempt rather than a
         // closing-deal event, but the operator needs the same alert either way.
@@ -125,7 +137,9 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
           title: "JUDE AI — Autopilot locked",
           body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${accountKey}. No new trades until the next trading day.`,
         };
-        void sendNotification(haltNotification);
+        void sendNotification(haltNotification).catch((error: unknown) =>
+          console.error(`[risk] failed to send daily_loss halt notification for ${accountKey}:`, error)
+        );
       }
       return { status: "blocked", code: riskCheck.code, reason: riskCheck.reason };
     }

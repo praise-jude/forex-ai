@@ -483,17 +483,24 @@ class MarketSyncListener extends SynchronizationListener {
         title: "JUDE AI — Cooldown active",
         body: `${config.maxConsecutiveLosses} consecutive losses on ${this.accountKey}. New entries paused for ${config.cooldownMinutes} minutes.`,
       };
-      void sendNotification(cooldownNotification);
+      void sendNotification(cooldownNotification).catch((error: unknown) =>
+        console.error(`[risk] failed to send cooldown notification for ${this.accountKey}:`, error)
+      );
     }
 
     if (!dayState.haltedForToday && isDailyLossBreached(dayState.startOfDayEquity, equity, config.maxDailyLossPct)) {
+      console.log(
+        `[risk] daily_loss trip (closing-deal path): ${this.accountKey} equity=${equity} startOfDayEquity=${dayState.startOfDayEquity} maxDailyLossPct=${config.maxDailyLossPct}`
+      );
       riskState.setHaltedForToday(now, equity, this.accountKey);
       const haltNotification = {
         category: "risk_alert" as const,
         title: "JUDE AI — Autopilot locked",
         body: `Daily loss limit (${config.maxDailyLossPct}%) reached on ${this.accountKey}. No new trades until the next trading day.`,
       };
-      void sendNotification(haltNotification);
+      void sendNotification(haltNotification).catch((error: unknown) =>
+        console.error(`[risk] failed to send daily_loss halt notification for ${this.accountKey}:`, error)
+      );
     }
   }
 }
