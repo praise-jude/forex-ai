@@ -40,19 +40,18 @@ export function startMarketEngine(): void {
   if (started) return;
   started = true;
 
-  // Fire-and-forget, same as ensureMetaApiConnection below -- reloads recent
-  // signals/execution/journal/device/risk-guardian/deal-dedup state from the DB (see
-  // signalStore.ts/positionStore.ts/tradeJournal.ts/deviceStore.ts/riskState.ts/
-  // dealDedup.ts's own hydrate()) so a restart doesn't blank the dashboard, reopen
-  // hasExecuted()'s idempotency window, lose the trade journal, silently unregister every
-  // phone from push notifications, silently clear a daily-loss halt/cooldown that's still
-  // genuinely in effect, or reopen the redelivery window that let the same closed deal get
-  // re-counted by riskState across a restart (all six used to be pure in-memory or a local
-  // JSON file, neither of which survives a Railway redeploy the way a real database does).
-  // No-ops (and logs once) when DATABASE_URL isn't set -- the engine itself doesn't wait on
-  // this, since the first real signal/execution is always much further off than a DB
-  // round trip.
-  Promise.all([
+  // Reloads recent signals/execution/journal/device/risk-guardian/deal-dedup state from
+  // the DB (see signalStore.ts/positionStore.ts/tradeJournal.ts/deviceStore.ts/
+  // riskState.ts/dealDedup.ts's own hydrate()) so a restart doesn't blank the dashboard,
+  // reopen hasExecuted()'s idempotency window, lose the trade journal, silently
+  // unregister every phone from push notifications, silently clear a daily-loss halt/
+  // cooldown that's still genuinely in effect, or reopen the redelivery window that let
+  // the same closed deal get re-counted by riskState across a restart (all six used to
+  // be pure in-memory or a local JSON file, neither of which survives a Railway redeploy
+  // the way a real database does). No-ops (and logs once) when DATABASE_URL isn't set.
+  // The connection/listener startup below is deliberately held until this resolves --
+  // see that block's own doc comment for why (a real, confirmed riskState race).
+  const dbHydration = Promise.all([
     signalStore.hydrate(),
     positionStore.hydrate(),
     tradeJournal.hydrate(),
@@ -63,17 +62,48 @@ export function startMarketEngine(): void {
     console.error("[market] failed to hydrate signal/execution/journal/device/risk-state/deal-dedup history from the database:", error);
   });
 
-  // Fire-and-forget, same reasoning as above. checkEngineModeAfterRestart notifies/handles
-  // a DEMO restart itself and reports the pre-restart mode; startLiveModeRecovery then
-  // decides, conditionally, whether to re-arm a pre-restart LIVE mode (connection stable
-  // for minutes + equity + no risk halt + not a restart loop) or leave it on ANALYSIS
-  // with its own notification -- see liveModeRecovery.ts. It also records this boot for
-  // cross-restart loop detection regardless of the previous mode.
-  checkEngineModeAfterRestart()
-    .then((previousMode) => startLiveModeRecovery(previousMode))
-    .catch((error: unknown) => {
-      console.error("[market] failed to check engine mode across restart:", error);
+  // Real, confirmed incident (2026-09-12): riskState.current() creates a fresh
+  // in-memory entry the FIRST time it's ever called for an account (see riskState.ts),
+  // and hydrate()'s own restore loop deliberately skips any account already present in
+  // memory (an operator's later, real change must never be silently overwritten by a
+  // slow DB read arriving after it) -- so if anything reaches riskState.current() even
+  // once before the hydration above resolves, whatever halt/cooldown/startOfDayEquity
+  // was genuinely persisted from before this restart is discarded, permanently, for the
+  // rest of the day. A real daily-loss halt vanished this exact way tonight. The three
+  // things below are every path that can reach riskState.current()/setHaltedForToday
+  // early in boot -- startLiveModeRecovery reads it directly, and both
+  // ensureMetaApiConnection (via its own closing-deal listener, which can fire almost
+  // immediately on reconnect for a position that closes right at boot) and
+  // startAutoExecutionListener (the instant the connection starts delivering signals)
+  // can reach it indirectly. Deliberately held behind the same hydration this whole
+  // function already fires -- nothing else started below touches riskState at all.
+  void dbHydration.then(() => {
+    // checkEngineModeAfterRestart notifies/handles a DEMO restart itself and reports the
+    // pre-restart mode; startLiveModeRecovery then decides, conditionally, whether to
+    // re-arm a pre-restart LIVE mode (connection stable for minutes + equity + no risk
+    // halt + not a restart loop) or leave it on ANALYSIS with its own notification -- see
+    // liveModeRecovery.ts. It also records this boot for cross-restart loop detection
+    // regardless of the previous mode.
+    checkEngineModeAfterRestart()
+      .then((previousMode) => startLiveModeRecovery(previousMode))
+      .catch((error: unknown) => {
+        console.error("[market] failed to check engine mode across restart:", error);
+      });
+
+    ensureMetaApiConnection("live").catch((error: unknown) => {
+      console.error("[market] failed to start live engine:", error);
     });
+
+    if (isAccountConfigured("demo")) {
+      ensureMetaApiConnection("demo").catch((error: unknown) => {
+        console.error("[market] failed to start demo engine:", error);
+      });
+    } else {
+      console.log("[market] METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID not set — DEMO engine mode will be unavailable");
+    }
+
+    startAutoExecutionListener();
+  });
   // Idempotent (intervalStarted guard inside) -- safe to call on every boot without
   // spawning a second interval. See engineMode.ts's own doc comment: the one-time
   // notification just above is easy to miss on a chaotic night; this is the recurring
@@ -105,19 +135,6 @@ export function startMarketEngine(): void {
     console.error("[market] failed to hydrate engine toggles:", error);
   });
 
-  ensureMetaApiConnection("live").catch((error: unknown) => {
-    console.error("[market] failed to start live engine:", error);
-  });
-
-  if (isAccountConfigured("demo")) {
-    ensureMetaApiConnection("demo").catch((error: unknown) => {
-      console.error("[market] failed to start demo engine:", error);
-    });
-  } else {
-    console.log("[market] METAAPI_DEMO_TOKEN/METAAPI_DEMO_ACCOUNT_ID not set — DEMO engine mode will be unavailable");
-  }
-
-  startAutoExecutionListener();
   startConnectionWatcher();
   startConnectionWatchdog();
   startNewsFilter();
