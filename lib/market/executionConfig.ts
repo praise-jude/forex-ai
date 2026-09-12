@@ -20,7 +20,17 @@ export interface ExecutionConfig {
   /** How long new execution is paused for once maxConsecutiveLosses is hit. */
   cooldownMinutes: number;
   /** See riskManager.ts's checkSpread -- a fraction of the signal's own stop distance,
-   * not a flat pip count, so it scales per instrument. */
+   * not a flat pip count, so it scales per instrument. Raised from 0.15 to 0.20 on
+   * 2026-09-12 -- unlike ADX_HARD_MIN/TREND_AGREEMENT_MODE_DEFAULT (signalEngine.ts),
+   * this is NOT backed by a backtest: the backtest engine only ever estimates spread as
+   * an average cost (see backtestEngine.ts's realistic-mode spreadFractionOfStop), it
+   * never replays real historical bid/ask spread tick-by-tick, so there's no historical
+   * data to test a block/no-block threshold against, even in principle. This is a bounded
+   * engineering judgment call instead: 0.20 still blocks a trade where spread eats half
+   * its risk, it only lets through the marginal misses (a real, confirmed case: a $1.00
+   * ETH/USD spread against a $6.30-6.55 stop, blocked at 0.15 by just 2-6%). Paired with
+   * checkSpread's own new outcome logging so this can be revisited with real evidence in
+   * a few weeks, same "revert if it doesn't hold up" posture as the ADX change. */
   maxSpreadFractionOfStop: number;
   /** See positionManager.ts -- the R-multiple (computed off the trade's own original
    * entry/stop, never a since-moved live SL) at which the live stop loss moves to
@@ -162,7 +172,7 @@ export function loadExecutionConfig(account: AccountKey = "live"): ExecutionConf
     cooldownMinutes: envNumber(`${prefix}COOLDOWN_MINUTES`, 30),
     // 15% of stop distance is deliberately generous -- catches a genuinely blown-out
     // spread (news spike, market open, weekend-gap-adjacent quote), not normal noise.
-    maxSpreadFractionOfStop: envNumber(`${prefix}MAX_SPREAD_FRACTION_OF_STOP`, 0.15),
+    maxSpreadFractionOfStop: envNumber(`${prefix}MAX_SPREAD_FRACTION_OF_STOP`, 0.2),
     breakEvenTriggerR: envNumber(`${prefix}BREAK_EVEN_TRIGGER_R`, 1.0),
     trailingArmTriggerR: envNumber(`${prefix}TRAILING_ARM_TRIGGER_R`, 1.5),
     trailingDistanceFractionOfStop: envNumber(`${prefix}TRAILING_DISTANCE_FRACTION_OF_STOP`, 1.0),

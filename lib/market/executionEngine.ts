@@ -20,6 +20,7 @@ import {
   placeMarketOrder,
 } from "./metaApiConnection";
 import { sendNotification } from "./pushNotifier";
+import { recordSpreadBlock } from "./spreadBlockLog";
 import { formatPrice } from "./format";
 
 export type ExecutionResult =
@@ -193,6 +194,16 @@ export async function attemptExecution(signal: Signal, accountKey: AccountKey = 
   });
   if (!spreadCheck.allowed) {
     console.log(`[execution] skip ${signal.pair} ${signal.id} (${accountKey}): ${spreadCheck.reason}`);
+    recordSpreadBlock({
+      account: accountKey,
+      pair: signal.pair,
+      direction: signal.direction,
+      tier: signal.tier,
+      confidence: signal.confidence,
+      spread: (currentPrice?.ask ?? 0) - (currentPrice?.bid ?? 0),
+      stopDistance: Math.abs(signal.entry - signal.stopLoss),
+      maxSpreadFractionOfStop: config.maxSpreadFractionOfStop,
+    });
     return { status: "blocked", code: spreadCheck.code, reason: spreadCheck.reason };
   }
 

@@ -235,3 +235,25 @@ export const evaluationLog = pgTable("evaluation_log", {
   pipelineStages: jsonb("pipeline_stages").notNull().$type<PipelineStage[]>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
+
+// Durable evidence log for riskManager.ts's checkSpread gate -- built 2026-09-12 after
+// maxSpreadFractionOfStop was raised from 0.15 to 0.20 on engineering judgment alone (see
+// executionConfig.ts's own doc comment on why this specific gate can NEVER be backtested:
+// the backtest engine only ever estimates spread as an average cost, it never replays
+// real historical bid/ask spread tick-by-tick). This table is what makes that judgment
+// call revisitable with real evidence in a few weeks instead of staying a permanent
+// guess -- every real wide_spread block, in production, going forward. Deliberately
+// DB-persisted rather than autoExecutionActivity.ts's in-memory "since boot" pattern:
+// this needs to survive many restarts to accumulate enough real samples to matter.
+export const spreadBlockLog = pgTable("spread_block_log", {
+  id: text("id").primaryKey(),
+  account: text("account").notNull(),
+  pair: text("pair").notNull(),
+  direction: text("direction").notNull(),
+  tier: text("tier").notNull(),
+  confidence: doublePrecision("confidence").notNull(),
+  spread: doublePrecision("spread").notNull(),
+  stopDistance: doublePrecision("stop_distance").notNull(),
+  maxSpreadFractionOfStop: doublePrecision("max_spread_fraction_of_stop").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});

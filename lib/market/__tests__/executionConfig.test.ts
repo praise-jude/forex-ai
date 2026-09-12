@@ -75,7 +75,7 @@ describe("loadExecutionConfig", () => {
       maxTradesPerDay: 100,
       maxConsecutiveLosses: 3,
       cooldownMinutes: 30,
-        maxSpreadFractionOfStop: 0.15,
+        maxSpreadFractionOfStop: 0.2,
         breakEvenTriggerR: 1.0,
         trailingArmTriggerR: 1.5,
         trailingDistanceFractionOfStop: 1.0,
@@ -107,7 +107,7 @@ describe("loadExecutionConfig", () => {
       maxTradesPerDay: 100,
       maxConsecutiveLosses: 3,
       cooldownMinutes: 30,
-      maxSpreadFractionOfStop: 0.15,
+      maxSpreadFractionOfStop: 0.2,
       breakEvenTriggerR: 1.0,
       trailingArmTriggerR: 1.5,
       trailingDistanceFractionOfStop: 1.0,
@@ -136,7 +136,7 @@ describe("loadExecutionConfig", () => {
   it("reads the spread tolerance independently per account too", () => {
     process.env.MAX_SPREAD_FRACTION_OF_STOP = "0.3";
     expect(loadExecutionConfig("live").maxSpreadFractionOfStop).toBe(0.3);
-    expect(loadExecutionConfig("demo").maxSpreadFractionOfStop).toBe(0.15); // falls back to the shared default
+    expect(loadExecutionConfig("demo").maxSpreadFractionOfStop).toBe(0.2); // falls back to the shared default
   });
 
   it("reads the position-management thresholds independently per account too", () => {
