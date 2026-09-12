@@ -12,10 +12,17 @@
  * currency-strength/session read lean toward right now, regardless of whether SMC's own
  * additional structural gates ever found anything to act on.
  *
- * Never a trade signal on its own -- Signer B alone cannot execute anything (see
- * decisionMatrix.ts) -- and never fabricated: "Unavailable" is shown honestly when the
- * same killzone/insufficient-data gates that block the BUY/SELL bar entirely also block
- * this. Mirrors forex-ai-mobile's MarketBiasBar.tsx.
+ * Corrected label (2026-09-12): this used to read "context only, not a trade signal",
+ * which overclaimed how inert Signer B actually is and contradicted AiConsensusPanel.tsx
+ * right next to it on the same dashboard, which has always correctly said Signer B "can
+ * block SMC". The real mechanism (see decisionMatrix.ts's combineSigners): Signer B
+ * cannot ORIGINATE a trade on its own -- it's only ever evaluated after SMC already found
+ * a candidate direction/tier -- but it absolutely CAN veto one, turning a would-be SMC
+ * trade into a hard NO_TRADE the moment its independent read is neutral or points the
+ * opposite direction. That is a real, decision-altering role, not mere context. Never
+ * fabricated either way: "Unavailable" is shown honestly when the same killzone/
+ * insufficient-data gates that block the BUY/SELL bar entirely also block this. Mirrors
+ * forex-ai-mobile's MarketBiasBar.tsx.
  */
 export function MarketBiasBar({
   direction,
@@ -45,7 +52,7 @@ export function MarketBiasBar({
   return (
     <div className="flex w-full flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Market Bias (Signer B -- context only, not a trade signal)</span>
+        <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Market Bias (Signer B -- can block SMC, never fires alone)</span>
         <span className={`text-[11px] font-bold ${colors.text}`}>
           {label} {Math.round(pct)}%
         </span>
