@@ -59,6 +59,14 @@ export interface SignalEvaluationOverrides {
    * ADX_HARD_MIN (15, lowered from 20 on 2026-09-11 -- see that constant's own doc
    * comment for the backtest evidence) when unset. */
   minAdx?: number;
+  /** Loosens the D1 hard trend-agreement gate (the "trend_disagreement" no-trade code)
+   * for backtest comparison -- added 2026-09-11 after real evaluation-log data showed
+   * this single gate accounts for 61% of every rejection SMC has ever produced (14,645
+   * of ~23,841 evaluations), by a wide margin its single biggest bottleneck. "d1_only"
+   * (default, today's live behavior) requires D1 itself to agree with the implied
+   * direction, full stop. "d1_or_h4" passes if EITHER D1 or H4 agrees -- a real candidate
+   * loosening, never applied live until a backtest actually confirms it helps. */
+  trendAgreementMode?: "d1_only" | "d1_or_h4";
 }
 
 const SWEEP_LOOKBACK_CANDLES = 30;
@@ -296,7 +304,15 @@ export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: Liqu
   const direction: "long" | "short" = wantsBullish ? "long" : "short";
 
   // --- Hard pre-gates: D1 agreement, ADX floor, ATR health ---
-  if (ctx.d1Trend === "neutral" || ctx.d1Trend !== zoneDirection) {
+  // trendAgreementMode defaults to "d1_only" (today's live behavior, byte-identical to
+  // the original `d1Trend === "neutral" || d1Trend !== zoneDirection` check) when
+  // overrides is unset -- only the backtester ever supplies "d1_or_h4". See
+  // SignalEvaluationOverrides's own doc comment for why this gate specifically is worth
+  // testing loosened.
+  const d1Agrees = ctx.d1Trend === zoneDirection;
+  const h4Agrees = ctx.h4Trend === zoneDirection;
+  const trendAgrees = overrides?.trendAgreementMode === "d1_or_h4" ? d1Agrees || h4Agrees : d1Agrees;
+  if (!trendAgrees) {
     return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: ctx.d1Trend, h4: ctx.h4Trend, h1: ctx.h1Trend });
   }
 

@@ -74,7 +74,21 @@ export function applyEarlyInvalidation(results: BacktestBarResult[]): BacktestBa
       const rMultiple =
         stopDistance > 0 ? (isLong ? (exitPrice - targetSignal.entry) / stopDistance : (targetSignal.entry - exitPrice) / stopDistance) : 0;
 
-      target.outcome = { exitPrice, exitTime: signal.createdAt, reason: "invalidation", rMultiple, tp2Reached: false };
+      // exitTime must be this bar's own real historical time (result.barTime), NOT
+      // signal.createdAt -- a real, confirmed bug found 2026-09-12: Signal.createdAt is
+      // ALWAYS Date.now() (see signalEngine.ts), including during a backtest replay of
+      // historical data, so it was stamping a truncated trade's close time with the
+      // wall-clock moment the backtest script happened to run, not any real historical
+      // date. That silently broke the "is this position still closed" staleness check
+      // just below (openOutcome.exitTime <= result.barTime) -- a huge wall-clock number
+      // can never be <= a real historical barTime, so an already-invalidated position
+      // never actually left `open` and stayed eligible to be invalidated AGAIN by a
+      // later signal, computing a fresh R-multiple off the ORIGINAL entry against
+      // whatever price that much-later signal happened to fire at. That's exactly how a
+      // single zombie position produced an impossible -22.95R "loss" in a real
+      // 2026-09-12 backtest -- a real stop-loss can never lose more than 1R; this was a
+      // bookkeeping bug, not a real tail risk.
+      target.outcome = { exitPrice, exitTime: result.barTime, reason: "invalidation", rMultiple, tp2Reached: false };
     }
 
     open.push({ index: i, signal });

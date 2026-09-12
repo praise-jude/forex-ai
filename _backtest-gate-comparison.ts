@@ -41,12 +41,12 @@ async function main() {
     process.exit(1);
   }
 
-  const variants: { name: string; overrides?: { atrAverageMultiplier?: number; minAdx?: number } }[] = [
-    { name: "baseline (today's live gates: ADX>=20, ATR>average)" },
-    { name: "ATR gate loosened to 0.8x average (ADX unchanged)", overrides: { atrAverageMultiplier: 0.8 } },
-    { name: "ATR gate loosened to 0.6x average (ADX unchanged)", overrides: { atrAverageMultiplier: 0.6 } },
-    { name: "ADX floor lowered to 15 (ATR unchanged)", overrides: { minAdx: 15 } },
-    { name: "both loosened (ATR 0.8x, ADX 15)", overrides: { atrAverageMultiplier: 0.8, minAdx: 15 } },
+  const variants: {
+    name: string;
+    overrides?: { atrAverageMultiplier?: number; minAdx?: number; trendAgreementMode?: "d1_only" | "d1_or_h4" };
+  }[] = [
+    { name: "baseline (today's live gates)" },
+    { name: "trend agreement loosened to D1-or-H4 (biggest blocker: 61% of all SMC rejections)", overrides: { trendAgreementMode: "d1_or_h4" } },
   ];
 
   console.error(`loading history for ${pairs.join(", ")} @ ${timeframe}, ${lookbackDays}d lookback...`);
