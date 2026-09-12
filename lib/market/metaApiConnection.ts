@@ -1553,10 +1553,27 @@ async function waitForOpenedPosition(
   if (positionId === undefined) return undefined;
   const numericId = Number(positionId);
   const deadline = Date.now() + FILL_PRICE_POLL_TIMEOUT_MS;
+  // Real, confirmed gap (2026-09-12): every filled trade on record shows EXACT zero
+  // drift between requestedEntry and filledEntry -- not close to zero, bit-for-bit
+  // equal, including on 5-decimal pairs like GBP/USD, which is not plausible real market
+  // behavior. That means this poll is never actually finding the real position and is
+  // silently falling back to requestedEntry every single time, despite looking correct
+  // on paper. Logging here to see WHY -- timeout vs. a genuine id mismatch -- instead of
+  // guessing further.
+  let attempts = 0;
   for (;;) {
+    attempts++;
     const position = connection.terminalState.positions.find((p) => p.id === numericId);
-    if (position) return position;
-    if (Date.now() >= deadline) return undefined;
+    if (position) {
+      console.log(`[metaapi] waitForOpenedPosition found id=${numericId} after ${attempts} attempt(s), openPrice=${position.openPrice}`);
+      return position;
+    }
+    if (Date.now() >= deadline) {
+      console.log(
+        `[metaapi] waitForOpenedPosition TIMED OUT for id=${numericId} after ${attempts} attempt(s); terminalState.positions ids=[${connection.terminalState.positions.map((p) => p.id).join(", ")}]`
+      );
+      return undefined;
+    }
     await new Promise((resolve) => setTimeout(resolve, FILL_PRICE_POLL_INTERVAL_MS));
   }
 }
