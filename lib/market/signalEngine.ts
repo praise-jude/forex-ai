@@ -59,13 +59,11 @@ export interface SignalEvaluationOverrides {
    * ADX_HARD_MIN (15, lowered from 20 on 2026-09-11 -- see that constant's own doc
    * comment for the backtest evidence) when unset. */
   minAdx?: number;
-  /** Loosens the D1 hard trend-agreement gate (the "trend_disagreement" no-trade code)
-   * for backtest comparison -- added 2026-09-11 after real evaluation-log data showed
-   * this single gate accounts for 61% of every rejection SMC has ever produced (14,645
-   * of ~23,841 evaluations), by a wide margin its single biggest bottleneck. "d1_only"
-   * (default, today's live behavior) requires D1 itself to agree with the implied
-   * direction, full stop. "d1_or_h4" passes if EITHER D1 or H4 agrees -- a real candidate
-   * loosening, never applied live until a backtest actually confirms it helps. */
+  /** Overrides TREND_AGREEMENT_MODE_DEFAULT for the D1 hard trend-agreement gate (the
+   * "trend_disagreement" no-trade code). "d1_only" requires D1 itself to agree with the
+   * implied direction, full stop. "d1_or_h4" passes if EITHER D1 or H4 agrees. Defaults
+   * to TREND_AGREEMENT_MODE_DEFAULT (see that constant's own doc comment for the
+   * backtest evidence and why it was shipped live despite a mixed signal) when unset. */
   trendAgreementMode?: "d1_only" | "d1_or_h4";
 }
 
@@ -117,6 +115,29 @@ const FIXED_TAKE_PROFIT_DISTANCE: Partial<Record<Pair, number>> = {
 // connection's own rate limit. If live results (Journal -> Performance by engine, "smc")
 // don't track this after a couple of weeks, revert this single constant back to 20.
 export const ADX_HARD_MIN = 15;
+// Live default for the D1 hard trend-agreement gate, changed from "d1_only" to
+// "d1_or_h4" on 2026-09-12. Backed by real historical replay, not a hunch, but the
+// evidence is genuinely mixed -- shipped anyway on an explicit operator decision to
+// accept that tradeoff for more trade frequency, after the risk was laid out plainly.
+// _backtest-gate-comparison.ts replayed the SAME candle series through evaluateSignal
+// with only this one gate changed (5 pairs, 15m). Over 180 days: baseline 164 trades /
+// 76.8% win rate / 0.89 avgR / 4.83 profit factor / 3.99R max drawdown vs. d1_or_h4's
+// 241 trades / 77.6% / 2.25 / 11.18 / 5.28R -- looks like a clear win. But over the more
+// recent 90 days: baseline 82 trades / 74.4% / 1.10 / 5.31 / 3.99R vs. d1_or_h4's 133 /
+// 76.7% / 0.94 / 5.13 / 5.28R -- MORE trades and a slightly higher win rate, but a
+// slightly WORSE average R and profit factor than baseline. The two windows agree on
+// "more trades, modestly higher win rate" but disagree on whether per-trade quality
+// actually improves; the strong 180-day avgR/profit-factor numbers are likely carried
+// by the older (91-180 day) half of history, not by how the market's behaving lately.
+// The 3.99R -> 5.28R max-drawdown increase is a real, sane ~32% rise proportionate to
+// the extra trade volume -- NOT the same number as an earlier, since-fixed 22.95R
+// backtest reading, which was a zombie-invalidation bookkeeping bug in
+// backtestInvalidation.ts (see that file's own doc comment), not a real result. Same
+// caveat as ADX_HARD_MIN: only tested on 15m with idealized (non-realistic) fills, no
+// DEMO MetaApi account to forward-test against first. If live results (Journal ->
+// Performance by engine, "smc") don't track the win-rate gain within a couple of weeks,
+// revert this constant back to "d1_only".
+export const TREND_AGREEMENT_MODE_DEFAULT: "d1_only" | "d1_or_h4" = "d1_or_h4";
 const ATR_AVERAGE_PERIOD = 20;
 // How many hours before the Friday 5pm New York weekly close a NEW entry is refused --
 // see marketHours.ts's isWithinWeekendCloseWindow for the reasoning. Env-configurable
@@ -303,15 +324,15 @@ export function evaluateDirectionalCandidate(ctx: SharedGateContext, sweep: Liqu
   const zoneDirection = wantsBullish ? "bullish" : "bearish";
   const direction: "long" | "short" = wantsBullish ? "long" : "short";
 
-  // --- Hard pre-gates: D1 agreement, ADX floor, ATR health ---
-  // trendAgreementMode defaults to "d1_only" (today's live behavior, byte-identical to
-  // the original `d1Trend === "neutral" || d1Trend !== zoneDirection` check) when
-  // overrides is unset -- only the backtester ever supplies "d1_or_h4". See
-  // SignalEvaluationOverrides's own doc comment for why this gate specifically is worth
-  // testing loosened.
+  // --- Hard pre-gates: D1/H4 agreement, ADX floor, ATR health ---
+  // trendAgreementMode defaults to TREND_AGREEMENT_MODE_DEFAULT ("d1_or_h4" as of
+  // 2026-09-12 -- see that constant's own doc comment for the backtest evidence and the
+  // mixed-signal tradeoff it was shipped on). The backtester overrides this to measure
+  // either mode directly against real historical data.
   const d1Agrees = ctx.d1Trend === zoneDirection;
   const h4Agrees = ctx.h4Trend === zoneDirection;
-  const trendAgrees = overrides?.trendAgreementMode === "d1_or_h4" ? d1Agrees || h4Agrees : d1Agrees;
+  const trendAgreementMode = overrides?.trendAgreementMode ?? TREND_AGREEMENT_MODE_DEFAULT;
+  const trendAgrees = trendAgreementMode === "d1_or_h4" ? d1Agrees || h4Agrees : d1Agrees;
   if (!trendAgrees) {
     return noTrade({ code: "trend_disagreement", impliedDirection: direction, d1: ctx.d1Trend, h4: ctx.h4Trend, h1: ctx.h1Trend });
   }

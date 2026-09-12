@@ -45,8 +45,11 @@ async function main() {
     name: string;
     overrides?: { atrAverageMultiplier?: number; minAdx?: number; trendAgreementMode?: "d1_only" | "d1_or_h4" };
   }[] = [
-    { name: "baseline (today's live gates)" },
-    { name: "trend agreement loosened to D1-or-H4 (biggest blocker: 61% of all SMC rejections)", overrides: { trendAgreementMode: "d1_or_h4" } },
+    // Explicit "d1_only" here, not the bare no-overrides case -- as of 2026-09-12
+    // TREND_AGREEMENT_MODE_DEFAULT (signalEngine.ts) IS "d1_or_h4", so an unset override
+    // would silently compare the new live behavior against itself.
+    { name: "baseline (D1-only trend agreement)", overrides: { trendAgreementMode: "d1_only" } },
+    { name: "trend agreement loosened to D1-or-H4 (today's live gate as of 2026-09-12)", overrides: { trendAgreementMode: "d1_or_h4" } },
   ];
 
   console.error(`loading history for ${pairs.join(", ")} @ ${timeframe}, ${lookbackDays}d lookback...`);

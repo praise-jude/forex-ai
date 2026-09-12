@@ -1,4 +1,5 @@
 import type { Confluence, MarketRegime, NoTradeReason, SignalEvaluation } from "./types";
+import { ADX_HARD_MIN, TREND_AGREEMENT_MODE_DEFAULT } from "./signalEngine";
 
 // Plain-language labels for MarketRegime -- see marketRegime.ts for how each is
 // derived (existing ADX/ATR/EMA reads only). Exported so the dashboard's own regime
@@ -66,10 +67,14 @@ function describeReason(reason: NoTradeReason): string {
       return "No qualifying setup right now -- no recent liquidity sweep with a confirming structure break and a freshly-tagged order block or fair value gap.";
     case "trend_disagreement": {
       const wanted = reason.impliedDirection === "long" ? "bullish" : "bearish";
-      return `A setup formed, but the daily/4-hour trend doesn't agree (D1 ${reason.d1}, H4 ${reason.h4}, H1 ${reason.h1} for reference) -- both D1 and H4 must be ${wanted} for a ${reason.impliedDirection === "long" ? "buy" : "sell"}.`;
+      const requirement =
+        TREND_AGREEMENT_MODE_DEFAULT === "d1_or_h4"
+          ? `neither D1 nor H4 is ${wanted} -- at least one must be for a ${reason.impliedDirection === "long" ? "buy" : "sell"}`
+          : `D1 must be ${wanted} for a ${reason.impliedDirection === "long" ? "buy" : "sell"}`;
+      return `A setup formed, but ${requirement} (D1 ${reason.d1}, H4 ${reason.h4}, H1 ${reason.h1} for reference).`;
     }
     case "weak_trend_adx":
-      return `Trend strength is too weak (ADX ${reason.adx.toFixed(1)}, needs 20+) -- the market isn't trending enough to trust a directional setup right now.`;
+      return `Trend strength is too weak (ADX ${reason.adx.toFixed(1)}, needs ${ADX_HARD_MIN}+) -- the market isn't trending enough to trust a directional setup right now.`;
     case "low_volatility":
       return `Volatility is below its recent average (ATR ${reason.atr.toFixed(5)} vs ${reason.atrAverage.toFixed(5)} average) -- conditions are too quiet for a reliable move.`;
     case "below_threshold": {

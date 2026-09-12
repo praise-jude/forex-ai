@@ -205,9 +205,16 @@ describe("assembleSignals", () => {
     expect(assembleSignals(candles, "EUR/USD", "15m", buildHigherTimeframes("up"))).toEqual([]);
   });
 
-  it("suppresses an otherwise-valid signal when D1 itself disagrees with the zone direction", () => {
-    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down") };
+  it("suppresses an otherwise-valid signal when BOTH D1 and H4 disagree with the zone direction", () => {
+    // Live default is TREND_AGREEMENT_MODE_DEFAULT ("d1_or_h4" as of 2026-09-12) -- D1
+    // disagreeing alone no longer suppresses a setup H4 still supports.
+    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down"), h4: buildHigherTf(210, "down") };
     expect(assembleSignals(buildCandles(), "EUR/USD", "15m", higherTimeframes)).toEqual([]);
+  });
+
+  it("does NOT suppress an otherwise-valid signal just because D1 disagrees when H4 still agrees", () => {
+    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down") };
+    expect(assembleSignals(buildCandles(), "EUR/USD", "15m", higherTimeframes)).toHaveLength(1);
   });
 
   it("does NOT suppress an otherwise-valid signal just because H4 disagrees with an agreeing D1", () => {
@@ -319,12 +326,16 @@ describe("evaluateSignal", () => {
     expect(evaluation.status).toBe("signal");
   });
 
-  it("reports trend_disagreement with the real per-timeframe readings when D1 itself disagrees with the zone", () => {
-    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down") };
+  it("reports trend_disagreement with the real per-timeframe readings when BOTH D1 and H4 disagree with the zone", () => {
+    // Live default is TREND_AGREEMENT_MODE_DEFAULT ("d1_or_h4" as of 2026-09-12, see
+    // signalEngine.ts's own doc comment) -- D1 alone disagreeing no longer blocks a
+    // setup H4 still supports, mirroring the "still fires when only H4/H1 disagrees"
+    // tests above. Only both disagreeing together triggers this no-trade code now.
+    const higherTimeframes = { ...buildHigherTimeframes("up"), d1: buildHigherTf(210, "down"), h4: buildHigherTf(210, "down") };
     const evaluation = evaluateSignal(buildCandles(), "EUR/USD", "15m", higherTimeframes);
     expect(evaluation).toMatchObject({
       status: "no_trade",
-      reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bearish", h4: "bullish" },
+      reason: { code: "trend_disagreement", impliedDirection: "long", d1: "bearish", h4: "bearish" },
     });
   });
 
