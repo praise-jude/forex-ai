@@ -155,3 +155,41 @@ describe("riskState.forceResetHaltedForToday", () => {
     expect(state.tradesOpenedToday).toBe(1);
   });
 });
+
+describe("riskState.reanchorStartOfDayEquity", () => {
+  it("re-anchors startOfDayEquity to current equity and clears an active halt -- unlike forceResetHaltedForToday, which deliberately leaves the stale anchor in place", () => {
+    // Mirrors the real, confirmed 2026-09-12 incident: a $218 account anchored at day
+    // start, then a manual withdrawal drops real equity to $102 -- read as a 53% "daily
+    // loss" and correctly-but-wrongly trips the halt. forceResetHaltedForToday alone
+    // would clear the halt but leave the $218 anchor, so the very next check would
+    // immediately re-trip against the same now-permanently-wrong drawdown%.
+    const day = Date.UTC(2024, 4, 7, 10, 0, 0);
+    riskState.current(day, 218.03, "live"); // anchors startOfDayEquity at 218.03
+    riskState.setHaltedForToday(day, 102.44, "live");
+    expect(riskState.current(day, 102.44, "live").haltedForToday).toBe(true);
+
+    riskState.reanchorStartOfDayEquity(day, 102.44, "live");
+    const state = riskState.current(day, 102.44, "live");
+    expect(state.startOfDayEquity).toBe(102.44);
+    expect(state.haltedForToday).toBe(false);
+    expect(requiresAcknowledgement(state)).toBe(false);
+  });
+
+  it("also clears an active cooldown -- a deposit/withdrawal invalidates a consecutive-loss read the same way it does a daily-loss one", () => {
+    const day = Date.UTC(2024, 4, 8, 10, 0, 0);
+    riskState.recordTradeClosed(day, 9700, -100, 1, 30, "live"); // trips a cooldown with maxConsecutiveLosses=1
+    expect(riskState.current(day, 9700, "live").cooldownUntil).not.toBeNull();
+
+    riskState.reanchorStartOfDayEquity(day, 9700, "live");
+    expect(riskState.current(day, 9700, "live").cooldownUntil).toBeNull();
+  });
+
+  it("leaves tradesOpenedToday and consecutiveLosses untouched -- only the equity-derived fields change", () => {
+    const day = Date.UTC(2024, 4, 9, 10, 0, 0);
+    riskState.current(day, 10000, "live");
+    riskState.recordTradeOpened(day, 9700, "live");
+
+    riskState.reanchorStartOfDayEquity(day, 5000, "live");
+    expect(riskState.current(day, 5000, "live").tradesOpenedToday).toBe(1);
+  });
+});

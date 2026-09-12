@@ -35,6 +35,7 @@ export function RiskGuardianBanner() {
   const [now, setNow] = useState(() => Date.now());
   const [acknowledging, setAcknowledging] = useState(false);
   const [forceResuming, setForceResuming] = useState(false);
+  const [reanchoring, setReanchoring] = useState(false);
 
   async function acknowledge() {
     setAcknowledging(true);
@@ -59,6 +60,30 @@ export function RiskGuardianBanner() {
       if (res.ok && data) setData({ ...data, haltedForToday: false, requiresAcknowledgement: false });
     } finally {
       setForceResuming(false);
+    }
+  }
+
+  // A real, confirmed gap (2026-09-12): a manual deposit/withdrawal changes real equity
+  // by an amount that has nothing to do with trading, but the daily-loss check has no
+  // way to tell that apart from an actual loss -- forceResume above clears the lock but
+  // leaves the stale pre-withdrawal baseline in place, so the very next trade attempt
+  // immediately re-trips the same false alarm. This re-anchors today's starting equity
+  // to whatever it actually is right now, an explicit human confirming "that change was
+  // mine, not a loss" -- see riskState.ts's reanchorStartOfDayEquity doc comment.
+  async function reanchorEquity() {
+    if (
+      !window.confirm(
+        "Reset today's starting balance to your CURRENT equity? Only do this if the drop was from a deposit or withdrawal you made yourself, not a trading loss -- this also clears the lock."
+      )
+    ) {
+      return;
+    }
+    setReanchoring(true);
+    try {
+      const res = await fetch("/api/risk-status/reanchor-equity", { method: "POST" });
+      if (res.ok && data) setData({ ...data, haltedForToday: false, cooldownUntil: null, requiresAcknowledgement: false });
+    } finally {
+      setReanchoring(false);
     }
   }
 
@@ -99,14 +124,25 @@ export function RiskGuardianBanner() {
             Daily loss limit ({data.maxDailyLossPct}%) reached on {data.account}. No new trades until the next trading day.
           </span>
         </span>
-        <button
-          type="button"
-          onClick={forceResume}
-          disabled={forceResuming}
-          className="ml-3 shrink-0 rounded-md border border-rose-700 bg-rose-900/60 px-2.5 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-800/60 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {forceResuming ? "Resuming…" : "Force resume today"}
-        </button>
+        <span className="ml-3 flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={reanchorEquity}
+            disabled={reanchoring}
+            title="Only if this drop was your own deposit/withdrawal, not a trading loss"
+            className="rounded-md border border-rose-700 bg-rose-900/60 px-2.5 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {reanchoring ? "Resetting…" : "I deposited/withdrew"}
+          </button>
+          <button
+            type="button"
+            onClick={forceResume}
+            disabled={forceResuming}
+            className="rounded-md border border-rose-700 bg-rose-900/60 px-2.5 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-800/60 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {forceResuming ? "Resuming…" : "Force resume today"}
+          </button>
+        </span>
       </div>
     );
   }

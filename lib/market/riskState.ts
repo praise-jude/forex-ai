@@ -166,6 +166,31 @@ class RiskStateStore {
   }
 
   /**
+   * A real, confirmed gap (2026-09-12): a manual deposit or withdrawal changes real
+   * equity by a real amount that has nothing to do with trading performance, but this
+   * store has no way to tell that apart from an actual loss -- a $116 withdrawal on a
+   * ~$218 account read as a 53% "daily loss" and correctly-but-wrongly tripped the halt.
+   * forceResetHaltedForToday alone doesn't fix this: it clears the halt but leaves the
+   * stale pre-withdrawal startOfDayEquity in place, so the very next risk check
+   * re-computes the same huge (now permanently wrong) drawdown% and immediately re-trips
+   * it. This re-anchors startOfDayEquity to whatever equity actually is RIGHT NOW (an
+   * explicit human confirming "this change was mine, not a loss"), and clears the halt
+   * the same way forceResetHaltedForToday does -- tradesOpenedToday and consecutiveLosses
+   * are left untouched, same reasoning as forceResetHaltedForToday.
+   */
+  reanchorStartOfDayEquity(nowMs: number, currentEquity: number, account: AccountKey = "live"): void {
+    const state = this.current(nowMs, currentEquity, account);
+    state.startOfDayEquity = currentEquity;
+    state.haltedForToday = false;
+    state.cooldownUntil = null;
+    state.pausedAt = null;
+    state.acknowledgedAt = null;
+    void persistState(account, state).catch((error: unknown) => {
+      console.error(`[riskState] failed to persist equity re-anchor for ${account}:`, error);
+    });
+  }
+
+  /**
    * Explicit human override -- same shape as forceResetHaltedForToday above, but for the
    * consecutive-loss cooldown instead of the daily-loss halt. There is deliberately no
    * button for this in the UI's normal flow -- see RiskGuardianBanner.tsx's own "Force
