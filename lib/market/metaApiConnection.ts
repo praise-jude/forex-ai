@@ -57,6 +57,7 @@ import { getLastDurationCaution, setLastDurationCaution } from "./positionDurati
 import { positionStore } from "./positionStore";
 import { consume as consumeInvalidationMark } from "./invalidationMarker";
 import { dealDedup } from "./dealDedup";
+import { recordFillPriceCheck } from "./fillPriceCheckLog";
 
 // Three independent signal engines run concurrently per pair, one per timeframe --
 // each closed candle on any of these is evaluated on its own, sharing the same
@@ -1530,10 +1531,26 @@ export async function placeMarketOrder(
   // executes. Falls back to requestedEntry only if the position still hasn't appeared
   // after the full window -- an honest "couldn't confirm the real price" case, not
   // expected to be common.
-  const openedPosition = await waitForOpenedPosition(connection, response.positionId);
+  const lookup = await waitForOpenedPosition(connection, response.positionId);
+  // Real, confirmed gap (2026-09-12/13): a console-log-only version of this diagnostic
+  // already caught one real fill, but the evidence was gone before anyone could read it
+  // -- a deploy in between tore down the old container, and Railway only ever keeps the
+  // CURRENT container's logs. Persisted here instead so the next one survives regardless
+  // of what gets deployed in between -- see fillPriceCheckLog's own doc comment.
+  recordFillPriceCheck({
+    account: accountKey,
+    pair,
+    direction,
+    requestedEntry,
+    brokerPositionId: response.positionId,
+    found: lookup.position !== undefined,
+    attempts: lookup.attempts,
+    openPrice: lookup.position?.openPrice ?? null,
+    presentPositionIds: lookup.presentIds ?? null,
+  });
   return {
     success: true,
-    filledEntry: openedPosition?.openPrice ?? requestedEntry,
+    filledEntry: lookup.position?.openPrice ?? requestedEntry,
     brokerPositionId: response.positionId,
     brokerOrderId: response.orderId,
   };
@@ -1542,37 +1559,34 @@ export async function placeMarketOrder(
 const FILL_PRICE_POLL_TIMEOUT_MS = 2_000;
 const FILL_PRICE_POLL_INTERVAL_MS = 150;
 
+interface FillPriceLookup {
+  position: { openPrice: number } | undefined;
+  attempts: number;
+  /** Only populated on timeout -- the real position ids present at that moment, so a
+   * genuine id-matching bug can be told apart from the sync just not catching up yet. */
+  presentIds?: number[];
+}
+
 /** Polls the connection's own terminal state for the newly-opened position (real
  * fill price included) for up to FILL_PRICE_POLL_TIMEOUT_MS -- see placeMarketOrder's
  * own doc comment for why a single immediate check missed it most of the time. Never
- * throws; returns undefined on timeout, letting the caller fall back honestly. */
-async function waitForOpenedPosition(
-  connection: StreamingMetaApiConnectionInstance,
-  positionId: string | undefined
-): Promise<{ openPrice: number } | undefined> {
-  if (positionId === undefined) return undefined;
+ * throws; `position` is undefined on timeout, letting the caller fall back honestly. */
+async function waitForOpenedPosition(connection: StreamingMetaApiConnectionInstance, positionId: string | undefined): Promise<FillPriceLookup> {
+  if (positionId === undefined) return { position: undefined, attempts: 0 };
   const numericId = Number(positionId);
   const deadline = Date.now() + FILL_PRICE_POLL_TIMEOUT_MS;
-  // Real, confirmed gap (2026-09-12): every filled trade on record shows EXACT zero
-  // drift between requestedEntry and filledEntry -- not close to zero, bit-for-bit
-  // equal, including on 5-decimal pairs like GBP/USD, which is not plausible real market
-  // behavior. That means this poll is never actually finding the real position and is
-  // silently falling back to requestedEntry every single time, despite looking correct
-  // on paper. Logging here to see WHY -- timeout vs. a genuine id mismatch -- instead of
-  // guessing further.
   let attempts = 0;
   for (;;) {
     attempts++;
     const position = connection.terminalState.positions.find((p) => p.id === numericId);
     if (position) {
       console.log(`[metaapi] waitForOpenedPosition found id=${numericId} after ${attempts} attempt(s), openPrice=${position.openPrice}`);
-      return position;
+      return { position, attempts };
     }
     if (Date.now() >= deadline) {
-      console.log(
-        `[metaapi] waitForOpenedPosition TIMED OUT for id=${numericId} after ${attempts} attempt(s); terminalState.positions ids=[${connection.terminalState.positions.map((p) => p.id).join(", ")}]`
-      );
-      return undefined;
+      const presentIds = connection.terminalState.positions.map((p) => p.id);
+      console.log(`[metaapi] waitForOpenedPosition TIMED OUT for id=${numericId} after ${attempts} attempt(s); terminalState.positions ids=[${presentIds.join(", ")}]`);
+      return { position: undefined, attempts, presentIds };
     }
     await new Promise((resolve) => setTimeout(resolve, FILL_PRICE_POLL_INTERVAL_MS));
   }

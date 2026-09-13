@@ -257,3 +257,31 @@ export const spreadBlockLog = pgTable("spread_block_log", {
   maxSpreadFractionOfStop: doublePrecision("max_spread_fraction_of_stop").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
+
+// Durable evidence log for metaApiConnection.ts's waitForOpenedPosition -- built
+// 2026-09-13 after a real, confirmed gap: that function's own diagnostic (2026-09-12,
+// console.log only) caught a genuine live fill, but the evidence was already gone by the
+// time anyone could check it -- a deploy in between (shipping an unrelated fix) tore down
+// the old container, and Railway only ever keeps the CURRENT container's logs. Every
+// filled trade on record shows exactly zero drift between requestedEntry and
+// filledEntry, which isn't plausible real market behavior -- this is what will finally
+// tell us whether waitForOpenedPosition is genuinely finding the real position (and its
+// real openPrice) or silently timing out on every single trade, without racing a
+// redeploy to read a console log in time ever again.
+export const fillPriceCheckLog = pgTable("fill_price_check_log", {
+  id: text("id").primaryKey(),
+  account: text("account").notNull(),
+  pair: text("pair").notNull(),
+  direction: text("direction").notNull(),
+  requestedEntry: doublePrecision("requested_entry").notNull(),
+  brokerPositionId: text("broker_position_id"),
+  found: boolean("found").notNull(),
+  attempts: integer("attempts").notNull(),
+  openPrice: doublePrecision("open_price"),
+  /** Only populated when `found` is false -- the real position ids that WERE present in
+   * terminalState.positions at the moment of timeout, for comparing against
+   * brokerPositionId by hand (a genuine id-matching bug vs. the sync just not having
+   * caught up in time look identical from `found` alone). */
+  presentPositionIds: jsonb("present_position_ids").$type<number[] | null>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
